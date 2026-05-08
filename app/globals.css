@@ -1,26 +1,190 @@
 @import "tailwindcss";
 
+/* ── Theme variables ─────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Dark navy — Webby SG default */
+  --bg-base:    #070d18;
+  --bg-sidebar: #0c1522;
+  --bg-card:    #101d2e;
+  --bg-surface: #142233;
+  --border:     #1c3248;
+  --text:       #cce4ff;
+  --text-muted: #4a7090;
+  --accent:     #38b6e8;
+  --accent-2:   #ff6b47;
+  --accent-rgb: 56, 182, 232;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+[data-theme="light"] {
+  --bg-base:    #f0f7ff;
+  --bg-sidebar: #ffffff;
+  --bg-card:    #ffffff;
+  --bg-surface: #e8f4ff;
+  --border:     #c8dff0;
+  --text:       #0a1828;
+  --text-muted: #5a7a90;
+  --accent:     #38b6e8;
+  --accent-2:   #ff6b47;
+  --accent-rgb: 56, 182, 232;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+[data-theme="ocean"] {
+  --bg-base:    #040c16;
+  --bg-sidebar: #071220;
+  --bg-card:    #0b1a2c;
+  --bg-surface: #0e2035;
+  --border:     #153050;
+  --text:       #b8daff;
+  --text-muted: #3a6080;
+  --accent:     #22d3ee;
+  --accent-2:   #38b6e8;
+  --accent-rgb: 34, 211, 238;
 }
+
+[data-theme="sunset"] {
+  --bg-base:    #0e0c08;
+  --bg-sidebar: #18140a;
+  --bg-card:    #221c0e;
+  --bg-surface: #2a2210;
+  --border:     #3a3018;
+  --text:       #fff0d8;
+  --text-muted: #907050;
+  --accent:     #ff6b47;
+  --accent-2:   #ff9a3e;
+  --accent-rgb: 255, 107, 71;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-sidebar); }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ── Keyframes ───────────────────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeInLeft {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-4px); }
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%       { transform: scale(1.5); opacity: 0.6; }
+}
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(200%); }
+}
+@keyframes bar-grow {
+  from { width: 0%; }
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+@keyframes theme-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+/* ── Animation utilities ─────────────────────────────────────────────────── */
+.anim-up        { animation: fadeInUp   0.45s ease-out both; }
+.anim-left      { animation: fadeInLeft 0.3s  ease-out both; }
+.anim-float     { animation: float      3s    ease-in-out infinite; }
+.anim-pulse-dot { animation: pulse-dot  1.6s  ease-in-out infinite; }
+.anim-card-in   { animation: card-in    0.5s  ease-out both; }
+.anim-theme-pop { animation: theme-pop  0.35s ease-out; }
+
+.anim-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease infinite;
+}
+
+/* ── Gradient text ───────────────────────────────────────────────────────── */
+.text-gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 60%, #f472b6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ── Shimmer overlay ─────────────────────────────────────────────────────── */
+.shimmer-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 60%
+  );
+  animation: shimmer 2.4s ease infinite;
+  pointer-events: none;
+}
+
+/* ── Card hover lift ─────────────────────────────────────────────────────── */
+.card-hover {
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+.card-hover:hover { transform: translateY(-3px); }
+
+/* ── Progress bar animation ──────────────────────────────────────────────── */
+.bar-animate { animation: bar-grow 0.9s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+/* ── Nav item hover ──────────────────────────────────────────────────────── */
+.nav-item { transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease; }
+.nav-item:not(.nav-active):hover {
+  background: var(--bg-surface) !important;
+  color: var(--text) !important;
+}
+
+/* ── Article prose styles ────────────────────────────────────────────────── */
+.prose-custom h1 { font-size: 1.75rem; font-weight: 800; color: var(--text); margin: 1.5rem 0 0.75rem; line-height: 1.25; }
+.prose-custom h2 { font-size: 1.35rem; font-weight: 700; color: var(--text); margin: 1.25rem 0 0.5rem; line-height: 1.3; }
+.prose-custom h3 { font-size: 1.1rem;  font-weight: 600; color: var(--text); margin: 1rem 0 0.4rem; }
+.prose-custom p  { color: var(--text); line-height: 1.8; margin: 0.5rem 0; font-size: 0.9375rem; }
+.prose-custom ul { padding-left: 1.5rem; margin: 0.5rem 0; list-style: disc; }
+.prose-custom li { color: var(--text); line-height: 1.7; margin: 0.25rem 0; font-size: 0.9375rem; }
+.prose-custom strong { font-weight: 700; color: var(--text); }
+.prose-custom em { font-style: italic; }
+.prose-custom code { font-family: monospace; background: var(--bg-surface); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.85em; color: var(--accent); }
+.prose-custom hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+
+/* ── Theme transition ────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 0.25s;
+  transition-timing-function: ease;
+}
+/* Don't slow down animations with the above */
+.anim-up, .anim-left, .anim-float, .anim-pulse-dot,
+.anim-card-in, .bar-animate, .shimmer-overlay::after {
+  transition: none;
 }
