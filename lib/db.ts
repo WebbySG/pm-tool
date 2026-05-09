@@ -190,7 +190,7 @@ export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks
     due_date: data.dueDate || null,
     assigned_staff: data.assignedStaff,
   });
-  if (error) console.error("dbAddProject", error);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbDeleteProject(id: string) {

@@ -50,7 +50,7 @@ export default function NewProjectPage() {
     clientId: null as string | null,
     channelId: null as string | null,
     type: "webdev" as "webdev" | "seo",
-    phase: "discovery" as "discovery" | "design" | "development" | "qa" | "launch",
+    phase: "discovery" as const,
     description: "",
     startDate: new Date().toISOString().split("T")[0],
     dueDate: "",
@@ -157,39 +157,24 @@ export default function NewProjectPage() {
             </div>
           )}
 
-          {/* Type + Phase */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>TYPE</label>
-              <div className="flex gap-2">
-                {(["webdev", "seo"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setForm({ ...form, type: t, selectedTemplateIds: [] })}
-                    className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
-                    style={{
-                      background: form.type === t ? (t === "seo" ? "#22c55e20" : "#38b6e820") : "#0e1e30",
-                      border: `1px solid ${form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#1c3248"}`,
-                      color: form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#4a7090",
-                    }}
-                  >
-                    {t === "seo" ? "SEO" : "Web Dev"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>STARTING PHASE</label>
-              <select
-                value={form.phase}
-                onChange={(e) => setForm({ ...form, phase: e.target.value as typeof form.phase })}
-                className="w-full px-3 py-2.5 rounded-lg text-sm outline-none capitalize"
-                style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
-              >
-                {["discovery", "design", "development", "qa", "launch"].map((p) => (
-                  <option key={p} value={p} className="capitalize">{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                ))}
-              </select>
+          {/* Type */}
+          <div>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>TYPE</label>
+            <div className="flex gap-2">
+              {(["webdev", "seo"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setForm({ ...form, type: t, selectedTemplateIds: [] })}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+                  style={{
+                    background: form.type === t ? (t === "seo" ? "#22c55e20" : "#38b6e820") : "#0e1e30",
+                    border: `1px solid ${form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#1c3248"}`,
+                    color: form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#4a7090",
+                  }}
+                >
+                  {t === "seo" ? "SEO" : "Web Dev"}
+                </button>
+              ))}
             </div>
           </div>
 

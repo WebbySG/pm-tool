@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 function uuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return uuid();
+    return crypto.randomUUID();
   }
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -500,9 +500,9 @@ export const useStore = create<Store>()(
     }));
     const newProject: Project = { ...projectData, id, tasks: seedTasks, media: [], pinnedItems: [] };
     set((s) => ({ projects: [...s.projects, newProject] }));
-    db.dbAddProject(id, projectData);
+    await db.dbAddProject(id, projectData);
     for (const t of seedTasks) {
-      db.dbAddTask(t.id, id, { ...t, parentId: null });
+      await db.dbAddTask(t.id, id, { ...t, parentId: null });
     }
   },
 
