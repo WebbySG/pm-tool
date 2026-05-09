@@ -78,6 +78,7 @@ interface Store {
 
   // Project actions
   addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<void>;
+  updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   assignStaff: (projectId: string, userId: string) => Promise<void>;
   removeStaff: (projectId: string, userId: string) => Promise<void>;
@@ -355,7 +356,7 @@ export const useStore = create<Store>()(
   addCredential: async (credData) => {
     const id = uuid();
     set((s) => ({ credentials: [...s.credentials, { ...credData, id }] }));
-    db.dbAddCredential(id, credData);
+    await db.dbAddCredential(id, credData);
   },
 
   updateCredentialAccess: async (credId, allowedStaff) => {
@@ -522,6 +523,11 @@ export const useStore = create<Store>()(
     for (const t of seedTasks) {
       await db.dbAddTask(t.id, id, { ...t, parentId: null });
     }
+  },
+
+  updateProject: async (projectId, data) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, ...data })) }));
+    await db.dbUpdateProject(projectId, data);
   },
 
   deleteProject: async (projectId) => {

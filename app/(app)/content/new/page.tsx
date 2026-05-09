@@ -11,6 +11,7 @@ import { RotateCcw, Send, Save, ImagePlus, Loader2 } from "lucide-react";
 
 const initialForm = {
   projectId: "",
+  linkedTaskId: "",
   postType: "other" as PostType,
   title: "",
   content: "",
@@ -87,6 +88,7 @@ export default function NewArticlePage() {
         submittedByName: user?.name ?? "Staff",
         clientApproval: "pending",
         clientApprovedBy: null,
+        linkedTaskId: form.linkedTaskId || null,
       });
       clearDraft();
       router.push(`/content/${id}`);
@@ -195,7 +197,7 @@ export default function NewArticlePage() {
               <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Project</label>
               <select
                 value={form.projectId}
-                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value, linkedTaskId: "" })}
                 className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                 style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
               >
@@ -203,6 +205,25 @@ export default function NewArticlePage() {
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
+
+            {form.projectId && (() => {
+              const projectTasks = projects.find((p) => p.id === form.projectId)?.tasks.filter((t) => t.status !== "done") ?? [];
+              if (projectTasks.length === 0) return null;
+              return (
+                <div>
+                  <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Linked Task</label>
+                  <select
+                    value={form.linkedTaskId}
+                    onChange={(e) => setForm({ ...form, linkedTaskId: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                  >
+                    <option value="">— No task —</option>
+                    {projectTasks.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                  </select>
+                </div>
+              );
+            })()}
 
             <div>
               <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Post Type</label>

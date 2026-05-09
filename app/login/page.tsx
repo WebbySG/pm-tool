@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -16,12 +16,12 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (error) {
-      setError(error.message);
+      setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
       setLoading(false);
     } else {
-      router.push("/dashboard");
+      router.replace("/dashboard");
     }
   }
 
@@ -132,13 +132,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="mt-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 disabled:opacity-50"
+              className="mt-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1.5"
               style={{
                 background: "linear-gradient(135deg, var(--accent), var(--accent-2))",
                 boxShadow: "0 4px 16px rgba(var(--accent-rgb), 0.35)",
               }}
             >
-              {loading ? "Signing in…" : "Sign In"}
+              {loading ? <><Loader2 size={15} className="animate-spin" />Signing in…</> : "Sign In"}
             </button>
           </form>
         </div>

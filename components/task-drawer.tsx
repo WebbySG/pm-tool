@@ -206,7 +206,7 @@ function TaskPanel({
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {task.recurring && (
             <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full shrink-0" style={{ background: "#38b6e820", color: "#38b6e8" }}>
-              <RefreshCw size={10} /> {task.recurring}
+              <RefreshCw size={10} /> {{ weekly: "Weekly", monthly: "Monthly", "every-3-months": "Every 3 mo", "every-4-months": "Every 4 mo", "every-6-months": "Every 6 mo", yearly: "Yearly" }[task.recurring] ?? task.recurring}
             </span>
           )}
           {task.parentId && (
@@ -354,13 +354,16 @@ function TaskPanel({
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Recurring</p>
             <select
               value={task.recurring ?? ""}
-              onChange={(e) => updateTaskRecurring(projectId, task.id, (e.target.value || null) as "weekly" | "monthly" | "yearly" | null)}
+              onChange={(e) => updateTaskRecurring(projectId, task.id, (e.target.value || null) as "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null)}
               className="w-full px-3 py-2 rounded-lg text-sm outline-none"
               style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
             >
               <option value="">One-time</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
+              <option value="every-3-months">Every 3 months</option>
+              <option value="every-4-months">Every 4 months</option>
+              <option value="every-6-months">Every 6 months</option>
               <option value="yearly">Yearly</option>
             </select>
           </div>

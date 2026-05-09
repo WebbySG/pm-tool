@@ -4,8 +4,10 @@ import { type Task } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
-import { Calendar, AlertTriangle } from "lucide-react";
+import { Calendar, AlertTriangle, Archive } from "lucide-react";
 import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -22,20 +24,23 @@ const priorityColor: Record<string, string> = {
 };
 
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  todo: { label: "To Do", color: "#4a7090", bg: "#8b90a720" },
+  todo:        { label: "To Do",       color: "#64748b", bg: "#64748b20" },
   in_progress: { label: "In Progress", color: "#3b82f6", bg: "#3b82f620" },
-  review: { label: "Review", color: "#f59e0b", bg: "#f59e0b20" },
-  done: { label: "Done", color: "#22c55e", bg: "#22c55e20" },
+  review:      { label: "Review",      color: "#f59e0b", bg: "#f59e0b20" },
+  done:        { label: "Done",        color: "#22c55e", bg: "#22c55e20" },
 };
 
+const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
+
 function TaskGroup({
-  title, tasks, accent, icon, onSelect, liveStaff,
+  title, tasks, accent, icon, onSelect, onComplete, liveStaff,
 }: {
   title: string;
   tasks: TaskWithProject[];
   accent: string;
   icon?: React.ReactNode;
   onSelect: (task: TaskWithProject) => void;
+  onComplete: (task: TaskWithProject) => void;
   liveStaff: LiveStaff[];
 }) {
   if (tasks.length === 0) return null;
@@ -49,6 +54,7 @@ function TaskGroup({
       <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
         {tasks.map((task, i) => {
           const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
+          const avatarColor = AVATAR_COLORS[liveStaff.indexOf(assignee!) % AVATAR_COLORS.length] ?? "#818cf8";
           const sc = statusConfig[task.status];
           const overdue = task.status !== "done" && new Date(task.dueDate) < new Date();
           return (
@@ -56,25 +62,46 @@ function TaskGroup({
               key={task.id}
               onClick={() => onSelect(task)}
               className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:opacity-80 transition-opacity"
-              style={{ background: "#0f1d2e", borderBottom: i < tasks.length - 1 ? "1px solid #1c3248" : "none" }}
+              style={{
+                background: "#0f1d2e",
+                borderBottom: i < tasks.length - 1 ? "1px solid #1c3248" : "none",
+                borderLeft: `3px solid ${priorityColor[task.priority]}`,
+              }}
             >
-              <div className="w-4 h-4 rounded border flex items-center justify-center shrink-0" style={{ borderColor: "#1c3248" }}>
-                {task.status === "done" && <span style={{ color: "#22c55e", fontSize: 10 }}>✓</span>}
-              </div>
-              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: priorityColor[task.priority] }} />
+              {/* Complete checkbox */}
+              <button
+                onClick={(e) => { e.stopPropagation(); onComplete(task); }}
+                className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 hover:scale-110 transition-transform"
+                style={{ borderColor: "#22c55e" }}
+                title="Mark complete"
+              />
+
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate" style={{ color: task.status === "done" ? "#4a7090" : "#cce4ff", textDecoration: task.status === "done" ? "line-through" : "none" }}>
+                <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>
                   {task.title}
                 </p>
                 <p className="text-xs truncate" style={{ color: "#4a7090" }}>{task.projectName}</p>
               </div>
+
               <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.color }}>{sc.label}</span>
-                <div className="flex items-center gap-1 text-xs" style={{ color: overdue ? "#ef4444" : "#4a7090" }}>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full hidden sm:block"
+                  style={{ background: sc.bg, color: sc.color }}
+                >
+                  {sc.label}
+                </span>
+                <div
+                  className="flex items-center gap-1 text-xs"
+                  style={{ color: overdue ? "#ef4444" : "#4a7090" }}
+                >
                   <Calendar size={11} />
                   {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
                 </div>
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                  style={{ background: assignee ? avatarColor : "#1c3248", color: "#fff" }}
+                  title={assignee ? staffName(assignee) : "Unassigned"}
+                >
                   {assignee ? staffInitials(assignee) : "?"}
                 </div>
               </div>
@@ -87,24 +114,32 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects } = useStore();
+  const { projects, updateTaskStatus } = useStore();
+  const { user } = useAuth();
+  const isAdmin = user?.pmRole === "admin";
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [filterMember, setFilterMember] = useState("all");
 
   useEffect(() => {
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
   }, []);
+
+  const [filterMember, setFilterMember] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
   const allTasks: TaskWithProject[] = projects.flatMap((p) =>
-    p.tasks.map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
+    p.tasks
+      .filter((t) => isAdmin || t.assigneeId === user?.id)
+      .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   );
 
-  const filtered = allTasks.filter((t) => {
+  const activeTasks = allTasks.filter((t) => t.status !== "done");
+  const doneCount = allTasks.filter((t) => t.status === "done").length;
+
+  const filtered = activeTasks.filter((t) => {
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
     if (filterPriority !== "all" && t.priority !== filterPriority) return false;
@@ -115,11 +150,14 @@ export default function TasksPage() {
   const todayStr = now.toDateString();
 
   const grouped = {
-    overdue: filtered.filter((t) => t.status !== "done" && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
-    today: filtered.filter((t) => t.status !== "done" && new Date(t.dueDate).toDateString() === todayStr),
-    upcoming: filtered.filter((t) => t.status !== "done" && new Date(t.dueDate) > now),
-    done: filtered.filter((t) => t.status === "done"),
+    overdue:  filtered.filter((t) => new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
+    today:    filtered.filter((t) => new Date(t.dueDate).toDateString() === todayStr),
+    upcoming: filtered.filter((t) => new Date(t.dueDate) > now),
   };
+
+  async function handleComplete(task: TaskWithProject) {
+    await updateTaskStatus(task.projectId, task.id, "done");
+  }
 
   // Keep selected task in sync with store updates
   const liveSelectedTask = selectedTask
@@ -130,7 +168,7 @@ export default function TasksPage() {
     <>
       <Topbar title="All Tasks" />
       <div className="p-6 flex flex-col gap-6">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
             <option value="all">All Members</option>
             {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
@@ -147,17 +185,33 @@ export default function TasksPage() {
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} tasks</span>
+          <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
+
+          {doneCount > 0 && (
+            <Link
+              href="/archive"
+              className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+              style={{ background: "#22c55e15", border: "1px solid #22c55e30", color: "#22c55e" }}
+            >
+              <Archive size={13} /> Archive ({doneCount})
+            </Link>
+          )}
         </div>
 
-        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} liveStaff={liveStaff} />
-        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} liveStaff={liveStaff} />
-        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} liveStaff={liveStaff} />
-        <TaskGroup title="Completed" tasks={grouped.done} accent="#22c55e" onSelect={setSelectedTask} liveStaff={liveStaff} />
+        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
+        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
+        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
 
         {filtered.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-sm" style={{ color: "#4a7090" }}>No tasks match the current filters.</p>
+          <div className="text-center py-16 flex flex-col items-center gap-3">
+            <p className="text-sm" style={{ color: "#4a7090" }}>
+              {activeTasks.length === 0 ? "All tasks completed! Check the archive." : "No tasks match the current filters."}
+            </p>
+            {doneCount > 0 && (
+              <Link href="/archive" className="text-sm hover:opacity-80 transition-opacity" style={{ color: "#22c55e" }}>
+                View {doneCount} completed task{doneCount !== 1 ? "s" : ""} in Archive →
+              </Link>
+            )}
           </div>
         )}
       </div>

@@ -18,11 +18,11 @@ function rowToTask(row: Row): Task {
     description: (row.description as string) ?? "",
     status: row.status as TaskStatus,
     priority: row.priority as TaskPriority,
-    type: (row.type as "seo" | "webdev") ?? "webdev",
+    type: (row.type as "seo" | "webdev" | "both") ?? "webdev",
     assigneeId: (row.assignee_id as string) ?? "",
     dueDate: (row.due_date as string) ?? new Date().toISOString().slice(0, 10),
     tags: (row.tags as string[]) ?? [],
-    recurring: (row.recurring as "weekly" | "monthly" | null) ?? null,
+    recurring: (row.recurring as "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null) ?? null,
     recurringDay: (row.recurring_day as string) ?? undefined,
     attachments: [],
     subtasks: [],
@@ -36,7 +36,7 @@ function rowToProject(row: Row, tasks: Task[] = []): Project {
     id: row.id as string,
     name: row.name as string,
     description: (row.description as string) ?? "",
-    type: row.type as "seo" | "webdev",
+    type: row.type as "seo" | "webdev" | "both",
     phase: row.phase as Project["phase"],
     clientId: (row.client_id as string | null) ?? null,
     channelId: (row.channel_id as string | null) ?? null,
@@ -119,7 +119,7 @@ export async function loadAll() {
   );
 
   const credentials: Credential[] = (credRows ?? []).map((r: Row) => ({
-    id: r.id as string, clientId: (r.client_id as string) ?? "",
+    id: r.id as string, client: (r.client_name as string) ?? "",
     label: r.label as string, url: (r.url as string) ?? "",
     username: r.username as string, password: r.password as string,
     notes: (r.notes as string) ?? "", allowedStaff: (r.allowed_staff as string[]) ?? [],
@@ -150,9 +150,9 @@ export async function loadAll() {
       title: r.title as string,
       description: (r.description as string) ?? "",
       priority: r.priority as TaskPriority,
-      type: (r.type as "seo" | "webdev") ?? "webdev",
+      type: (r.type as "seo" | "webdev" | "both") ?? "webdev",
       tags: (r.tags as string[]) ?? [],
-      recurring: (r.recurring as "weekly" | "monthly" | null) ?? null,
+      recurring: (r.recurring as "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null) ?? null,
       recurringDay: (r.recurring_day as string) ?? undefined,
       daysFromStart: r.days_from_start as number,
       sortOrder: (r.sort_order as number) ?? 0,
@@ -198,10 +198,16 @@ export async function dbDeleteProject(id: string) {
   await supabase.from("pm_projects").delete().eq("id", id);
 }
 
-export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "phase" | "channelId" | "assignedStaff">>) {
+export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "channelId" | "clientId" | "startDate" | "dueDate" | "assignedStaff">>) {
   const patch: Row = {};
+  if (data.name !== undefined) patch.name = data.name;
+  if (data.description !== undefined) patch.description = data.description;
+  if (data.type !== undefined) patch.type = data.type;
   if (data.phase !== undefined) patch.phase = data.phase;
   if (data.channelId !== undefined) patch.channel_id = data.channelId;
+  if (data.clientId !== undefined) patch.client_id = data.clientId;
+  if (data.startDate !== undefined) patch.start_date = data.startDate || null;
+  if (data.dueDate !== undefined) patch.due_date = data.dueDate || null;
   if (data.assignedStaff !== undefined) patch.assigned_staff = data.assignedStaff;
   await supabase.from("pm_projects").update(patch).eq("id", id);
 }
@@ -283,11 +289,11 @@ export async function dbDeleteClient(id: string) {
 
 export async function dbAddCredential(id: string, data: Omit<Credential, "id">) {
   const { error } = await supabase.from("pm_credentials").insert({
-    id, client_id: data.clientId || null, label: data.label, url: data.url,
+    id, client_name: data.client, label: data.label, url: data.url,
     username: data.username, password: data.password, notes: data.notes,
     allowed_staff: data.allowedStaff,
   });
-  if (error) console.error("dbAddCredential", error);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpdateCredential(id: string, patch: { allowedStaff?: string[] }) {
@@ -383,6 +389,7 @@ function rowToArticle(row: Row): Article {
     submittedByName: (row.submitted_by_name as string) ?? "",
     clientApproval: (row.client_approval as ClientApproval) ?? "pending",
     clientApprovedBy: (row.client_approved_by as string | null) ?? null,
+    linkedTaskId: (row.linked_task_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -433,6 +440,7 @@ export async function dbCreateArticle(id: string, data: Omit<Article, "id" | "wo
     submitted_by_id: data.submittedById ?? null,
     submitted_by_name: data.submittedByName,
     client_approval: data.clientApproval,
+    linked_task_id: data.linkedTaskId ?? null,
   });
   if (error) console.error("dbCreateArticle", error);
 }

@@ -1,10 +1,10 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
-import { Check, RotateCcw } from "lucide-react";
+import { Check, RotateCcw, Loader2 } from "lucide-react";
 import { Suspense } from "react";
 import { useDraft } from "@/lib/use-draft";
 
@@ -18,11 +18,10 @@ function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).
 
 function NewCredentialForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const { addCredential, clients } = useStore();
+  const { addCredential } = useStore();
 
   const initialForm = {
-    clientId: searchParams.get("clientId") ?? clients[0]?.id ?? "",
+    client: "",
     label: "",
     url: "",
     username: "",
@@ -30,10 +29,9 @@ function NewCredentialForm() {
     notes: "",
     allowedStaff: [] as string[],
   };
-  // password is omitted from the draft for security
   const [form, setForm, clearDraft, restored] = useDraft("new-credential", initialForm, { omit: ["password"] });
   const [error, setError] = useState("");
-
+  const [submitting, setSubmitting] = useState(false);
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -41,8 +39,6 @@ function NewCredentialForm() {
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
   }, []);
-
-  const staffUsers = liveStaff;
 
   function toggleStaff(authId: string) {
     setForm((f) => ({
@@ -53,13 +49,21 @@ function NewCredentialForm() {
     }));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!form.label.trim()) { setError("Label is required."); return; }
     if (!form.username.trim()) { setError("Username is required."); return; }
     if (!form.password.trim()) { setError("Password is required."); return; }
-    addCredential(form);
-    clearDraft();
-    router.push("/credentials");
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await addCredential(form);
+      clearDraft();
+      router.push("/credentials");
+    } catch {
+      setError("Failed to save credential. Please try again.");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -73,26 +77,26 @@ function NewCredentialForm() {
       )}
       <div className="rounded-xl p-6 flex flex-col gap-5" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
 
+        {/* Client — free text */}
         <div>
           <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>CLIENT</label>
-          <select
-            value={form.clientId}
-            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+          <input
+            type="text"
+            placeholder="e.g. Cemimax Asia, Stone Emperor"
+            value={form.client}
+            onChange={(e) => setForm({ ...form, client: e.target.value })}
             className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
             style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
-          >
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name} — {c.website}</option>
-            ))}
-          </select>
+          />
         </div>
 
+        {/* Label */}
         <div>
           <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>LABEL *</label>
           <input
             autoFocus
             type="text"
-            placeholder="e.g. WordPress Admin, Google Analytics"
+            placeholder="e.g. WordPress Admin, Google Analytics, Gmail"
             value={form.label}
             onChange={(e) => setForm({ ...form, label: e.target.value })}
             className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
@@ -100,10 +104,11 @@ function NewCredentialForm() {
           />
         </div>
 
+        {/* URL */}
         <div>
-          <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>URL</label>
+          <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>LOGIN URL</label>
           <input
-            type="url"
+            type="text"
             placeholder="https://example.com/admin"
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
@@ -112,9 +117,10 @@ function NewCredentialForm() {
           />
         </div>
 
+        {/* Username + Password */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>USERNAME *</label>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>USERNAME / EMAIL *</label>
             <input
               type="text"
               placeholder="username or email"
@@ -137,6 +143,7 @@ function NewCredentialForm() {
           </div>
         </div>
 
+        {/* Notes */}
         <div>
           <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>NOTES</label>
           <textarea
@@ -149,10 +156,14 @@ function NewCredentialForm() {
           />
         </div>
 
+        {/* Staff Access */}
         <div>
           <label className="text-xs font-semibold block mb-2" style={{ color: "#4a7090" }}>STAFF ACCESS</label>
           <div className="flex flex-col gap-2">
-            {staffUsers.map((s) => {
+            {liveStaff.length === 0 && (
+              <p className="text-xs" style={{ color: "#4a7090" }}>Loading staff…</p>
+            )}
+            {liveStaff.map((s) => {
               const authId = staffAuthId(s);
               const selected = form.allowedStaff.includes(authId);
               return (
@@ -165,7 +176,7 @@ function NewCredentialForm() {
                     border: `1px solid ${selected ? "#38b6e8" : "#1c3248"}`,
                   }}
                 >
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "#38b6e8", color: "#fff" }}>
                     {staffInitials(s)}
                   </div>
                   <div className="flex-1">
@@ -173,7 +184,7 @@ function NewCredentialForm() {
                     <p className="text-xs" style={{ color: "#4a7090" }}>{s.email}</p>
                   </div>
                   <div
-                    className="w-5 h-5 rounded-full border-2 flex items-center justify-center"
+                    className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
                     style={{ borderColor: selected ? "#38b6e8" : "#1c3248", background: selected ? "#38b6e8" : "transparent" }}
                   >
                     {selected && <Check size={10} color="#fff" />}
@@ -192,10 +203,11 @@ function NewCredentialForm() {
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleSubmit}
-            className="flex-1 py-2.5 rounded-lg text-sm font-semibold"
+            disabled={submitting}
+            className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: "#38b6e8", color: "#fff" }}
           >
-            Save Credential
+            {submitting ? <><Loader2 size={14} className="animate-spin" />Saving…</> : "Save Credential"}
           </button>
           <button
             onClick={() => { clearDraft(); router.push("/credentials"); }}

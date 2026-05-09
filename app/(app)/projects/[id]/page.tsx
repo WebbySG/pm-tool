@@ -10,7 +10,7 @@ import { Topbar } from "@/components/topbar";
 import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
-  Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw,
+  Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2,
 } from "lucide-react";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
@@ -47,7 +47,7 @@ type NewTaskForm = {
   priority: "low" | "medium" | "high" | "urgent";
   dueDate: string;
   type: TaskType;
-  recurring: "weekly" | "monthly" | null;
+  recurring: "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null;
   recurringDay: string;
   tags: string;
 };
@@ -55,12 +55,20 @@ type NewTaskForm = {
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const { user } = useAuth();
-  const { projects, clients, addTask, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem } = useStore();
+  const isAdmin = user?.pmRole === "admin";
+  const { projects, templates, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned">("board");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddPin, setShowAddPin] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", startDate: "", dueDate: "" });
+  const [showApplyTemplate, setShowApplyTemplate] = useState(false);
+  const [applyTemplateIds, setApplyTemplateIds] = useState<string[]>([]);
+  const [applyTemplateExpanded, setApplyTemplateExpanded] = useState<string | null>(null);
+  const [applyTemplateError, setApplyTemplateError] = useState("");
+  const [applyingTemplates, setApplyingTemplates] = useState(false);
   const [showAssignMenu, setShowAssignMenu] = useState(false);
   const [addTaskCol, setAddTaskCol] = useState("todo");
   const [pinForm, setPinForm] = useState({ type: "link" as "link" | "document" | "message", title: "", content: "", url: "" });
@@ -88,12 +96,13 @@ export default function ProjectDetailPage() {
   if (!projectRaw) return notFound();
   const project = projectRaw;
 
-  const client = clients.find((c) => c.id === project.clientId);
   const done = project.tasks.filter((t) => t.status === "done").length;
   const pct = project.tasks.length > 0 ? Math.round((done / project.tasks.length) * 100) : 0;
-  const typeColor = project.type === "seo" ? "#22c55e" : "#38b6e8";
+  const typeColor = project.type === "seo" ? "#22c55e" : project.type === "both" ? "#a855f7" : "#38b6e8";
   const assignedUsers = liveStaff.filter((s) => project.assignedStaff.includes(staffAuthId(s)));
   const unassignedUsers = liveStaff.filter((s) => !project.assignedStaff.includes(staffAuthId(s)));
+  // Staff only see tasks assigned to them; admins see everything
+  const boardTasks = isAdmin ? project.tasks : project.tasks.filter((t) => t.assigneeId === user?.id);
 
   function handleAddTask() {
     if (!newTask.title.trim()) return;
@@ -139,6 +148,81 @@ export default function ProjectDetailPage() {
     setPinForm({ type: "link", title: "", content: "", url: "" });
   }
 
+  function openEdit() {
+    setEditForm({
+      name: project.name,
+      description: project.description,
+      type: project.type as "webdev" | "seo" | "both",
+      startDate: project.startDate ?? "",
+      dueDate: project.dueDate ?? "",
+    });
+    setShowEdit(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!editForm.name.trim()) return;
+    await updateProject(project.id, {
+      name: editForm.name.trim(),
+      description: editForm.description,
+      type: editForm.type,
+      startDate: editForm.startDate,
+      dueDate: editForm.dueDate,
+    });
+    setShowEdit(false);
+  }
+
+  const matchingTemplates = project.type === "both"
+    ? templates.filter((t) => t.type === "webdev" || t.type === "seo" || t.type === "any" || t.type === "both")
+    : templates.filter((t) => t.type === project.type || t.type === "any");
+
+  async function handleApplyTemplates() {
+    if (applyTemplateIds.length === 0) return;
+    setApplyTemplateError("");
+
+    const existingTitles = new Set(project.tasks.map((t) => t.title.trim().toLowerCase()));
+    const clashes: string[] = [];
+    applyTemplateIds.forEach((tplId) => {
+      const tpl = templates.find((t) => t.id === tplId);
+      if (!tpl) return;
+      tpl.tasks.forEach((tt) => {
+        if (existingTitles.has(tt.title.trim().toLowerCase())) clashes.push(tt.title);
+      });
+    });
+
+    if (clashes.length > 0) {
+      setApplyTemplateError(`Title clash — these tasks already exist: ${clashes.join(", ")}`);
+      return;
+    }
+
+    setApplyingTemplates(true);
+    const startDate = project.startDate ?? new Date().toISOString().split("T")[0];
+    for (const tplId of applyTemplateIds) {
+      const tpl = templates.find((t) => t.id === tplId);
+      if (!tpl) continue;
+      for (const tt of tpl.tasks) {
+        const due = new Date(startDate);
+        due.setDate(due.getDate() + tt.daysFromStart);
+        await addTask(project.id, {
+          projectId: project.id,
+          title: tt.title,
+          description: tt.description,
+          type: tt.type,
+          status: "todo",
+          priority: tt.priority,
+          assigneeId: liveStaff[0] ? staffAuthId(liveStaff[0]) : "",
+          dueDate: due.toISOString().split("T")[0],
+          tags: tt.tags,
+          recurring: tt.recurring ?? null,
+          recurringDay: tt.recurringDay,
+        });
+      }
+    }
+
+    setApplyingTemplates(false);
+    setApplyTemplateIds([]);
+    setShowApplyTemplate(false);
+  }
+
   // Keep selected task in sync with store updates
   const liveSelectedTask = selectedTask
     ? project.tasks.find((t) => t.id === selectedTask.id) ?? null
@@ -156,9 +240,18 @@ export default function ProjectDetailPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: typeColor + "20", color: typeColor }}>
-                    {project.type === "seo" ? "SEO" : "Web Dev"}
+                    {project.type === "seo" ? "SEO" : project.type === "both" ? "Web + SEO" : "Web Dev"}
                   </span>
-                  <span className="text-xs" style={{ color: "#4a7090" }}>{client?.name} · {client?.website}</span>
+                  {isAdmin && (
+                    <button
+                      onClick={openEdit}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs hover:opacity-80 transition-opacity ml-1"
+                      style={{ background: "#1c3248", color: "#4a7090" }}
+                      title="Edit project"
+                    >
+                      <Pencil size={11} /> Edit
+                    </button>
+                  )}
                 </div>
                 <p className="text-sm" style={{ color: "#4a7090" }}>{project.description}</p>
               </div>
@@ -245,19 +338,32 @@ export default function ProjectDetailPage() {
 
           {/* BOARD */}
           {activeTab === "board" && (
-            <KanbanBoard
-              projectId={project.id}
-              tasks={project.tasks}
-              onTaskClick={(task) => setSelectedTask(task)}
-              onAddTask={(status: TaskStatus) => { setAddTaskCol(status); setShowAddTask(true); }}
-              liveStaff={liveStaff}
-            />
+            <div className="flex flex-col gap-4">
+              {isAdmin && matchingTemplates.length > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => { setApplyTemplateError(""); setShowApplyTemplate(true); }}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                    style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#4a7090" }}
+                  >
+                    <ListChecks size={14} /> Apply Template
+                  </button>
+                </div>
+              )}
+              <KanbanBoard
+                projectId={project.id}
+                tasks={boardTasks}
+                onTaskClick={(task) => setSelectedTask(task)}
+                onAddTask={(status: TaskStatus) => { setAddTaskCol(status); setShowAddTask(true); }}
+                liveStaff={liveStaff}
+              />
+            </div>
           )}
 
           {/* SCHEDULE */}
           {activeTab === "schedule" && (
             <ScheduleTab
-              project={project}
+              project={{ ...project, tasks: boardTasks }}
               onTaskClick={(task) => setSelectedTask(task)}
               onAddTask={(dueDate) => {
                 setNewTask((prev) => ({ ...prev, dueDate }));
@@ -457,6 +563,9 @@ export default function ProjectDetailPage() {
                     <option value="">None</option>
                     <option value="weekly">Weekly</option>
                     <option value="monthly">Monthly</option>
+                    <option value="every-3-months">Every 3 months</option>
+                    <option value="every-4-months">Every 4 months</option>
+                    <option value="every-6-months">Every 6 months</option>
                     <option value="yearly">Yearly</option>
                   </select>
                 </div>
@@ -507,6 +616,200 @@ export default function ProjectDetailPage() {
               <div className="flex gap-2">
                 <button onClick={handleAddPin} className="flex-1 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Pin it</button>
                 <button onClick={() => setShowAddPin(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Edit Project Modal */}
+      {showEdit && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowEdit(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Edit Project</h3>
+                <button onClick={() => setShowEdit(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+              </div>
+
+              {/* Name */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Project Name *</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              {/* Description */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Description</label>
+                <textarea
+                  value={editForm.description}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Type */}
+                <div className="flex flex-col gap-1.5 col-span-2">
+                  <label className="text-xs" style={{ color: "#4a7090" }}>Type</label>
+                  <select
+                    value={editForm.type}
+                    onChange={(e) => setEditForm({ ...editForm, type: e.target.value as "webdev" | "seo" | "both" })}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                  >
+                    <option value="webdev">Web Dev</option>
+                    <option value="seo">SEO</option>
+                    <option value="both">Web + SEO</option>
+                  </select>
+                </div>
+
+                {/* Start Date */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs" style={{ color: "#4a7090" }}>Start Date</label>
+                  <input
+                    type="date"
+                    value={editForm.startDate}
+                    onChange={(e) => setEditForm({ ...editForm, startDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                  />
+                </div>
+
+                {/* Due Date */}
+                <div className="flex flex-col gap-1.5 col-span-2">
+                  <label className="text-xs" style={{ color: "#4a7090" }}>Due Date</label>
+                  <input
+                    type="date"
+                    value={editForm.dueDate}
+                    onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={!editForm.name.trim()}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium disabled:opacity-40"
+                  style={{ background: "#38b6e8", color: "#fff" }}
+                >
+                  <Check size={14} /> Save Changes
+                </button>
+                <button
+                  onClick={() => setShowEdit(false)}
+                  className="px-4 py-2.5 rounded-lg text-sm"
+                  style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Apply Template Modal */}
+      {showApplyTemplate && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowApplyTemplate(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6 max-h-[80vh] overflow-y-auto" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Apply Template to Project</h3>
+                <button onClick={() => setShowApplyTemplate(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <ListChecks size={14} style={{ color: "#38b6e8" }} />
+                <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>SELECT TEMPLATES TO APPLY</p>
+                {applyTemplateIds.length > 0 && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full ml-auto" style={{ background: "#38b6e820", color: "#38b6e8" }}>
+                    {applyTemplateIds.reduce((sum, id) => sum + (templates.find((t) => t.id === id)?.tasks.length ?? 0), 0)} tasks will be added
+                  </span>
+                )}
+              </div>
+
+              {applyTemplateError && (
+                <p className="text-xs px-3 py-2 rounded-lg" style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444430" }}>
+                  {applyTemplateError}
+                </p>
+              )}
+
+              <div className="flex flex-col gap-2">
+                {matchingTemplates.map((tpl) => {
+                  const selected = applyTemplateIds.includes(tpl.id);
+                  const expanded = applyTemplateExpanded === tpl.id;
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="rounded-lg overflow-hidden"
+                      style={{ border: `1px solid ${selected ? "#38b6e8" : "#1c3248"}`, background: selected ? "#38b6e815" : "#0e1e30" }}
+                    >
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <button
+                          onClick={() => setApplyTemplateIds((prev) => prev.includes(tpl.id) ? prev.filter((id) => id !== tpl.id) : [...prev, tpl.id])}
+                          className="w-4 h-4 rounded border flex items-center justify-center shrink-0"
+                          style={{ borderColor: selected ? "#38b6e8" : "#1c3248", background: selected ? "#38b6e8" : "transparent" }}
+                        >
+                          {selected && <Check size={10} color="#fff" />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>{tpl.name}</p>
+                          <p className="text-xs" style={{ color: "#4a7090" }}>{tpl.tasks.length} tasks · {tpl.description}</p>
+                        </div>
+                        <button
+                          onClick={() => setApplyTemplateExpanded(expanded ? null : tpl.id)}
+                          className="p-1 rounded hover:opacity-70"
+                          style={{ color: "#4a7090" }}
+                        >
+                          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                      </div>
+                      {expanded && (
+                        <div style={{ borderTop: "1px solid #1c3248" }}>
+                          {tpl.tasks.map((task, i) => (
+                            <div
+                              key={task.id}
+                              className="flex items-center gap-3 px-4 py-2"
+                              style={{ borderBottom: i < tpl.tasks.length - 1 ? "1px solid #1c324840" : "none" }}
+                            >
+                              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: task.priority === "urgent" ? "#ef4444" : task.priority === "high" ? "#f59e0b" : task.priority === "medium" ? "#38b6e8" : "#22c55e" }} />
+                              <p className="text-xs flex-1" style={{ color: "#cce4ff" }}>{task.title}</p>
+                              <span className="text-xs" style={{ color: "#8b90a750" }}>Day {task.daysFromStart}{task.recurring ? ` · ${task.recurring}` : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleApplyTemplates}
+                  disabled={applyTemplateIds.length === 0 || applyingTemplates}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: "#38b6e8", color: "#fff" }}
+                >
+                  {applyingTemplates ? <><Loader2 size={14} className="animate-spin" />Applying…</> : <>Apply {applyTemplateIds.length > 0 ? `${applyTemplateIds.length} Template${applyTemplateIds.length > 1 ? "s" : ""}` : "Templates"}</>}
+                </button>
+                <button onClick={() => setShowApplyTemplate(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                  Cancel
+                </button>
               </div>
             </div>
           </div>

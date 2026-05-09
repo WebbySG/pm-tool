@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { type Task } from "@/lib/mock-data";
-import { X, Check, ChevronDown, ChevronUp, ListChecks, RotateCcw } from "lucide-react";
+import { X, Check, ChevronDown, ChevronUp, ListChecks, RotateCcw, Loader2 } from "lucide-react";
 import { useDraft } from "@/lib/use-draft";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
@@ -29,7 +29,7 @@ let seedCounter = 1000;
 export default function NewProjectPage() {
   const router = useRouter();
   const { user } = useAuth();
-  const { addProject, channels, templates } = useStore();
+  const { addProject, channels, templates, projects } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   if (user && user.pmRole !== "admin") {
@@ -47,9 +47,9 @@ export default function NewProjectPage() {
 
   const initialForm = {
     name: "",
-    clientId: null as string | null,
+    clientId: null as null,
     channelId: null as string | null,
-    type: "webdev" as "webdev" | "seo",
+    type: "webdev" as "webdev" | "seo" | "both",
     phase: "discovery" as const,
     description: "",
     startDate: new Date().toISOString().split("T")[0],
@@ -60,9 +60,12 @@ export default function NewProjectPage() {
   const [form, setForm, clearDraft, restored] = useDraft("new-project", initialForm);
   const selectedTemplateIds = form.selectedTemplateIds;
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
 
-  const matchingTemplates = templates.filter((t) => t.type === form.type || t.type === "any");
+  const matchingTemplates = form.type === "both"
+    ? templates.filter((t) => t.type === "webdev" || t.type === "seo" || t.type === "any" || t.type === "both")
+    : templates.filter((t) => t.type === form.type || t.type === "any");
 
   function toggleStaff(userId: string) {
     setForm((f) => ({
@@ -82,8 +85,13 @@ export default function NewProjectPage() {
     }));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!form.name.trim()) { setError("Project name is required."); return; }
+    const duplicate = projects.some((p) => p.name.trim().toLowerCase() === form.name.trim().toLowerCase());
+    if (duplicate) { setError(`A project named "${form.name.trim()}" already exists.`); return; }
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
 
     const seedTasks: Task[] = selectedTemplateIds.flatMap((tplId) => {
       const tpl = templates.find((t) => t.id === tplId);
@@ -109,9 +117,14 @@ export default function NewProjectPage() {
       }));
     });
 
-    addProject(form, seedTasks);
-    clearDraft();
-    router.push("/projects");
+    try {
+      await addProject(form, seedTasks);
+      clearDraft();
+      router.push("/projects");
+    } catch {
+      setError("Failed to create project. Please try again.");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -161,20 +174,24 @@ export default function NewProjectPage() {
           <div>
             <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>TYPE</label>
             <div className="flex gap-2">
-              {(["webdev", "seo"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setForm({ ...form, type: t, selectedTemplateIds: [] })}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: form.type === t ? (t === "seo" ? "#22c55e20" : "#38b6e820") : "#0e1e30",
-                    border: `1px solid ${form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#1c3248"}`,
-                    color: form.type === t ? (t === "seo" ? "#22c55e" : "#38b6e8") : "#4a7090",
-                  }}
-                >
-                  {t === "seo" ? "SEO" : "Web Dev"}
-                </button>
-              ))}
+              {(["webdev", "seo", "both"] as const).map((t) => {
+                const activeColor = t === "seo" ? "#22c55e" : t === "both" ? "#a855f7" : "#38b6e8";
+                const label = t === "seo" ? "SEO" : t === "both" ? "Web + SEO" : "Web Dev";
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setForm({ ...form, type: t, selectedTemplateIds: [] })}
+                    className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+                    style={{
+                      background: form.type === t ? activeColor + "20" : "#0e1e30",
+                      border: `1px solid ${form.type === t ? activeColor : "#1c3248"}`,
+                      color: form.type === t ? activeColor : "#4a7090",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -301,8 +318,13 @@ export default function NewProjectPage() {
           {error && <p className="text-sm px-3 py-2 rounded-lg" style={{ background: "#ef444420", color: "#ef4444" }}>{error}</p>}
 
           <div className="flex gap-2 pt-1">
-            <button onClick={handleSubmit} className="flex-1 py-2.5 rounded-lg text-sm font-semibold" style={{ background: "#38b6e8", color: "#fff" }}>
-              Create Project{selectedTemplateIds.length > 0 ? ` + seed tasks` : ""}
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{ background: "#38b6e8", color: "#fff" }}
+            >
+              {submitting ? <><Loader2 size={14} className="animate-spin" />Creating…</> : <>Create Project{selectedTemplateIds.length > 0 ? ` + seed tasks` : ""}</>}
             </button>
             <button onClick={() => { clearDraft(); router.push("/projects"); }} className="px-5 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
               Cancel

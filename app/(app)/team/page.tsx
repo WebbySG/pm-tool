@@ -6,6 +6,7 @@ import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { inviteStaff, revokeStaff } from "@/app/actions/invite";
 import { UserPlus, Mail, Clock, CheckCircle2, X, Send, Loader2, UserMinus } from "lucide-react";
+import Link from "next/link";
 
 const priorityColor: Record<string, string> = {
   urgent: "#ef4444", high: "#f59e0b", medium: "#818cf8", low: "#22c55e",
@@ -105,9 +106,10 @@ function InviteForm({ onSent }: { onSent: () => void }) {
 }
 
 function TeamContent() {
-  const { projects } = useStore();
+  const { projects, refresh } = useStore();
   const allTasks = projects.flatMap((p) => p.tasks);
   const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
   async function loadStaff() {
@@ -118,7 +120,10 @@ function TeamContent() {
     setStaff((data as StaffMember[]) ?? []);
   }
 
-  useEffect(() => { loadStaff(); }, []);
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([refresh(), loadStaff()]).finally(() => setLoading(false));
+  }, []);
 
   function handleInviteSent() {
     loadStaff();
@@ -150,6 +155,17 @@ function TeamContent() {
 
   const active = staff.filter((s) => s.status === "active");
   const pending = staff.filter((s) => s.status === "invited");
+
+  if (loading) {
+    return (
+      <div className="p-6 flex flex-col gap-4">
+        <div className="h-24 rounded-2xl animate-pulse" style={{ background: "var(--bg-card)" }} />
+        <div className="grid grid-cols-2 gap-4">
+          {[1, 2].map((i) => <div key={i} className="h-64 rounded-2xl animate-pulse" style={{ background: "var(--bg-card)" }} />)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 flex flex-col gap-6">
@@ -283,15 +299,15 @@ function TeamContent() {
                       </div>
                       <button
                         onClick={() => toggleContentAccess(s)}
-                        className="relative w-10 h-5 rounded-full transition-colors shrink-0"
+                        className="relative w-11 h-6 rounded-full transition-colors shrink-0"
                         style={{ background: s.can_access_content ? "#10b981" : "var(--bg-surface)", border: "1px solid var(--border)" }}
                         title={s.can_access_content ? "Disable content access" : "Enable content access"}
                       >
                         <span
-                          className="absolute top-0.5 w-4 h-4 rounded-full transition-transform"
+                          className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow transition-transform"
                           style={{
                             background: s.can_access_content ? "#fff" : "var(--text-muted)",
-                            transform: s.can_access_content ? "translateX(1.35rem)" : "translateX(0.1rem)",
+                            transform: s.can_access_content ? "translateX(1.25rem)" : "translateX(0)",
                           }}
                         />
                       </button>
@@ -302,17 +318,23 @@ function TeamContent() {
                     <p className="text-xs font-bold mb-3 tracking-widest" style={{ color: "var(--text-muted)" }}>ACTIVE TASKS</p>
                     {open.slice(0, 4).map((task) => {
                       const project = projects.find((p) => p.id === task.projectId);
+                      const isOverdue = new Date(task.dueDate) < new Date();
                       return (
-                        <div key={task.id} className="flex items-center gap-3 mb-2">
+                        <Link
+                          key={task.id}
+                          href={`/projects/${task.projectId}`}
+                          className="flex items-center gap-3 mb-2 rounded-lg px-2 py-1.5 -mx-2 hover:opacity-80 transition-opacity"
+                          style={{ background: "transparent" }}
+                        >
                           <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor[task.priority] }} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm truncate" style={{ color: "var(--text)" }}>{task.title}</p>
                             {project && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{project.name}</p>}
                           </div>
-                          <span className="text-xs shrink-0" style={{ color: new Date(task.dueDate) < new Date() ? "#f87171" : "var(--text-muted)" }}>
+                          <span className="text-xs shrink-0" style={{ color: isOverdue ? "#f87171" : "var(--text-muted)" }}>
                             {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
                           </span>
-                        </div>
+                        </Link>
                       );
                     })}
                     {open.length === 0 && <p className="text-sm" style={{ color: "var(--text-muted)" }}>No active tasks</p>}

@@ -19,6 +19,7 @@ export interface Article {
   submittedByName: string;
   clientApproval: ClientApproval;
   clientApprovedBy: string | null;
+  linkedTaskId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,10 +35,10 @@ export interface ArticleComment {
 }
 export type TaskStatus = "todo" | "in_progress" | "review" | "done";
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
-export type TaskType = "webdev" | "seo";
+export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";
 export type PinnedType = "link" | "document" | "message" | "image";
-export type RecurringFrequency = "weekly" | "monthly" | "yearly" | null;
+export type RecurringFrequency = "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null;
 export type PostType = "gmb" | "website" | "other";
 
 export interface Channel {
@@ -89,7 +90,7 @@ export interface Client {
 
 export interface Credential {
   id: string;
-  clientId: string;
+  client: string;
   label: string;
   url: string;
   username: string;

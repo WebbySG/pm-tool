@@ -70,6 +70,7 @@ export default function ReviewPage() {
         submittedByName: data.submitted_by_name ?? "",
         clientApproval: data.client_approval ?? "pending",
         clientApprovedBy: data.client_approved_by ?? null,
+        linkedTaskId: data.linked_task_id ?? null,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
       });
