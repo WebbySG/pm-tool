@@ -203,8 +203,9 @@ export const useStore = create<Store>()(
 
   addTemplate: async (tplData) => {
     const id = crypto.randomUUID();
-    set((s) => ({ templates: [...s.templates, { ...tplData, id, tasks: [] }] }));
-    db.dbAddTemplate(id, tplData);
+    const newTpl = { ...tplData, id, tasks: [] };
+    await db.dbAddTemplate(id, tplData);
+    set((s) => ({ templates: [...s.templates, newTpl] }));
   },
 
   updateTemplate: async (tplId, data) => {
@@ -272,6 +273,7 @@ export const useStore = create<Store>()(
   addTemplateTask: async (tplId, taskData) => {
     const id = crypto.randomUUID();
     const newTask: TaskTemplate = { ...taskData, id, subtasks: [] };
+    await db.dbAddTemplateTask(id, tplId, taskData);
     set((s) => ({
       templates: s.templates.map((t) => {
         if (t.id !== tplId) return t;
@@ -281,7 +283,6 @@ export const useStore = create<Store>()(
         return { ...t, tasks: [...t.tasks, newTask] };
       }),
     }));
-    db.dbAddTemplateTask(id, tplId, taskData);
   },
 
   removeTemplateTask: async (tplId, taskId) => {
@@ -644,7 +645,6 @@ export const useStore = create<Store>()(
       channels: s.channels,
       templates: s.templates,
       articles: s.articles,
-      initialized: s.initialized,
     }),
   }
 ));

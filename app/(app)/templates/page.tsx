@@ -735,11 +735,20 @@ function NewTemplateForm({ onDone }: { onDone: () => void }) {
   const [description, setDescription] = useState("");
   const [type, setType] = useState<TaskType | "any">("seo");
   const [category, setCategory] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  function submit() {
+  async function submit() {
     if (!name.trim()) return;
-    addTemplate({ name: name.trim(), description: description.trim(), type, category: category.trim() });
-    onDone();
+    setSaving(true);
+    setError("");
+    try {
+      await addTemplate({ name: name.trim(), description: description.trim(), type, category: category.trim() });
+      onDone();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save template");
+      setSaving(false);
+    }
   }
 
   return (
@@ -778,14 +787,20 @@ function NewTemplateForm({ onDone }: { onDone: () => void }) {
         className="px-3 py-2 rounded-lg text-sm outline-none"
         style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
       />
+      {error && (
+        <p className="text-xs px-3 py-2 rounded-lg" style={{ background: "#ef444418", color: "#f87171", border: "1px solid #ef444430" }}>
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2 justify-end">
-        <button onClick={onDone} className="px-3 py-2 rounded-lg text-sm" style={{ color: "#4a7090" }}>Cancel</button>
+        <button onClick={onDone} className="px-3 py-2 rounded-lg text-sm" style={{ color: "var(--text-muted)" }}>Cancel</button>
         <button
           onClick={submit}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
-          style={{ background: "#38b6e8", color: "#fff" }}
+          disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+          style={{ background: "var(--accent)", color: "#fff" }}
         >
-          <Check size={13} /> Create Template
+          <Check size={13} /> {saving ? "Saving…" : "Create Template"}
         </button>
       </div>
     </div>

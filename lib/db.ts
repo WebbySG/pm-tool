@@ -185,8 +185,10 @@ export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks
   const { error } = await supabase.from("pm_projects").insert({
     id, name: data.name, description: data.description, type: data.type,
     phase: data.phase, client_id: data.clientId ?? null,
-    channel_id: data.channelId ?? null, start_date: data.startDate,
-    due_date: data.dueDate, assigned_staff: data.assignedStaff,
+    channel_id: data.channelId ?? null,
+    start_date: data.startDate || null,
+    due_date: data.dueDate || null,
+    assigned_staff: data.assignedStaff,
   });
   if (error) console.error("dbAddProject", error);
 }
@@ -303,7 +305,7 @@ export async function dbAddTemplate(id: string, data: Omit<ProjectTemplate, "id"
   const { error } = await supabase.from("pm_project_templates").insert({
     id, name: data.name, description: data.description, type: data.type, category: data.category,
   });
-  if (error) console.error("dbAddTemplate", error);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpdateTemplate(id: string, data: Partial<Omit<ProjectTemplate, "id" | "tasks">>) {
@@ -324,8 +326,9 @@ export async function dbAddTemplateTask(id: string, templateId: string, task: Om
     days_from_start: task.daysFromStart,
     parent_id: task.parentId ?? null,
     month: task.month ?? 1,
+    sort_order: task.sortOrder ?? 0,
   });
-  if (error) console.error("dbAddTemplateTask", error);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpdateTemplateTask(id: string, patch: Partial<{

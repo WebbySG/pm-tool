@@ -59,7 +59,6 @@ export default function NewProjectPage() {
 
   function handleSubmit() {
     if (!form.name.trim()) { setError("Project name is required."); return; }
-    if (!form.dueDate) { setError("Due date is required."); return; }
 
     const seedTasks: Task[] = selectedTemplateIds.flatMap((tplId) => {
       const tpl = templates.find((t) => t.id === tplId);
