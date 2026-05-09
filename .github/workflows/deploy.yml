@@ -15,7 +15,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /var/www/pm-tool
+            cd /root/slack-clone
             git pull origin master
             npm install --production=false
             npm run build
