@@ -191,6 +191,11 @@ export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks
   if (error) console.error("dbAddProject", error);
 }
 
+export async function dbDeleteProject(id: string) {
+  await supabase.from("pm_tasks").delete().eq("project_id", id);
+  await supabase.from("pm_projects").delete().eq("id", id);
+}
+
 export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "phase" | "channelId" | "assignedStaff">>) {
   const patch: Row = {};
   if (data.phase !== undefined) patch.phase = data.phase;

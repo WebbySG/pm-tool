@@ -2,7 +2,21 @@
 
 /* ── Theme variables ─────────────────────────────────────────────────────── */
 :root {
-  /* Dark navy — Webby SG default */
+  /* Light — default */
+  --bg-base:    #f5f7fa;
+  --bg-sidebar: #ffffff;
+  --bg-card:    #ffffff;
+  --bg-surface: #eef2f7;
+  --border:     #dde3ed;
+  --text:       #111827;
+  --text-muted: #6b7280;
+  --accent:     #2563eb;
+  --accent-2:   #f97316;
+  --accent-rgb: 37, 99, 235;
+}
+
+[data-theme="dark"] {
+  /* Dark navy */
   --bg-base:    #070d18;
   --bg-sidebar: #0c1522;
   --bg-card:    #101d2e;
@@ -16,16 +30,16 @@
 }
 
 [data-theme="light"] {
-  --bg-base:    #f0f7ff;
+  --bg-base:    #f5f7fa;
   --bg-sidebar: #ffffff;
   --bg-card:    #ffffff;
-  --bg-surface: #e8f4ff;
-  --border:     #c8dff0;
-  --text:       #0a1828;
-  --text-muted: #5a7a90;
-  --accent:     #38b6e8;
-  --accent-2:   #ff6b47;
-  --accent-rgb: 56, 182, 232;
+  --bg-surface: #eef2f7;
+  --border:     #dde3ed;
+  --text:       #111827;
+  --text-muted: #6b7280;
+  --accent:     #2563eb;
+  --accent-2:   #f97316;
+  --accent-rgb: 37, 99, 235;
 }
 
 [data-theme="ocean"] {
@@ -61,6 +75,8 @@ body {
   background-color: var(--bg-base);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
   margin: 0;
   transition: background-color 0.3s ease, color 0.3s ease;
 }

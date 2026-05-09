@@ -65,6 +65,7 @@ interface Store {
 
   // Project actions
   addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<void>;
+  deleteProject: (projectId: string) => Promise<void>;
   assignStaff: (projectId: string, userId: string) => Promise<void>;
   removeStaff: (projectId: string, userId: string) => Promise<void>;
 
@@ -492,6 +493,11 @@ export const useStore = create<Store>()(
     for (const t of seedTasks) {
       db.dbAddTask(t.id, id, { ...t, parentId: null });
     }
+  },
+
+  deleteProject: async (projectId) => {
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) }));
+    await db.dbDeleteProject(projectId);
   },
 
   assignStaff: async (projectId, userId) => {

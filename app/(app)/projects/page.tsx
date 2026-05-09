@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { type Project, type Channel } from "@/lib/mock-data";
-import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
+import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 
@@ -20,9 +20,10 @@ const CHANNEL_COLORS = ["#38b6e8", "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "
 
 // ─── Draggable project card ───────────────────────────────────────────────
 function DraggableProjectCard({ project }: { project: Project }) {
-  const { clients } = useStore();
+  const { clients, deleteProject } = useStore();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: project.id });
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.3 : 1, touchAction: "none" };
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const client = clients.find((c) => c.id === project.clientId);
   const done = project.tasks.filter((t) => t.status === "done").length;
@@ -42,46 +43,64 @@ function DraggableProjectCard({ project }: { project: Project }) {
         <GripVertical size={14} />
       </div>
 
+      {/* Delete button */}
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          if (!confirmDelete) { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); return; }
+          deleteProject(project.id);
+        }}
+        className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold"
+        style={{
+          background: confirmDelete ? "#ef4444" : "#ef444420",
+          color: confirmDelete ? "#fff" : "#f87171",
+          border: `1px solid ${confirmDelete ? "#ef4444" : "#ef444440"}`,
+        }}
+        title={confirmDelete ? "Click again to confirm delete" : "Delete project"}
+      >
+        {confirmDelete ? <><AlertTriangle size={11} /> Confirm</> : <Trash2 size={11} />}
+      </button>
+
       <Link
         href={`/projects/${project.id}`}
-        className="rounded-xl p-5 pl-7 flex flex-col gap-3 hover:opacity-90 transition-opacity block"
-        style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}
+        className="rounded-xl p-5 pl-7 flex flex-col gap-3 hover:shadow-md transition-shadow block"
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
         draggable={false}
       >
-        <div className="flex items-start justify-between">
-          <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: typeColor + "20", color: typeColor }}>
+        <div className="flex items-start justify-between pr-16">
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: typeColor + "20", color: typeColor }}>
             {project.type === "seo" ? "SEO" : "Web Dev"}
           </span>
-          <span className="text-xs font-medium px-2 py-0.5 rounded-full capitalize" style={{ background: PHASE_COLOR[project.phase] + "20", color: PHASE_COLOR[project.phase] }}>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full capitalize" style={{ background: PHASE_COLOR[project.phase] + "20", color: PHASE_COLOR[project.phase] }}>
             {project.phase}
           </span>
         </div>
 
         <div>
-          <p className="font-semibold text-sm mb-0.5" style={{ color: "#cce4ff" }}>{project.name}</p>
-          <p className="text-xs" style={{ color: "#4a7090" }}>{client?.name ?? "—"}</p>
+          <p className="font-bold text-base mb-0.5" style={{ color: "var(--text)" }}>{project.name}</p>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>{client?.name ?? "—"}</p>
         </div>
 
         {project.description && (
-          <p className="text-xs line-clamp-2" style={{ color: "#4a7090" }}>{project.description}</p>
+          <p className="text-sm line-clamp-2" style={{ color: "var(--text-muted)" }}>{project.description}</p>
         )}
 
         <div>
           <div className="flex justify-between mb-1.5">
-            <span className="text-xs" style={{ color: "#4a7090" }}>Progress</span>
-            <span className="text-xs font-medium" style={{ color: "#cce4ff" }}>{pct}%</span>
+            <span className="text-sm" style={{ color: "var(--text-muted)" }}>Progress</span>
+            <span className="text-sm font-semibold" style={{ color: "var(--text)" }}>{pct}%</span>
           </div>
-          <div className="h-1.5 rounded-full" style={{ background: "#1c3248" }}>
-            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "#38b6e8" }} />
+          <div className="h-2 rounded-full" style={{ background: "var(--bg-surface)" }}>
+            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "var(--accent)" }} />
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-1" style={{ borderTop: "1px solid #1c3248" }}>
-          <div className="flex items-center gap-1.5 text-xs" style={{ color: "#4a7090" }}>
-            <CheckSquare size={12} /> {done}/{total} tasks
+        <div className="flex items-center justify-between pt-1" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-1.5 text-sm" style={{ color: "var(--text-muted)" }}>
+            <CheckSquare size={13} /> {done}/{total} tasks
           </div>
-          <div className="flex items-center gap-1.5 text-xs" style={{ color: daysLeft < 7 && daysLeft >= 0 ? "#f59e0b" : daysLeft < 0 ? "#ef4444" : "#4a7090" }}>
-            <Calendar size={12} />
+          <div className="flex items-center gap-1.5 text-sm" style={{ color: daysLeft < 7 && daysLeft >= 0 ? "#f59e0b" : daysLeft < 0 ? "#ef4444" : "var(--text-muted)" }}>
+            <Calendar size={13} />
             {daysLeft < 0 ? "Overdue" : `${daysLeft}d left`}
           </div>
         </div>
@@ -120,7 +139,7 @@ function ChannelGroup({
         className="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
         style={{ background: isOver ? color + "15" : "transparent", border: isOver ? `1px dashed ${color}50` : "1px solid transparent" }}
       >
-        <button onClick={() => setCollapsed(!collapsed)} style={{ color: "#4a7090" }}>
+        <button onClick={() => setCollapsed(!collapsed)} style={{ color: "var(--text-muted)" }}>
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <div className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
@@ -133,24 +152,24 @@ function ChannelGroup({
             onKeyDown={(e) => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setEditing(false); }}
             onBlur={saveRename}
             className="flex-1 px-2 py-0.5 rounded text-sm font-semibold outline-none"
-            style={{ background: "#0e1e30", border: "1px solid #38b6e8", color: "#cce4ff" }}
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--accent)", color: "var(--text)" }}
           />
         ) : (
-          <h2 className="text-sm font-semibold flex-1" style={{ color: "#cce4ff" }}>{channel?.name ?? "Ungrouped"}</h2>
+          <h2 className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>{channel?.name ?? "Ungrouped"}</h2>
         )}
 
-        <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "#1c3248", color: "#4a7090" }}>{projects.length}</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>{projects.length}</span>
 
         {channel && !editing && (
           <>
-            <button onClick={() => { setEditing(true); setEditName(channel.name); }} className="p-1 rounded hover:opacity-70 transition-opacity opacity-0 group-hover:opacity-100" style={{ color: "#4a7090" }}>
+            <button onClick={() => { setEditing(true); setEditName(channel.name); }} className="p-1 rounded hover:opacity-70 transition-opacity opacity-0 group-hover:opacity-100" style={{ color: "var(--text-muted)" }}>
               <Pencil size={12} />
             </button>
             <button
               onClick={() => { if (!confirmDelete) { setConfirmDelete(true); return; } deleteChannel(channel.id); }}
               onBlur={() => setConfirmDelete(false)}
               className="p-1 rounded hover:opacity-70 transition-opacity"
-              style={{ color: confirmDelete ? "#ef4444" : "#8b90a750" }}
+              style={{ color: confirmDelete ? "#ef4444" : "var(--text-muted)" }}
               title={confirmDelete ? "Click again to confirm" : "Delete channel"}
             >
               <Trash2 size={12} />
@@ -166,8 +185,8 @@ function ChannelGroup({
             <DraggableProjectCard key={project.id} project={project} />
           ))}
           {projects.length === 0 && (
-            <div className="col-span-3 py-6 text-center rounded-xl" style={{ border: "1px dashed #1c3248" }}>
-              <p className="text-xs" style={{ color: "#8b90a750" }}>Drag a project here</p>
+            <div className="col-span-3 py-6 text-center rounded-xl" style={{ border: "1px dashed var(--border)" }}>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>Drag a project here</p>
             </div>
           )}
         </div>
@@ -227,11 +246,11 @@ export default function ProjectsPage() {
       <div className="p-6 flex flex-col gap-6">
         {/* Toolbar */}
         <div className="flex items-center gap-3">
-          <span className="text-sm" style={{ color: "#4a7090" }}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+          <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
           <button
             onClick={() => setShowAddChannel(!showAddChannel)}
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ml-auto hover:opacity-80 transition-opacity"
-            style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#4a7090" }}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ml-auto hover:opacity-80 transition-opacity font-medium"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
           >
             <Plus size={13} /> New Channel
           </button>
@@ -239,7 +258,7 @@ export default function ProjectsPage() {
 
         {/* New channel form */}
         {showAddChannel && (
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "#0f1d2e", border: "1px solid #38b6e840" }}>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
             <input
               autoFocus
               value={newChannelName}
@@ -247,7 +266,7 @@ export default function ProjectsPage() {
               onKeyDown={(e) => { if (e.key === "Enter") handleAddChannel(); if (e.key === "Escape") setShowAddChannel(false); }}
               placeholder="Channel name..."
               className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
             />
             <div className="flex gap-1.5">
               {CHANNEL_COLORS.map((c) => (
@@ -255,14 +274,14 @@ export default function ProjectsPage() {
                   key={c}
                   onClick={() => setNewChannelColor(c)}
                   className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
-                  style={{ background: c, borderColor: newChannelColor === c ? "#fff" : "transparent" }}
+                  style={{ background: c, borderColor: newChannelColor === c ? "#111" : "transparent" }}
                 />
               ))}
             </div>
-            <button onClick={handleAddChannel} className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>
+            <button onClick={handleAddChannel} className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold" style={{ background: "var(--accent)", color: "#fff" }}>
               <Check size={13} /> Create
             </button>
-            <button onClick={() => setShowAddChannel(false)} className="p-2 rounded-lg" style={{ color: "#4a7090" }}>
+            <button onClick={() => setShowAddChannel(false)} className="p-2 rounded-lg" style={{ color: "var(--text-muted)" }}>
               <X size={14} />
             </button>
           </div>
@@ -291,8 +310,8 @@ export default function ProjectsPage() {
 
           <DragOverlay dropAnimation={{ duration: 150, easing: "ease" }}>
             {activeProject && (
-              <div className="rounded-xl p-5 opacity-90 shadow-2xl" style={{ background: "#0f1d2e", border: "1px solid #38b6e8", width: "280px" }}>
-                <p className="font-semibold text-sm" style={{ color: "#cce4ff" }}>{activeProject.name}</p>
+              <div className="rounded-xl p-5 opacity-90 shadow-2xl" style={{ background: "var(--bg-card)", border: "1px solid var(--accent)", width: "280px" }}>
+                <p className="font-bold text-base" style={{ color: "var(--text)" }}>{activeProject.name}</p>
               </div>
             )}
           </DragOverlay>
@@ -302,10 +321,10 @@ export default function ProjectsPage() {
         <Link
           href="/projects/new"
           className="flex items-center justify-center gap-2 rounded-xl py-4 hover:opacity-80 transition-opacity"
-          style={{ border: "2px dashed #1c3248" }}
+          style={{ border: "2px dashed var(--border)" }}
         >
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xl" style={{ background: "#1c3248", color: "#4a7090" }}>+</div>
-          <p className="text-sm font-medium" style={{ color: "#4a7090" }}>New Project</p>
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xl font-bold" style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>+</div>
+          <p className="text-sm font-semibold" style={{ color: "var(--text-muted)" }}>New Project</p>
         </Link>
       </div>
     </>
