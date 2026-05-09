@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { type Task, type TaskStatus, USERS } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
@@ -113,6 +114,11 @@ function TaskPanel({
     updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
   } = useStore();
+  const { user } = useAuth();
+
+  const isAdmin = user?.pmRole === "admin";
+  const isMyTask = task.assigneeId === user?.id;
+  const canEdit = isAdmin || isMyTask;
 
   const [newSubtask, setNewSubtask] = useState("");
   const [newSubtaskAssignee, setNewSubtaskAssignee] = useState(task.assigneeId);
@@ -179,9 +185,11 @@ function TaskPanel({
         </div>
         {isTop && (
           <>
-            <button onClick={handleDelete} className="p-1.5 rounded-lg hover:opacity-70 text-xs flex items-center gap-1" style={{ color: confirmDelete ? "#ef4444" : "#4a7090" }}>
-              <Trash2 size={14} /> {confirmDelete ? "Confirm?" : ""}
-            </button>
+            {isAdmin && (
+              <button onClick={handleDelete} className="p-1.5 rounded-lg hover:opacity-70 text-xs flex items-center gap-1" style={{ color: confirmDelete ? "#ef4444" : "#4a7090" }}>
+                <Trash2 size={14} /> {confirmDelete ? "Confirm?" : ""}
+              </button>
+            )}
             <button onClick={onClose} className="p-1.5 rounded-lg hover:opacity-70" style={{ color: "#4a7090" }}>
               <X size={16} />
             </button>
@@ -199,9 +207,9 @@ function TaskPanel({
           <div className="relative">
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Status</p>
             <button
-              onClick={() => { setShowStatusMenu(!showStatusMenu); setShowPriorityMenu(false); setShowAssigneeMenu(false); }}
+              onClick={() => { if (!canEdit) return; setShowStatusMenu(!showStatusMenu); setShowPriorityMenu(false); setShowAssigneeMenu(false); }}
               className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: status.color }}
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: status.color, opacity: canEdit ? 1 : 0.6, cursor: canEdit ? "pointer" : "default" }}
             >
               <span className="w-2 h-2 rounded-full" style={{ background: status.color }} />
               {status.label}
@@ -226,9 +234,9 @@ function TaskPanel({
           <div className="relative">
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority</p>
             <button
-              onClick={() => { setShowPriorityMenu(!showPriorityMenu); setShowStatusMenu(false); setShowAssigneeMenu(false); }}
+              onClick={() => { if (!isAdmin) return; setShowPriorityMenu(!showPriorityMenu); setShowStatusMenu(false); setShowAssigneeMenu(false); }}
               className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: priority.color }}
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: priority.color, opacity: isAdmin ? 1 : 0.6, cursor: isAdmin ? "pointer" : "default" }}
             >
               <span className="w-2 h-2 rounded-full" style={{ background: priority.color }} />
               {priority.label}
@@ -253,9 +261,9 @@ function TaskPanel({
           <div className="relative">
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Assignee</p>
             <button
-              onClick={() => { setShowAssigneeMenu(!showAssigneeMenu); setShowStatusMenu(false); setShowPriorityMenu(false); }}
+              onClick={() => { if (!isAdmin) return; setShowAssigneeMenu(!showAssigneeMenu); setShowStatusMenu(false); setShowPriorityMenu(false); }}
               className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff", opacity: isAdmin ? 1 : 0.6, cursor: isAdmin ? "pointer" : "default" }}
             >
               <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
                 {assignee?.avatar}
@@ -314,20 +322,20 @@ function TaskPanel({
                 style={{ background: "#22c55e20", color: "#22c55e" }}>
                 <Save size={11} /> Save
               </button>
-            ) : (
+            ) : canEdit ? (
               <button onClick={() => setDescEditing(true)} className="text-xs" style={{ color: "#38b6e8" }}>Edit</button>
-            )}
+            ) : null}
           </div>
           {descEditing ? (
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} autoFocus
               className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none"
               style={{ background: "#0e1e30", border: "1px solid #38b6e8", color: "#cce4ff" }} />
           ) : (
-            <div onClick={() => setDescEditing(true)} className="rounded-lg p-3 min-h-16 cursor-text"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+            <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-16"
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", cursor: canEdit ? "text" : "default" }}>
               {task.description
                 ? <p className="text-sm leading-relaxed" style={{ color: "#cce4ff" }}>{task.description}</p>
-                : <p className="text-sm" style={{ color: "#8b90a750" }}>Click to add a description...</p>
+                : <p className="text-sm" style={{ color: "#8b90a750" }}>{canEdit ? "Click to add a description..." : "No description."}</p>
               }
             </div>
           )}
@@ -375,22 +383,26 @@ function TaskPanel({
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            <input type="text" placeholder="Add child task..." value={newSubtask}
-              onChange={(e) => setNewSubtask(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAddSubtask()}
-              className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
-            <select value={newSubtaskAssignee} onChange={(e) => setNewSubtaskAssignee(e.target.value)}
-              className="px-2 py-2 rounded-lg text-sm outline-none"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
-              {USERS.map((u) => <option key={u.id} value={u.id}>{u.name.split(" ")[0]}</option>)}
-            </select>
-            <button onClick={handleAddSubtask} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"
-              style={{ background: "#38b6e8", color: "#fff" }}>
-              <Plus size={14} />
-            </button>
-          </div>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <input type="text" placeholder="Add child task..." value={newSubtask}
+                onChange={(e) => setNewSubtask(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddSubtask()}
+                className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+                style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+              {isAdmin && (
+                <select value={newSubtaskAssignee} onChange={(e) => setNewSubtaskAssignee(e.target.value)}
+                  className="px-2 py-2 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                  {USERS.map((u) => <option key={u.id} value={u.id}>{u.name.split(" ")[0]}</option>)}
+                </select>
+              )}
+              <button onClick={handleAddSubtask} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"
+                style={{ background: "#38b6e8", color: "#fff" }}>
+                <Plus size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Attachments */}

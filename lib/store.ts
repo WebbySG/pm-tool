@@ -1,5 +1,15 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+
+function uuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return uuid();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 import {
   type Project, type Task, type TaskStatus, type TaskPriority,
   type Notification, type ProjectMedia, type PinnedItem,
@@ -175,7 +185,7 @@ export const useStore = create<Store>()(
   // ─── Channels ─────────────────────────────────────────────────────────────
 
   addChannel: async (name, color) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const order = get().channels.length;
     set((s) => ({ channels: [...s.channels, { id, name, color, order }] }));
     db.dbAddChannel(id, name, color, order);
@@ -202,7 +212,7 @@ export const useStore = create<Store>()(
   // ─── Templates ────────────────────────────────────────────────────────────
 
   addTemplate: async (tplData) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const newTpl = { ...tplData, id, tasks: [] };
     await db.dbAddTemplate(id, tplData);
     set((s) => ({ templates: [...s.templates, newTpl] }));
@@ -221,11 +231,11 @@ export const useStore = create<Store>()(
   duplicateTemplate: async (tplId) => {
     const tpl = get().templates.find((t) => t.id === tplId);
     if (!tpl) return;
-    const newTplId = crypto.randomUUID();
+    const newTplId = uuid();
 
     function cloneTasks(tasks: TaskTemplate[], parentId: string | null): TaskTemplate[] {
       return tasks.map((t) => {
-        const newId = crypto.randomUUID();
+        const newId = uuid();
         return { ...t, id: newId, parentId, subtasks: cloneTasks(t.subtasks, newId) };
       });
     }
@@ -271,7 +281,7 @@ export const useStore = create<Store>()(
   },
 
   addTemplateTask: async (tplId, taskData) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const newTask: TaskTemplate = { ...taskData, id, subtasks: [] };
     await db.dbAddTemplateTask(id, tplId, taskData);
     set((s) => ({
@@ -314,7 +324,7 @@ export const useStore = create<Store>()(
   // ─── Clients ──────────────────────────────────────────────────────────────
 
   addClient: async (clientData) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     set((s) => ({ clients: [...s.clients, { ...clientData, id }] }));
     db.dbAddClient(id, clientData);
   },
@@ -335,7 +345,7 @@ export const useStore = create<Store>()(
   // ─── Credentials ──────────────────────────────────────────────────────────
 
   addCredential: async (credData) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     set((s) => ({ credentials: [...s.credentials, { ...credData, id }] }));
     db.dbAddCredential(id, credData);
   },
@@ -378,7 +388,7 @@ export const useStore = create<Store>()(
   },
 
   addTask: async (projectId, taskData) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const newTask: Task = {
       id, projectId,
       parentId: taskData.parentId ?? null,
@@ -415,7 +425,7 @@ export const useStore = create<Store>()(
       get().projects.find((p) => p.id === projectId)?.tasks ?? [],
       parentTaskId
     );
-    const id = crypto.randomUUID();
+    const id = uuid();
     const newTask: Task = {
       id, projectId, parentId: parentTaskId,
       title: subtaskData.title, description: "",
@@ -456,7 +466,7 @@ export const useStore = create<Store>()(
 
   uploadTaskAttachment: async (projectId, taskId, file) => {
     const { url, name, size, type } = await uploadAttachment(file, taskId);
-    const id = crypto.randomUUID();
+    const id = uuid();
     const attachment: TaskAttachment = {
       id, name, type, url, size: size ?? "", uploadedBy: "u1", uploadedAt: new Date().toISOString(),
     };
@@ -484,9 +494,9 @@ export const useStore = create<Store>()(
   // ─── Projects ────────────────────────────────────────────────────────────
 
   addProject: async (projectData, seedTaskDefs = []) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const seedTasks: Task[] = seedTaskDefs.map((t) => ({
-      ...t, id: crypto.randomUUID(), projectId: id, parentId: null,
+      ...t, id: uuid(), projectId: id, parentId: null,
     }));
     const newProject: Project = { ...projectData, id, tasks: seedTasks, media: [], pinnedItems: [] };
     set((s) => ({ projects: [...s.projects, newProject] }));
@@ -550,7 +560,7 @@ export const useStore = create<Store>()(
   },
 
   addNotification: async (data) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     set((s) => ({
       notifications: [
         { id, ...data, read: false, createdAt: new Date().toISOString() },
@@ -605,7 +615,7 @@ export const useStore = create<Store>()(
   },
 
   createArticle: async (data) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     await db.dbCreateArticle(id, data);
     const articles = await db.dbGetArticles();
     set({ articles });

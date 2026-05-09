@@ -1,56 +1,51 @@
 "use client";
 import { Topbar } from "@/components/topbar";
-import { USERS } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { CheckSquare, Clock, AlertTriangle, TrendingUp, Bot, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 const priorityColor: Record<string, string> = {
   urgent: "#ef4444", high: "#f59e0b", medium: "#38b6e8", low: "#22c55e",
 };
 
+const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
+
 const STAT_CONFIG = [
-  {
-    label: "Active Projects",
-    icon: TrendingUp,
-    color: "#818cf8",
-    glow: "rgba(129,140,248,0.25)",
-    gradient: "linear-gradient(135deg, #0f1d2e 0%, #1e1b4b 100%)",
-    border: "#38b6e838",
-  },
-  {
-    label: "Tasks In Progress",
-    icon: Clock,
-    color: "#60a5fa",
-    glow: "rgba(96,165,250,0.2)",
-    gradient: "linear-gradient(135deg, #0f1d2e 0%, #0f1e3d 100%)",
-    border: "#3b82f638",
-  },
-  {
-    label: "Awaiting Review",
-    icon: CheckSquare,
-    color: "#fbbf24",
-    glow: "rgba(251,191,36,0.2)",
-    gradient: "linear-gradient(135deg, #0f1d2e 0%, #2a1f07 100%)",
-    border: "#f59e0b38",
-  },
-  {
-    label: "Overdue",
-    icon: AlertTriangle,
-    color: "#f87171",
-    glow: "rgba(248,113,113,0.2)",
-    gradient: "linear-gradient(135deg, #0f1d2e 0%, #2a0f0f 100%)",
-    border: "#ef444438",
-  },
+  { label: "Active Projects",    icon: TrendingUp,    color: "#818cf8", glow: "rgba(129,140,248,0.25)", gradient: "linear-gradient(135deg, #0f1d2e 0%, #1e1b4b 100%)", border: "#38b6e838" },
+  { label: "Tasks In Progress",  icon: Clock,         color: "#60a5fa", glow: "rgba(96,165,250,0.2)",   gradient: "linear-gradient(135deg, #0f1d2e 0%, #0f1e3d 100%)", border: "#3b82f638" },
+  { label: "Awaiting Review",    icon: CheckSquare,   color: "#fbbf24", glow: "rgba(251,191,36,0.2)",   gradient: "linear-gradient(135deg, #0f1d2e 0%, #2a1f07 100%)", border: "#f59e0b38" },
+  { label: "Overdue",            icon: AlertTriangle, color: "#f87171", glow: "rgba(248,113,113,0.2)",  gradient: "linear-gradient(135deg, #0f1d2e 0%, #2a0f0f 100%)", border: "#ef444438" },
 ];
+
+interface LiveStaff {
+  id: string;
+  user_id: string | null;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  avatar_initials: string;
+  pm_role: string;
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const { projects: allProjects, notifications, clients } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
-  // Staff only see projects they're assigned to
-  const projects = user?.pmRole === "admin"
+  useEffect(() => {
+    supabase
+      .from("staff_members")
+      .select("*")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
+
+  const isAdmin = user?.pmRole === "admin";
+
+  const projects = isAdmin
     ? allProjects
     : allProjects.filter((p) => p.assignedStaff.includes(user?.id ?? ""));
 
@@ -60,7 +55,7 @@ export default function DashboardPage() {
     projects.length,
     allTasks.filter((t) => t.status === "in_progress").length,
     allTasks.filter((t) => t.status === "review").length,
-    allTasks.filter((t) => t.status !== "done" && new Date(t.dueDate) < new Date()).length,
+    allTasks.filter((t) => t.status !== "done" && t.dueDate && new Date(t.dueDate) < new Date()).length,
   ];
 
   const aiNotif = notifications.find((n) => n.type === "ai_followup" && !n.read);
@@ -71,23 +66,19 @@ export default function DashboardPage() {
 
   return (
     <>
-      <Topbar title="Dashboard" action={{ label: "New Project", href: "/projects/new" }} />
+      <Topbar
+        title="Dashboard"
+        action={isAdmin ? { label: "New Project", href: "/projects/new" } : undefined}
+      />
       <div className="p-6 flex flex-col gap-6">
 
         {/* AI Digest */}
         {aiNotif && (
           <div
             className="anim-up rounded-2xl p-4 flex gap-4 items-start relative overflow-hidden shimmer-overlay"
-            style={{
-              background: "linear-gradient(135deg, #0f1d2e 0%, #1e1b4b 100%)",
-              border: "1px solid #38b6e840",
-              boxShadow: "0 4px 24px rgba(99,102,241,0.15)",
-            }}
+            style={{ background: "linear-gradient(135deg, #0f1d2e 0%, #1e1b4b 100%)", border: "1px solid #38b6e840", boxShadow: "0 4px 24px rgba(99,102,241,0.15)" }}
           >
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-              style={{ background: "linear-gradient(135deg, #38b6e8, #ff6b47)", boxShadow: "0 4px 12px rgba(99,102,241,0.4)" }}
-            >
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(135deg, #38b6e8, #ff6b47)", boxShadow: "0 4px 12px rgba(99,102,241,0.4)" }}>
               <Bot size={19} color="#fff" />
             </div>
             <div className="flex-1">
@@ -106,26 +97,15 @@ export default function DashboardPage() {
             <div
               key={label}
               className="anim-card-in card-hover rounded-2xl p-5 relative overflow-hidden shimmer-overlay"
-              style={{
-                animationDelay: `${i * 0.08}s`,
-                background: gradient,
-                border: `1px solid ${border}`,
-                boxShadow: `0 4px 24px ${glow}`,
-              }}
+              style={{ animationDelay: `${i * 0.08}s`, background: gradient, border: `1px solid ${border}`, boxShadow: `0 4px 24px ${glow}` }}
             >
               <div className="flex items-center justify-between mb-4">
                 <p className="text-xs font-medium uppercase tracking-wider" style={{ color: "#4a7090" }}>{label}</p>
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: `${color}20`, boxShadow: `0 0 12px ${color}30` }}
-                >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${color}20`, boxShadow: `0 0 12px ${color}30` }}>
                   <Icon size={16} style={{ color }} />
                 </div>
               </div>
-              <p
-                className="text-4xl font-black tracking-tight"
-                style={{ color, textShadow: `0 0 20px ${color}50` }}
-              >
+              <p className="text-4xl font-black tracking-tight" style={{ color, textShadow: `0 0 20px ${color}50` }}>
                 {statValues[i]}
               </p>
             </div>
@@ -136,31 +116,18 @@ export default function DashboardPage() {
           {/* Active Projects */}
           <div
             className="anim-up col-span-2 rounded-2xl overflow-hidden"
-            style={{
-              animationDelay: "0.2s",
-              background: "#14172200",
-              border: "1px solid #1c2030",
-            }}
+            style={{ animationDelay: "0.2s", background: "#14172200", border: "1px solid #1c2030" }}
           >
-            <div
-              className="flex items-center justify-between px-5 py-4"
-              style={{ borderBottom: "1px solid #1c2030", background: "#12151f" }}
-            >
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #1c2030", background: "#12151f" }}>
               <h2 className="font-bold text-sm" style={{ color: "#cce4ff" }}>Active Projects</h2>
-              <Link
-                href="/projects"
-                className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-opacity hover:opacity-70"
-                style={{ background: "#38b6e820", color: "#818cf8" }}
-              >
+              <Link href="/projects" className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-opacity hover:opacity-70" style={{ background: "#38b6e820", color: "#818cf8" }}>
                 View all →
               </Link>
             </div>
             {projects.length === 0 ? (
               <div className="px-5 py-10 text-center" style={{ background: "#070d18" }}>
                 <p className="text-sm mb-2" style={{ color: "#4a7090" }}>No projects yet.</p>
-                <Link href="/projects/new" className="text-sm font-semibold" style={{ color: "#818cf8" }}>
-                  Create your first project →
-                </Link>
+                {isAdmin && <Link href="/projects/new" className="text-sm font-semibold" style={{ color: "#818cf8" }}>Create your first project →</Link>}
               </div>
             ) : (
               <div style={{ background: "#070d18" }}>
@@ -183,36 +150,21 @@ export default function DashboardPage() {
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <span
-                            className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                            style={{ background: `${typeColor}20`, color: typeColor }}
-                          >
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${typeColor}20`, color: typeColor }}>
                             {isWeb ? "Web Dev" : "SEO"}
                           </span>
-                          {client && (
-                            <span className="text-xs" style={{ color: "#4a7090" }}>{client.name}</span>
-                          )}
+                          {client && <span className="text-xs" style={{ color: "#4a7090" }}>{client.name}</span>}
                         </div>
                         <p className="text-sm font-semibold truncate mb-2" style={{ color: "#cce4ff" }}>{project.name}</p>
                         <div className="flex items-center gap-2">
                           <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#1c2030" }}>
-                            <div
-                              className="h-full rounded-full bar-animate"
-                              style={{
-                                width: `${pct}%`,
-                                background: `linear-gradient(90deg, ${typeColor}, ${typeColor}99)`,
-                                boxShadow: `0 0 6px ${typeColor}60`,
-                              }}
-                            />
+                            <div className="h-full rounded-full bar-animate" style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${typeColor}, ${typeColor}99)`, boxShadow: `0 0 6px ${typeColor}60` }} />
                           </div>
                           <span className="text-xs font-medium shrink-0" style={{ color: typeColor }}>{pct}%</span>
                           <span className="text-xs shrink-0" style={{ color: "#4a7090" }}>{done}/{total}</span>
                         </div>
                       </div>
-                      <span
-                        className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize shrink-0"
-                        style={{ background: "#1c2030", color: "#4a7090" }}
-                      >
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize shrink-0" style={{ background: "#1c2030", color: "#4a7090" }}>
                         {project.phase}
                       </span>
                     </Link>
@@ -222,60 +174,48 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Team + Upcoming */}
+          {/* Team Workload — live staff */}
           <div
             className="anim-up rounded-2xl overflow-hidden"
-            style={{
-              animationDelay: "0.28s",
-              background: "#070d18",
-              border: "1px solid #1c2030",
-            }}
+            style={{ animationDelay: "0.28s", background: "#070d18", border: "1px solid #1c2030" }}
           >
-            <div
-              className="flex items-center justify-between px-5 py-4"
-              style={{ borderBottom: "1px solid #1c2030", background: "#12151f" }}
-            >
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #1c2030", background: "#12151f" }}>
               <h2 className="font-bold text-sm" style={{ color: "#cce4ff" }}>Team Workload</h2>
-              <Link
-                href="/team"
-                className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                style={{ background: "#22d3ee20", color: "#22d3ee" }}
-              >
-                View all →
-              </Link>
+              {isAdmin && (
+                <Link href="/team" className="text-xs font-semibold px-2.5 py-1 rounded-lg" style={{ background: "#22d3ee20", color: "#22d3ee" }}>
+                  View all →
+                </Link>
+              )}
             </div>
 
             <div className="p-4 flex flex-col gap-4">
-              {USERS.filter((u) => u.role === "staff").map((user, ui) => {
-                const userTasks = allTasks.filter((t) => t.assigneeId === user.id && t.status !== "done");
-                const overdue = userTasks.filter((t) => new Date(t.dueDate) < new Date()).length;
-                const avatarColors = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6"];
-                const avatarColor = avatarColors[ui % avatarColors.length];
+              {liveStaff.length === 0 && (
+                <p className="text-xs text-center py-4" style={{ color: "#4a7090" }}>No active staff yet.</p>
+              )}
+              {liveStaff.map((s, si) => {
+                const avatarColor = AVATAR_COLORS[si % AVATAR_COLORS.length];
+                const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
+                const initials = s.avatar_initials || name.slice(0, 2).toUpperCase();
+                const userTasks = allTasks.filter((t) => t.assigneeId === (s.user_id ?? s.id) && t.status !== "done");
+                const overdue = userTasks.filter((t) => t.dueDate && new Date(t.dueDate) < new Date()).length;
 
                 return (
-                  <div key={user.id}>
+                  <div key={s.id}>
                     <div className="flex items-center gap-3 mb-2">
                       <div
                         className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                        style={{
-                          background: `linear-gradient(135deg, ${avatarColor}, ${avatarColor}99)`,
-                          color: "#fff",
-                          boxShadow: `0 0 8px ${avatarColor}50`,
-                        }}
+                        style={{ background: `linear-gradient(135deg, ${avatarColor}, ${avatarColor}99)`, color: "#fff", boxShadow: `0 0 8px ${avatarColor}50` }}
                       >
-                        {user.avatar}
+                        {initials}
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-semibold" style={{ color: "#cce4ff" }}>{user.name}</p>
+                        <p className="text-sm font-semibold" style={{ color: "#cce4ff" }}>{name}</p>
                         <p className="text-xs" style={{ color: "#4a7090" }}>
                           {userTasks.length} open{overdue > 0 ? ` · ${overdue} overdue` : ""}
                         </p>
                       </div>
                       {overdue > 0 && (
-                        <span
-                          className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-                          style={{ background: "#ef444420", color: "#f87171" }}
-                        >
+                        <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ background: "#ef444420", color: "#f87171" }}>
                           {overdue}
                         </span>
                       )}
@@ -285,9 +225,7 @@ export default function DashboardPage() {
                         className="h-full rounded-full bar-animate"
                         style={{
                           width: `${Math.min(userTasks.length * 15, 100)}%`,
-                          background: overdue > 0
-                            ? "linear-gradient(90deg, #ef4444, #f87171)"
-                            : `linear-gradient(90deg, ${avatarColor}, ${avatarColor}99)`,
+                          background: overdue > 0 ? "linear-gradient(90deg, #ef4444, #f87171)" : `linear-gradient(90deg, ${avatarColor}, ${avatarColor}99)`,
                           boxShadow: `0 0 6px ${overdue > 0 ? "#ef444460" : avatarColor + "50"}`,
                         }}
                       />
@@ -299,23 +237,14 @@ export default function DashboardPage() {
 
             {recentTasks.length > 0 && (
               <div className="px-4 pb-4">
-                <div
-                  className="h-px mb-4"
-                  style={{ background: "linear-gradient(90deg, transparent, #1c2030, transparent)" }}
-                />
+                <div className="h-px mb-4" style={{ background: "linear-gradient(90deg, transparent, #1c2030, transparent)" }} />
                 <p className="text-xs font-bold mb-3 tracking-widest" style={{ color: "#4a7090" }}>UPCOMING DUE</p>
                 {recentTasks.map((task) => (
                   <div key={task.id} className="flex items-center gap-2.5 mb-2.5">
-                    <div
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{
-                        background: priorityColor[task.priority],
-                        boxShadow: `0 0 5px ${priorityColor[task.priority]}80`,
-                      }}
-                    />
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor[task.priority], boxShadow: `0 0 5px ${priorityColor[task.priority]}80` }} />
                     <p className="text-xs truncate flex-1 font-medium" style={{ color: "#c4c9e0" }}>{task.title}</p>
                     <p className="text-xs shrink-0" style={{ color: "#4a7090" }}>
-                      {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                      {task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" }) : "—"}
                     </p>
                   </div>
                 ))}

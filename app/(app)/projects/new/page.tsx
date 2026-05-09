@@ -1,11 +1,21 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
-import { USERS, type Task } from "@/lib/mock-data";
+import { type Task } from "@/lib/mock-data";
 import { X, Check, ChevronDown, ChevronUp, ListChecks, RotateCcw } from "lucide-react";
 import { useDraft } from "@/lib/use-draft";
+import { supabase } from "@/lib/supabase";
+
+interface LiveStaff {
+  id: string;
+  user_id: string | null;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  avatar_initials: string;
+}
 
 function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr);
@@ -18,6 +28,15 @@ let seedCounter = 1000;
 export default function NewProjectPage() {
   const router = useRouter();
   const { addProject, channels, templates } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from("staff_members")
+      .select("id, user_id, email, first_name, last_name, avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
 
   const initialForm = {
     name: "",
@@ -36,7 +55,6 @@ export default function NewProjectPage() {
   const [error, setError] = useState("");
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
 
-  const staffUsers = USERS.filter((u) => u.role === "staff");
   const matchingTemplates = templates.filter((t) => t.type === form.type || t.type === "any");
 
   function toggleStaff(userId: string) {
@@ -72,7 +90,7 @@ export default function NewProjectPage() {
         type: tt.type,
         status: "todo" as const,
         priority: tt.priority,
-        assigneeId: form.assignedStaff[0] ?? "u2",
+        assigneeId: form.assignedStaff[0] ?? "",
         dueDate: addDays(form.startDate, tt.daysFromStart),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -260,23 +278,32 @@ export default function NewProjectPage() {
           {/* Assign Staff */}
           <div>
             <label className="text-xs font-semibold block mb-2" style={{ color: "#4a7090" }}>ASSIGN STAFF</label>
-            <div className="flex flex-col gap-2">
-              {staffUsers.map((u) => {
-                const selected = form.assignedStaff.includes(u.id);
-                return (
-                  <button key={u.id} onClick={() => toggleStaff(u.id)} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors" style={{ background: selected ? "#38b6e815" : "#0e1e30", border: `1px solid ${selected ? "#38b6e8" : "#1c3248"}` }}>
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{ background: "#38b6e8", color: "#fff" }}>{u.avatar}</div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>{u.name}</p>
-                      <p className="text-xs" style={{ color: "#4a7090" }}>{u.email}</p>
-                    </div>
-                    <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: selected ? "#38b6e8" : "#1c3248", background: selected ? "#38b6e8" : "transparent" }}>
-                      {selected && <X size={10} color="#fff" />}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            {liveStaff.length === 0 ? (
+              <p className="text-xs px-3 py-2 rounded-lg" style={{ color: "#4a7090", background: "#0e1e30", border: "1px solid #1c3248" }}>
+                No active staff yet. Invite team members first.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {liveStaff.map((s) => {
+                  const staffId = s.user_id ?? s.id;
+                  const selected = form.assignedStaff.includes(staffId);
+                  const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
+                  const initials = s.avatar_initials || name.slice(0, 2).toUpperCase();
+                  return (
+                    <button key={s.id} onClick={() => toggleStaff(staffId)} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors" style={{ background: selected ? "#38b6e815" : "#0e1e30", border: `1px solid ${selected ? "#38b6e8" : "#1c3248"}` }}>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: "#38b6e8", color: "#fff" }}>{initials}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{name}</p>
+                        <p className="text-xs truncate" style={{ color: "#4a7090" }}>{s.email}</p>
+                      </div>
+                      <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0" style={{ borderColor: selected ? "#38b6e8" : "#1c3248", background: selected ? "#38b6e8" : "transparent" }}>
+                        {selected && <X size={10} color="#fff" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {error && <p className="text-sm px-3 py-2 rounded-lg" style={{ background: "#ef444420", color: "#ef4444" }}>{error}</p>}
