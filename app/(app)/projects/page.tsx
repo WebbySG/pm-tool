@@ -19,7 +19,7 @@ const PHASE_COLOR: Record<string, string> = {
 const CHANNEL_COLORS = ["#38b6e8", "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
 // ─── Draggable project card ───────────────────────────────────────────────
-function DraggableProjectCard({ project }: { project: Project }) {
+function DraggableProjectCard({ project, isAdmin }: { project: Project; isAdmin: boolean }) {
   const { clients, deleteProject } = useStore();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: project.id });
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.3 : 1, touchAction: "none" };
@@ -43,23 +43,25 @@ function DraggableProjectCard({ project }: { project: Project }) {
         <GripVertical size={14} />
       </div>
 
-      {/* Delete button */}
-      <button
-        onClick={(e) => {
-          e.preventDefault();
-          if (!confirmDelete) { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); return; }
-          deleteProject(project.id);
-        }}
-        className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold"
-        style={{
-          background: confirmDelete ? "#ef4444" : "#ef444420",
-          color: confirmDelete ? "#fff" : "#f87171",
-          border: `1px solid ${confirmDelete ? "#ef4444" : "#ef444440"}`,
-        }}
-        title={confirmDelete ? "Click again to confirm delete" : "Delete project"}
-      >
-        {confirmDelete ? <><AlertTriangle size={11} /> Confirm</> : <Trash2 size={11} />}
-      </button>
+      {/* Delete button — admin only */}
+      {isAdmin && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            if (!confirmDelete) { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); return; }
+            deleteProject(project.id);
+          }}
+          className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold"
+          style={{
+            background: confirmDelete ? "#ef4444" : "#ef444420",
+            color: confirmDelete ? "#fff" : "#f87171",
+            border: `1px solid ${confirmDelete ? "#ef4444" : "#ef444440"}`,
+          }}
+          title={confirmDelete ? "Click again to confirm delete" : "Delete project"}
+        >
+          {confirmDelete ? <><AlertTriangle size={11} /> Confirm</> : <Trash2 size={11} />}
+        </button>
+      )}
 
       <Link
         href={`/projects/${project.id}`}
@@ -111,11 +113,12 @@ function DraggableProjectCard({ project }: { project: Project }) {
 
 // ─── Droppable channel group ───────────────────────────────────────────────
 function ChannelGroup({
-  channel, projects, isOver,
+  channel, projects, isOver, isAdmin,
 }: {
   channel: Channel | null;
   projects: Project[];
   isOver: boolean;
+  isAdmin: boolean;
 }) {
   const { renameChannel, deleteChannel } = useStore();
   const [collapsed, setCollapsed] = useState(false);
@@ -160,7 +163,7 @@ function ChannelGroup({
 
         <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>{projects.length}</span>
 
-        {channel && !editing && (
+        {channel && !editing && isAdmin && (
           <>
             <button onClick={() => { setEditing(true); setEditName(channel.name); }} className="p-1 rounded hover:opacity-70 transition-opacity opacity-0 group-hover:opacity-100" style={{ color: "var(--text-muted)" }}>
               <Pencil size={12} />
@@ -182,7 +185,7 @@ function ChannelGroup({
       {!collapsed && (
         <div className="grid grid-cols-3 gap-4 pl-5">
           {projects.map((project) => (
-            <DraggableProjectCard key={project.id} project={project} />
+            <DraggableProjectCard key={project.id} project={project} isAdmin={isAdmin} />
           ))}
           {projects.length === 0 && (
             <div className="col-span-3 py-6 text-center rounded-xl" style={{ border: "1px dashed var(--border)" }}>
@@ -198,8 +201,9 @@ function ChannelGroup({
 // ─── Main page ─────────────────────────────────────────────────────────────
 export default function ProjectsPage() {
   const { user } = useAuth();
+  const isAdmin = user?.pmRole === "admin";
   const { projects: allProjects, channels, addChannel, moveProjectToChannel } = useStore();
-  const projects = user?.pmRole === "admin"
+  const projects = isAdmin
     ? allProjects
     : allProjects.filter((p) => p.assignedStaff.includes(user?.id ?? ""));
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -242,22 +246,24 @@ export default function ProjectsPage() {
 
   return (
     <>
-      <Topbar title="Projects" action={{ label: "New Project", href: "/projects/new" }} />
+      <Topbar title="Projects" action={isAdmin ? { label: "New Project", href: "/projects/new" } : undefined} />
       <div className="p-6 flex flex-col gap-6">
         {/* Toolbar */}
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
-          <button
-            onClick={() => setShowAddChannel(!showAddChannel)}
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ml-auto hover:opacity-80 transition-opacity font-medium"
-            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
-          >
-            <Plus size={13} /> New Channel
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddChannel(!showAddChannel)}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ml-auto hover:opacity-80 transition-opacity font-medium"
+              style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+            >
+              <Plus size={13} /> New Channel
+            </button>
+          )}
         </div>
 
         {/* New channel form */}
-        {showAddChannel && (
+        {isAdmin && showAddChannel && (
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
             <input
               autoFocus
@@ -296,6 +302,7 @@ export default function ProjectsPage() {
                 channel={channel}
                 projects={projects.filter((p) => p.channelId === channel.id)}
                 isOver={overChannelId === channel.id}
+                isAdmin={isAdmin}
               />
             ))}
 
@@ -304,6 +311,7 @@ export default function ProjectsPage() {
                 channel={null}
                 projects={ungrouped}
                 isOver={overChannelId === "ungrouped"}
+                isAdmin={isAdmin}
               />
             )}
           </div>
@@ -317,15 +325,17 @@ export default function ProjectsPage() {
           </DragOverlay>
         </DndContext>
 
-        {/* New project shortcut */}
-        <Link
-          href="/projects/new"
-          className="flex items-center justify-center gap-2 rounded-xl py-4 hover:opacity-80 transition-opacity"
-          style={{ border: "2px dashed var(--border)" }}
-        >
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xl font-bold" style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>+</div>
-          <p className="text-sm font-semibold" style={{ color: "var(--text-muted)" }}>New Project</p>
-        </Link>
+        {/* New project shortcut — admin only */}
+        {isAdmin && (
+          <Link
+            href="/projects/new"
+            className="flex items-center justify-center gap-2 rounded-xl py-4 hover:opacity-80 transition-opacity"
+            style={{ border: "2px dashed var(--border)" }}
+          >
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xl font-bold" style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>+</div>
+            <p className="text-sm font-semibold" style={{ color: "var(--text-muted)" }}>New Project</p>
+          </Link>
+        )}
       </div>
     </>
   );

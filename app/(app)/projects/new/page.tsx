@@ -7,6 +7,7 @@ import { type Task } from "@/lib/mock-data";
 import { X, Check, ChevronDown, ChevronUp, ListChecks, RotateCcw } from "lucide-react";
 import { useDraft } from "@/lib/use-draft";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 
 interface LiveStaff {
   id: string;
@@ -27,8 +28,14 @@ let seedCounter = 1000;
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const { addProject, channels, templates } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
+
+  if (user && user.pmRole !== "admin") {
+    router.replace("/projects");
+    return null;
+  }
 
   useEffect(() => {
     supabase
