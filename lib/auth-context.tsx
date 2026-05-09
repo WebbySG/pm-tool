@@ -8,6 +8,7 @@ export interface PmUser {
   name: string;
   avatar: string;   // Initials e.g. "AT"
   pmRole: "admin" | "staff";
+  canAccessContent: boolean;
 }
 
 interface AuthCtxValue {
@@ -25,7 +26,7 @@ const AuthCtx = createContext<AuthCtxValue>({
 async function buildPmUser(authId: string, email: string): Promise<PmUser> {
   const [{ data: roleRow }, { data: staffRow }] = await Promise.all([
     supabase.from("user_roles").select("role").eq("user_id", authId).maybeSingle(),
-    supabase.from("staff_members").select("first_name, last_name, pm_role, avatar_initials").eq("user_id", authId).maybeSingle(),
+    supabase.from("staff_members").select("first_name, last_name, pm_role, avatar_initials, can_access_content").eq("user_id", authId).maybeSingle(),
   ]);
 
   const isOwnerAdmin = ["owner", "admin"].includes(roleRow?.role ?? "");
@@ -35,8 +36,9 @@ async function buildPmUser(authId: string, email: string): Promise<PmUser> {
   const lastName = staffRow?.last_name ?? "";
   const name = [firstName, lastName].filter(Boolean).join(" ") || email;
   const avatar = staffRow?.avatar_initials || (firstName[0] + (lastName[0] ?? "")).toUpperCase() || "?";
+  const canAccessContent = isOwnerAdmin ? true : (staffRow?.can_access_content ?? false);
 
-  return { id: authId, email, name, avatar, pmRole };
+  return { id: authId, email, name, avatar, pmRole, canAccessContent };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

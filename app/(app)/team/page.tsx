@@ -22,6 +22,7 @@ interface StaffMember {
   pm_role: "admin" | "staff";
   status: string;
   created_at: string;
+  can_access_content: boolean;
 }
 
 function InviteForm({ onSent }: { onSent: () => void }) {
@@ -123,6 +124,14 @@ function TeamContent() {
     loadStaff();
     setToast("Invite sent! They'll receive an email shortly.");
     setTimeout(() => setToast(""), 4000);
+  }
+
+  async function toggleContentAccess(s: StaffMember) {
+    const next = !s.can_access_content;
+    await supabase.from("staff_members").update({ can_access_content: next }).eq("id", s.id);
+    setStaff((prev) => prev.map((m) => m.id === s.id ? { ...m, can_access_content: next } : m));
+    setToast(`Content access ${next ? "enabled" : "disabled"} for ${[s.first_name, s.last_name].filter(Boolean).join(" ") || s.email}`);
+    setTimeout(() => setToast(""), 3000);
   }
 
   const active = staff.filter((s) => s.status === "active");
@@ -233,6 +242,29 @@ function TeamContent() {
                       </div>
                     ))}
                   </div>
+
+                  {s.pm_role === "staff" && (
+                    <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+                      <div>
+                        <p className="text-xs font-semibold" style={{ color: "var(--text)" }}>Content Access</p>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Can view &amp; manage content section</p>
+                      </div>
+                      <button
+                        onClick={() => toggleContentAccess(s)}
+                        className="relative w-10 h-5 rounded-full transition-colors shrink-0"
+                        style={{ background: s.can_access_content ? "#10b981" : "var(--bg-surface)", border: "1px solid var(--border)" }}
+                        title={s.can_access_content ? "Disable content access" : "Enable content access"}
+                      >
+                        <span
+                          className="absolute top-0.5 w-4 h-4 rounded-full transition-transform"
+                          style={{
+                            background: s.can_access_content ? "#fff" : "var(--text-muted)",
+                            transform: s.can_access_content ? "translateX(1.35rem)" : "translateX(0.1rem)",
+                          }}
+                        />
+                      </button>
+                    </div>
+                  )}
 
                   <div className="px-5 py-4">
                     <p className="text-xs font-bold mb-3 tracking-widest" style={{ color: "var(--text-muted)" }}>ACTIVE TASKS</p>

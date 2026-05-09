@@ -26,7 +26,11 @@ export function Sidebar() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const isAdmin = user?.pmRole === "admin";
-  const NAV = ALL_NAV.filter((item) => isAdmin || !item.adminOnly);
+  const NAV = ALL_NAV.filter((item) => {
+    if (item.adminOnly && !isAdmin) return false;
+    if (item.href === "/content" && !isAdmin && !user?.canAccessContent) return false;
+    return true;
+  });
 
   return (
     <aside

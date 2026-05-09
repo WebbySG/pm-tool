@@ -151,6 +151,11 @@ export default function ContentPage() {
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
 
+  if (user && !isAdmin && !user.canAccessContent) {
+    router.replace("/dashboard");
+    return null;
+  }
+
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<ArticleStatus | "all">("all");
   const [filterProject, setFilterProject] = useState("all");
