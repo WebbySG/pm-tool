@@ -1,9 +1,11 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { notFound } from "next/navigation";
 import { useParams } from "next/navigation";
-import { USERS, type Task, type TaskType, type TaskStatus } from "@/lib/mock-data";
+import { type Task, type TaskType, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { Topbar } from "@/components/topbar";
 import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
@@ -12,6 +14,19 @@ import {
 } from "lucide-react";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
+
+interface LiveStaff {
+  id: string;
+  user_id: string | null;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  avatar_initials: string;
+}
+
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 const pinnedIcon: Record<string, React.FC<{ size: number; style?: React.CSSProperties }>> = {
   link: Link2, document: FileText, message: MessageSquare, image: Image,
@@ -39,7 +54,9 @@ type NewTaskForm = {
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
+  const { user } = useAuth();
   const { projects, clients, addTask, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned">("board");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
@@ -48,7 +65,7 @@ export default function ProjectDetailPage() {
   const [addTaskCol, setAddTaskCol] = useState("todo");
   const [pinForm, setPinForm] = useState({ type: "link" as "link" | "document" | "message", title: "", content: "", url: "" });
   const initialTask: NewTaskForm = {
-    title: "", description: "", assigneeId: "u2", priority: "medium",
+    title: "", description: "", assigneeId: "", priority: "medium",
     dueDate: new Date().toISOString().split("T")[0], type: "webdev",
     recurring: null, recurringDay: "", tags: "",
   };
@@ -56,6 +73,16 @@ export default function ProjectDetailPage() {
     `add-task:${params.id}`, initialTask
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => {
+        const staff = (data as LiveStaff[]) ?? [];
+        setLiveStaff(staff);
+        setNewTask((prev) => ({ ...prev, assigneeId: prev.assigneeId || (staff[0] ? staffAuthId(staff[0]) : "") }));
+      });
+  }, []);
 
   const projectRaw = projects.find((p) => p.id === params.id);
   if (!projectRaw) return notFound();
@@ -65,8 +92,8 @@ export default function ProjectDetailPage() {
   const done = project.tasks.filter((t) => t.status === "done").length;
   const pct = project.tasks.length > 0 ? Math.round((done / project.tasks.length) * 100) : 0;
   const typeColor = project.type === "seo" ? "#22c55e" : "#38b6e8";
-  const assignedUsers = USERS.filter((u) => project.assignedStaff.includes(u.id));
-  const unassignedUsers = USERS.filter((u) => !project.assignedStaff.includes(u.id));
+  const assignedUsers = liveStaff.filter((s) => project.assignedStaff.includes(staffAuthId(s)));
+  const unassignedUsers = liveStaff.filter((s) => !project.assignedStaff.includes(staffAuthId(s)));
 
   function handleAddTask() {
     if (!newTask.title.trim()) return;
@@ -98,7 +125,7 @@ export default function ProjectDetailPage() {
         type,
         url: URL.createObjectURL(file),
         size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-        uploadedBy: "u1",
+        uploadedBy: user?.id ?? "",
         uploadedAt: new Date().toISOString(),
       });
     });
@@ -107,7 +134,7 @@ export default function ProjectDetailPage() {
 
   function handleAddPin() {
     if (!pinForm.title.trim()) return;
-    addPinnedItem(project.id, { ...pinForm, pinnedBy: "u1" });
+    addPinnedItem(project.id, { ...pinForm, pinnedBy: user?.id ?? "" });
     setShowAddPin(false);
     setPinForm({ type: "link", title: "", content: "", url: "" });
   }
@@ -140,15 +167,15 @@ export default function ProjectDetailPage() {
               <div className="flex flex-col items-end gap-2 relative">
                 <div className="flex items-center gap-1">
                   <span className="text-xs mr-1" style={{ color: "#4a7090" }}>Assigned:</span>
-                  {assignedUsers.map((u) => (
+                  {assignedUsers.map((s) => (
                     <button
-                      key={u.id}
-                      onClick={() => removeStaff(project.id, u.id)}
-                      title={`Remove ${u.name}`}
+                      key={s.id}
+                      onClick={() => removeStaff(project.id, staffAuthId(s))}
+                      title={`Remove ${staffName(s)}`}
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 hover:opacity-70 transition-opacity"
                       style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}
                     >
-                      {u.avatar}
+                      {staffInitials(s)}
                     </button>
                   ))}
                   <button
@@ -161,17 +188,17 @@ export default function ProjectDetailPage() {
                   <div className="absolute top-full right-0 mt-1 rounded-lg z-20 shadow-lg overflow-hidden" style={{ background: "#0e1e30", border: "1px solid #1c3248", minWidth: "180px" }}>
                     {unassignedUsers.length === 0 ? (
                       <p className="px-3 py-2 text-sm" style={{ color: "#4a7090" }}>All staff assigned</p>
-                    ) : unassignedUsers.map((u) => (
+                    ) : unassignedUsers.map((s) => (
                       <button
-                        key={u.id}
-                        onClick={() => { assignStaff(project.id, u.id); setShowAssignMenu(false); }}
+                        key={s.id}
+                        onClick={() => { assignStaff(project.id, staffAuthId(s)); setShowAssignMenu(false); }}
                         className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                         style={{ color: "#cce4ff" }}
                       >
                         <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-                          {u.avatar}
+                          {staffInitials(s)}
                         </div>
-                        {u.name}
+                        {staffName(s)}
                       </button>
                     ))}
                   </div>
@@ -258,7 +285,7 @@ export default function ProjectDetailPage() {
                   <div className="grid grid-cols-3 gap-3">
                     {project.media.map((file) => {
                       const Icon = mediaIcon[file.type];
-                      const uploader = USERS.find((u) => u.id === file.uploadedBy);
+                      const uploader = liveStaff.find((s) => staffAuthId(s) === file.uploadedBy);
                       return (
                         <div key={file.id} className="rounded-xl overflow-hidden group" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
                           <div className="h-36 flex items-center justify-center relative" style={{ background: "#0e1e30" }}>
@@ -282,7 +309,7 @@ export default function ProjectDetailPage() {
                             <div className="flex items-center justify-between mt-0.5">
                               <p className="text-xs" style={{ color: "#4a7090" }}>{file.size}</p>
                               <p className="text-xs" style={{ color: "#4a7090" }}>
-                                {uploader?.name.split(" ")[0]} · {new Date(file.uploadedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                                {uploader ? staffName(uploader).split(" ")[0] : "—"} · {new Date(file.uploadedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
                               </p>
                             </div>
                           </div>
@@ -324,7 +351,7 @@ export default function ProjectDetailPage() {
                 {project.pinnedItems.map((item) => {
                   const Icon = pinnedIcon[item.type];
                   const color = pinnedColor[item.type];
-                  const pinner = USERS.find((u) => u.id === item.pinnedBy);
+                  const pinner = liveStaff.find((s) => staffAuthId(s) === item.pinnedBy);
                   return (
                     <div key={item.id} className="rounded-xl p-4 relative group" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
                       <button
@@ -349,7 +376,7 @@ export default function ProjectDetailPage() {
                         </a>
                       )}
                       <p className="text-xs mt-2" style={{ color: "#8b90a750" }}>
-                        Pinned by {pinner?.name.split(" ")[0]} · {new Date(item.pinnedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                        Pinned by {pinner ? staffName(pinner).split(" ")[0] : "—"} · {new Date(item.pinnedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
                       </p>
                     </div>
                   );
@@ -402,7 +429,7 @@ export default function ProjectDetailPage() {
                 <div>
                   <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Assignee</p>
                   <select value={newTask.assigneeId} onChange={(e) => setNewTask({ ...newTask, assigneeId: e.target.value })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
-                    {USERS.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
                   </select>
                 </div>
                 <div>

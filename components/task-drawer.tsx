@@ -1,12 +1,25 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, Save, ChevronRight, Loader2, ExternalLink,
 } from "lucide-react";
-import { type Task, type TaskStatus, USERS } from "@/lib/mock-data";
+import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
+
+interface LiveStaff {
+  id: string;
+  user_id: string | null;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
@@ -38,7 +51,14 @@ export function TaskDrawer({ task, projectId, onClose }: Props) {
 // ─── Stack controller — manages the array of open tasks ──────────────────────
 function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; projectId: string; onClose: () => void }) {
   const [stack, setStack] = useState<Task[]>([rootTask]);
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const { projects } = useStore();
+
+  useEffect(() => {
+    supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
 
   // Keep every task in the stack live from the store
   function liveTask(taskId: string): Task | null {
@@ -88,6 +108,7 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
                 onGoBack={popTask}
                 onClose={onClose}
                 onOpenChild={(child) => pushTask(child)}
+                liveStaff={liveStaff}
               />
             </div>
           );
@@ -99,7 +120,7 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
 
 // ─── Single task panel ────────────────────────────────────────────────────────
 function TaskPanel({
-  task, projectId, isTop, canGoBack, onGoBack, onClose, onOpenChild,
+  task, projectId, isTop, canGoBack, onGoBack, onClose, onOpenChild, liveStaff,
 }: {
   task: Task;
   projectId: string;
@@ -108,6 +129,7 @@ function TaskPanel({
   onGoBack: () => void;
   onClose: () => void;
   onOpenChild: (task: Task) => void;
+  liveStaff: LiveStaff[];
 }) {
   const {
     updateTaskStatus, updateTaskPriority, updateTaskAssignee, updateTaskDescription,
@@ -133,7 +155,7 @@ function TaskPanel({
 
   const status = statusOptions.find((s) => s.key === task.status)!;
   const priority = priorityOptions.find((p) => p.key === task.priority)!;
-  const assignee = USERS.find((u) => u.id === task.assigneeId);
+  const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
   async function handleAddSubtask() {
@@ -266,21 +288,20 @@ function TaskPanel({
               style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff", opacity: isAdmin ? 1 : 0.6, cursor: isAdmin ? "pointer" : "default" }}
             >
               <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-                {assignee?.avatar}
+                {assignee ? staffInitials(assignee) : "?"}
               </div>
-              {assignee?.name}
+              {assignee ? staffName(assignee) : "Unassigned"}
               <ChevronDown size={13} className="ml-auto" style={{ color: "#4a7090" }} />
             </button>
             {showAssigneeMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
-                {USERS.map((u) => (
-                  <button key={u.id} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
-                    style={{ color: "#cce4ff", background: u.id === task.assigneeId ? "#1c3248" : "transparent" }}
-                    onClick={() => { updateTaskAssignee(projectId, task.id, u.id); setShowAssigneeMenu(false); }}>
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>{u.avatar}</div>
-                    {u.name}
-                    <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>{u.role}</span>
-                    {u.id === task.assigneeId && <Check size={12} style={{ color: "#22c55e" }} />}
+                {liveStaff.map((s) => (
+                  <button key={s.id} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
+                    style={{ color: "#cce4ff", background: staffAuthId(s) === task.assigneeId ? "#1c3248" : "transparent" }}
+                    onClick={() => { updateTaskAssignee(projectId, task.id, staffAuthId(s)); setShowAssigneeMenu(false); }}>
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>{staffInitials(s)}</div>
+                    {staffName(s)}
+                    {staffAuthId(s) === task.assigneeId && <Check size={12} className="ml-auto" style={{ color: "#22c55e" }} />}
                   </button>
                 ))}
               </div>
@@ -350,7 +371,7 @@ function TaskPanel({
           {task.subtasks.length > 0 && (
             <div className="rounded-lg overflow-hidden mb-3" style={{ border: "1px solid #1c3248" }}>
               {task.subtasks.map((sub, i) => {
-                const subAssignee = USERS.find((u) => u.id === sub.assigneeId);
+                const subAssignee = liveStaff.find((s) => staffAuthId(s) === sub.assigneeId);
                 const subStatus = statusOptions.find((s) => s.key === sub.status)!;
                 const isDone = sub.status === "done";
                 return (
@@ -374,7 +395,7 @@ function TaskPanel({
                     )}
                     <span className="text-xs px-1.5 py-0.5 rounded-full shrink-0" style={{ background: subStatus.color + "20", color: subStatus.color }}>{subStatus.label}</span>
                     <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "#38b6e8", color: "#fff" }}>
-                      {subAssignee?.avatar.charAt(0)}
+                      {subAssignee ? staffInitials(subAssignee).charAt(0) : "?"}
                     </div>
                     <ChevronRight size={13} className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0" style={{ color: "#4a7090" }} />
                   </div>
@@ -394,7 +415,7 @@ function TaskPanel({
                 <select value={newSubtaskAssignee} onChange={(e) => setNewSubtaskAssignee(e.target.value)}
                   className="px-2 py-2 rounded-lg text-sm outline-none"
                   style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
-                  {USERS.map((u) => <option key={u.id} value={u.id}>{u.name.split(" ")[0]}</option>)}
+                  {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s).split(" ")[0]}</option>)}
                 </select>
               )}
               <button onClick={handleAddSubtask} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1"
