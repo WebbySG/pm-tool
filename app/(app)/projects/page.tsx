@@ -30,7 +30,8 @@ function DraggableProjectCard({ project, isAdmin }: { project: Project; isAdmin:
   const total = project.tasks.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const typeColor = project.type === "seo" ? "#22c55e" : "#38b6e8";
-  const daysLeft = Math.ceil((new Date(project.dueDate).getTime() - Date.now()) / 86400000);
+  const dueDateMs = project.dueDate ? new Date(project.dueDate).getTime() : NaN;
+  const daysLeft = isNaN(dueDateMs) ? null : Math.ceil((dueDateMs - Date.now()) / 86400000);
 
   return (
     <div ref={setNodeRef} style={style} className="relative group">
@@ -101,9 +102,9 @@ function DraggableProjectCard({ project, isAdmin }: { project: Project; isAdmin:
           <div className="flex items-center gap-1.5 text-sm" style={{ color: "var(--text-muted)" }}>
             <CheckSquare size={13} /> {done}/{total} tasks
           </div>
-          <div className="flex items-center gap-1.5 text-sm" style={{ color: daysLeft < 7 && daysLeft >= 0 ? "#f59e0b" : daysLeft < 0 ? "#ef4444" : "var(--text-muted)" }}>
+          <div className="flex items-center gap-1.5 text-sm" style={{ color: daysLeft === null ? "var(--text-muted)" : daysLeft < 0 ? "#ef4444" : daysLeft < 7 ? "#f59e0b" : "var(--text-muted)" }}>
             <Calendar size={13} />
-            {daysLeft < 0 ? "Overdue" : `${daysLeft}d left`}
+            {daysLeft === null ? "No due date" : daysLeft < 0 ? "Overdue" : `${daysLeft}d left`}
           </div>
         </div>
       </Link>
