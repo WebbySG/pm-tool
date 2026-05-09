@@ -8,7 +8,14 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
-import { type Task, type TaskStatus, USERS } from "@/lib/mock-data";
+import { type Task, type TaskStatus } from "@/lib/mock-data";
+
+interface LiveStaff {
+  id: string; user_id: string | null; email: string;
+  first_name: string | null; last_name: string | null; avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || [s.first_name, s.last_name].filter(Boolean).join(" ").slice(0, 2).toUpperCase() || s.email.slice(0, 2).toUpperCase(); }
 import { useStore } from "@/lib/store";
 import { Calendar, Plus, Paperclip, RefreshCw } from "lucide-react";
 
@@ -24,8 +31,8 @@ const PRIORITY_COLOR: Record<string, string> = {
 };
 
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
-export function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
-  const assignee = USERS.find((u) => u.id === task.assigneeId);
+export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
+  const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const overdue = task.status !== "done" && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
@@ -75,7 +82,7 @@ export function TaskCard({ task, onClick }: { task: Task; onClick: () => void })
           )}
         </div>
         <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-          {assignee?.avatar}
+          {assignee ? staffInitials(assignee) : ""}
         </div>
       </div>
     </div>
@@ -83,7 +90,7 @@ export function TaskCard({ task, onClick }: { task: Task; onClick: () => void })
 }
 
 // ─── Sortable task card ────────────────────────────────────────────────────────
-function SortableCard({ task, onClick }: { task: Task; onClick: () => void }) {
+function SortableCard({ task, onClick, liveStaff }: { task: Task; onClick: () => void; liveStaff: LiveStaff[] }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -93,14 +100,14 @@ function SortableCard({ task, onClick }: { task: Task; onClick: () => void }) {
   };
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
-      <TaskCard task={task} onClick={onClick} />
+      <TaskCard task={task} onClick={onClick} liveStaff={liveStaff} />
     </div>
   );
 }
 
 // ─── Droppable + sortable column ──────────────────────────────────────────────
 function KanbanColumn({
-  status, label, color, tasks, onTaskClick, onAddTask,
+  status, label, color, tasks, onTaskClick, onAddTask, liveStaff,
 }: {
   status: TaskStatus;
   label: string;
@@ -108,6 +115,7 @@ function KanbanColumn({
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   onAddTask: (status: TaskStatus) => void;
+  liveStaff: LiveStaff[];
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
@@ -126,7 +134,7 @@ function KanbanColumn({
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <SortableCard key={task.id} task={task} onClick={() => onTaskClick(task)} />
+            <SortableCard key={task.id} task={task} onClick={() => onTaskClick(task)} liveStaff={liveStaff} />
           ))}
         </SortableContext>
       </div>
@@ -148,9 +156,10 @@ interface KanbanBoardProps {
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   onAddTask: (status: TaskStatus) => void;
+  liveStaff: LiveStaff[];
 }
 
-export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask }: KanbanBoardProps) {
+export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask, liveStaff }: KanbanBoardProps) {
   const { updateTaskStatus, reorderTasks } = useStore();
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -208,12 +217,13 @@ export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask }: Kanban
             tasks={tasks.filter((t) => t.status === key)}
             onTaskClick={onTaskClick}
             onAddTask={onAddTask}
+            liveStaff={liveStaff}
           />
         ))}
       </div>
 
       <DragOverlay dropAnimation={{ duration: 150, easing: "ease" }}>
-        {activeTask && <TaskCard task={activeTask} onClick={() => {}} />}
+        {activeTask && <TaskCard task={activeTask} onClick={() => {}} liveStaff={liveStaff} />}
       </DragOverlay>
     </DndContext>
   );

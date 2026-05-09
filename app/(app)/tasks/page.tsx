@@ -1,10 +1,19 @@
 "use client";
 import { Topbar } from "@/components/topbar";
-import { USERS, type Task } from "@/lib/mock-data";
+import { type Task } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
 import { Calendar, AlertTriangle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+interface LiveStaff {
+  id: string; user_id: string | null; email: string;
+  first_name: string | null; last_name: string | null; avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 type TaskWithProject = Task & { projectName: string; projectId: string };
 
@@ -20,13 +29,14 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
 };
 
 function TaskGroup({
-  title, tasks, accent, icon, onSelect,
+  title, tasks, accent, icon, onSelect, liveStaff,
 }: {
   title: string;
   tasks: TaskWithProject[];
   accent: string;
   icon?: React.ReactNode;
   onSelect: (task: TaskWithProject) => void;
+  liveStaff: LiveStaff[];
 }) {
   if (tasks.length === 0) return null;
   return (
@@ -38,7 +48,7 @@ function TaskGroup({
       </div>
       <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
         {tasks.map((task, i) => {
-          const assignee = USERS.find((u) => u.id === task.assigneeId);
+          const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
           const sc = statusConfig[task.status];
           const overdue = task.status !== "done" && new Date(task.dueDate) < new Date();
           return (
@@ -65,7 +75,7 @@ function TaskGroup({
                   {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
                 </div>
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-                  {assignee?.avatar}
+                  {assignee ? staffInitials(assignee) : "?"}
                 </div>
               </div>
             </div>
@@ -78,7 +88,14 @@ function TaskGroup({
 
 export default function TasksPage() {
   const { projects } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [filterMember, setFilterMember] = useState("all");
+
+  useEffect(() => {
+    supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
@@ -116,7 +133,7 @@ export default function TasksPage() {
         <div className="flex items-center gap-2">
           <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
             <option value="all">All Members</option>
-            {USERS.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
           </select>
           <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
             <option value="all">All Types</option>
@@ -133,10 +150,10 @@ export default function TasksPage() {
           <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} tasks</span>
         </div>
 
-        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} />
-        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} />
-        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} />
-        <TaskGroup title="Completed" tasks={grouped.done} accent="#22c55e" onSelect={setSelectedTask} />
+        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} liveStaff={liveStaff} />
+        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} liveStaff={liveStaff} />
+        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} liveStaff={liveStaff} />
+        <TaskGroup title="Completed" tasks={grouped.done} accent="#22c55e" onSelect={setSelectedTask} liveStaff={liveStaff} />
 
         {filtered.length === 0 && (
           <div className="text-center py-16">

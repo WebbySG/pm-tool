@@ -65,13 +65,15 @@ interface Store {
   updateTaskPriority: (projectId: string, taskId: string, priority: TaskPriority) => Promise<void>;
   updateTaskAssignee: (projectId: string, taskId: string, assigneeId: string) => Promise<void>;
   updateTaskDescription: (projectId: string, taskId: string, description: string) => Promise<void>;
+  updateTaskTitle: (projectId: string, taskId: string, title: string) => Promise<void>;
+  updateTaskDueDate: (projectId: string, taskId: string, dueDate: string) => Promise<void>;
   updateTaskRecurring: (projectId: string, taskId: string, recurring: RecurringFrequency) => Promise<void>;
   addTask: (projectId: string, task: Partial<Task> & { title: string }) => Promise<string>;
   addSubtask: (projectId: string, parentTaskId: string, subtask: { title: string; assigneeId: string; dueDate: string }) => Promise<void>;
   updateSubtask: (projectId: string, taskId: string, subtaskId: string, data: Partial<Task>) => Promise<void>;
   updateSubtaskStatus: (projectId: string, taskId: string, subtaskId: string, status: TaskStatus) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
-  uploadTaskAttachment: (projectId: string, taskId: string, file: File) => Promise<void>;
+  uploadTaskAttachment: (projectId: string, taskId: string, file: File, uploadedBy: string) => Promise<void>;
   deleteAttachment: (projectId: string, taskId: string, attachmentId: string) => Promise<void>;
 
   // Project actions
@@ -388,6 +390,16 @@ export const useStore = create<Store>()(
     await db.dbUpdateTask(taskId, { description });
   },
 
+  updateTaskTitle: async (projectId, taskId, title) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { title }) })) }));
+    await db.dbUpdateTask(taskId, { title });
+  },
+
+  updateTaskDueDate: async (projectId, taskId, dueDate) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { dueDate }) })) }));
+    await db.dbUpdateTask(taskId, { due_date: dueDate });
+  },
+
   updateTaskRecurring: async (projectId, taskId, recurring) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { recurring }) })) }));
     await db.dbUpdateTask(taskId, { recurring });
@@ -403,7 +415,7 @@ export const useStore = create<Store>()(
       status: taskData.status ?? "todo",
       priority: taskData.priority ?? "medium",
       type: taskData.type ?? "webdev",
-      assigneeId: taskData.assigneeId ?? "u1",
+      assigneeId: taskData.assigneeId ?? "",
       dueDate: taskData.dueDate ?? new Date().toISOString().slice(0, 10),
       tags: taskData.tags ?? [],
       recurring: taskData.recurring ?? null,
@@ -470,11 +482,11 @@ export const useStore = create<Store>()(
     await db.dbDeleteTask(taskId);
   },
 
-  uploadTaskAttachment: async (projectId, taskId, file) => {
+  uploadTaskAttachment: async (projectId, taskId, file, uploadedBy) => {
     const { url, name, size, type } = await uploadAttachment(file, taskId);
     const id = uuid();
     const attachment: TaskAttachment = {
-      id, name, type, url, size: size ?? "", uploadedBy: "u1", uploadedAt: new Date().toISOString(),
+      id, name, type, url, size: size ?? "", uploadedBy, uploadedAt: new Date().toISOString(),
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({

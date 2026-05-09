@@ -1,12 +1,20 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
-import { USERS } from "@/lib/mock-data";
+import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw } from "lucide-react";
 import { Suspense } from "react";
 import { useDraft } from "@/lib/use-draft";
+
+interface LiveStaff {
+  id: string; user_id: string | null; email: string;
+  first_name: string | null; last_name: string | null; avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 function NewCredentialForm() {
   const router = useRouter();
@@ -26,14 +34,22 @@ function NewCredentialForm() {
   const [form, setForm, clearDraft, restored] = useDraft("new-credential", initialForm, { omit: ["password"] });
   const [error, setError] = useState("");
 
-  const staffUsers = USERS.filter((u) => u.role === "staff");
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
-  function toggleStaff(userId: string) {
+  useEffect(() => {
+    supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
+
+  const staffUsers = liveStaff;
+
+  function toggleStaff(authId: string) {
     setForm((f) => ({
       ...f,
-      allowedStaff: f.allowedStaff.includes(userId)
-        ? f.allowedStaff.filter((id) => id !== userId)
-        : [...f.allowedStaff, userId],
+      allowedStaff: f.allowedStaff.includes(authId)
+        ? f.allowedStaff.filter((id) => id !== authId)
+        : [...f.allowedStaff, authId],
     }));
   }
 
@@ -136,12 +152,13 @@ function NewCredentialForm() {
         <div>
           <label className="text-xs font-semibold block mb-2" style={{ color: "#4a7090" }}>STAFF ACCESS</label>
           <div className="flex flex-col gap-2">
-            {staffUsers.map((u) => {
-              const selected = form.allowedStaff.includes(u.id);
+            {staffUsers.map((s) => {
+              const authId = staffAuthId(s);
+              const selected = form.allowedStaff.includes(authId);
               return (
                 <button
-                  key={u.id}
-                  onClick={() => toggleStaff(u.id)}
+                  key={s.id}
+                  onClick={() => toggleStaff(authId)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors"
                   style={{
                     background: selected ? "#38b6e815" : "#0e1e30",
@@ -149,11 +166,11 @@ function NewCredentialForm() {
                   }}
                 >
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-                    {u.avatar}
+                    {staffInitials(s)}
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>{u.name}</p>
-                    <p className="text-xs" style={{ color: "#4a7090" }}>{u.email}</p>
+                    <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>{staffName(s)}</p>
+                    <p className="text-xs" style={{ color: "#4a7090" }}>{s.email}</p>
                   </div>
                   <div
                     className="w-5 h-5 rounded-full border-2 flex items-center justify-center"

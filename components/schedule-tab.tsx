@@ -4,7 +4,15 @@ import {
   ChevronDown, ChevronRight, Plus, RotateCcw, Check,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { USERS, type Task, type Project } from "@/lib/mock-data";
+import { type Task, type Project } from "@/lib/mock-data";
+
+interface LiveStaff {
+  id: string; user_id: string | null; email: string;
+  first_name: string | null; last_name: string | null; avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || [s.first_name, s.last_name].filter(Boolean).join(" ").slice(0, 2).toUpperCase() || s.email.slice(0, 2).toUpperCase(); }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -36,13 +44,15 @@ function TaskRow({
   task,
   isRecurring,
   onClick,
+  liveStaff,
 }: {
   task: Task;
   isRecurring: boolean;
   onClick: () => void;
+  liveStaff: LiveStaff[];
 }) {
   const { updateTaskStatus } = useStore();
-  const assignee = USERS.find((u) => u.id === task.assigneeId);
+  const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const isDone = task.status === "done";
 
   function toggleDone(e: React.MouseEvent) {
@@ -109,9 +119,9 @@ function TaskRow({
         <div
           className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
           style={{ background: "var(--accent)", color: "#fff" }}
-          title={assignee.name}
+          title={staffName(assignee)}
         >
-          {assignee.avatar}
+          {staffInitials(assignee)}
         </div>
       )}
     </div>
@@ -127,6 +137,7 @@ function WeekRow({
   recurringIds,
   onTaskClick,
   onAddTask,
+  liveStaff,
 }: {
   weekNum: number;
   weekStart: Date;
@@ -135,6 +146,7 @@ function WeekRow({
   recurringIds: Set<string>;
   onTaskClick: (t: Task) => void;
   onAddTask: () => void;
+  liveStaff: LiveStaff[];
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const done = tasks.filter((t) => t.status === "done").length;
@@ -179,6 +191,7 @@ function WeekRow({
               task={t}
               isRecurring={recurringIds.has(t.id)}
               onClick={() => onTaskClick(t)}
+              liveStaff={liveStaff}
             />
           ))}
           <button
@@ -199,11 +212,13 @@ export function ScheduleTab({
   project,
   onTaskClick,
   onAddTask,
+  liveStaff,
 }: {
   project: Project;
   onTaskClick: (task: Task) => void;
   /** Called with the pre-filled due date ISO string for that week. */
   onAddTask: (dueDate: string) => void;
+  liveStaff: LiveStaff[];
 }) {
   const projectStart = new Date(project.startDate);
   const projectEnd   = new Date(project.dueDate);
@@ -336,6 +351,7 @@ export function ScheduleTab({
                   recurringIds={slotRecurringIds}
                   onTaskClick={onTaskClick}
                   onAddTask={() => onAddTask(slotEndDate(projectStart, monthNum, w))}
+                  liveStaff={liveStaff}
                 />
               );
             })}

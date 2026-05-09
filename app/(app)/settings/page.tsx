@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { Topbar } from "@/components/topbar";
-import { USERS } from "@/lib/mock-data";
-import { UserPlus, Trash2, Shield, Bell, Key, Bot, Check, Palette } from "lucide-react";
+import { UserPlus, Shield, Bell, Key, Bot, Check, Palette } from "lucide-react";
 import { THEMES, type ThemeName, getStoredTheme, applyTheme } from "@/lib/theme";
 
 // ── Compact theme card ────────────────────────────────────────────────────────
@@ -133,50 +132,18 @@ export default function SettingsPage() {
           className="rounded-2xl overflow-hidden"
           style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
         >
-          <div
-            className="flex items-center justify-between px-5 py-4"
-            style={{ borderBottom: "1px solid var(--border)" }}
-          >
+          <div className="flex items-center justify-between px-5 py-4">
             <div>
               <h2 className="font-bold text-sm" style={{ color: "var(--text)" }}>Team Members</h2>
-              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Manage who has access to the system</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Invite staff, manage access and roles</p>
             </div>
-            <button
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-white"
+            <a
+              href="/team"
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
               style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}
             >
-              <UserPlus size={14} /> Invite
-            </button>
-          </div>
-          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
-            {USERS.map((user) => (
-              <div key={user.id} className="flex items-center gap-4 px-5 py-3">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
-                  style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))", color: "#fff" }}
-                >
-                  {user.avatar}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium" style={{ color: "var(--text)" }}>{user.name}</p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{user.email}</p>
-                </div>
-                <span
-                  className="text-xs px-2 py-0.5 rounded-full font-medium"
-                  style={{
-                    background: user.role === "admin" ? "#ef444420" : "rgba(var(--accent-rgb),0.12)",
-                    color: user.role === "admin" ? "#ef4444" : "var(--accent)",
-                  }}
-                >
-                  {user.role}
-                </span>
-                {user.role !== "admin" && (
-                  <button className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: "var(--text-muted)" }}>
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
+              <UserPlus size={14} /> Manage Team
+            </a>
           </div>
         </section>
 

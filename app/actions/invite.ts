@@ -33,6 +33,14 @@ export async function inviteStaff(data: { name: string; email: string }): Promis
       return { success: false, error: inviteError.message };
     }
 
+    // Remove any auto-assigned role the DB trigger may have created for this user.
+    // Staff must never appear in user_roles — that table is for admins/owners only.
+    const { data: { users } } = await admin.auth.admin.listUsers();
+    const invitedUser = users.find((u) => u.email === data.email);
+    if (invitedUser) {
+      await admin.from("user_roles").delete().eq("user_id", invitedUser.id);
+    }
+
     await admin
       .from("staff_members")
       .upsert(
@@ -50,6 +58,41 @@ export async function inviteStaff(data: { name: string; email: string }): Promis
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unexpected error sending invite.";
+    return { success: false, error: message };
+  }
+}
+
+export async function revokeStaff(data: { staffId: string; userId: string | null; email: string }): Promise<{ success: boolean; error?: string }> {
+  try {
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      return { success: false, error: "Server not configured. Add SUPABASE_SERVICE_ROLE_KEY to .env.local." };
+    }
+
+    const admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceKey,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    // Find auth user by email if we don't have user_id yet (pending invite)
+    let authUserId = data.userId;
+    if (!authUserId) {
+      const { data: { users } } = await admin.auth.admin.listUsers();
+      authUserId = users.find((u) => u.email === data.email)?.id ?? null;
+    }
+
+    // Delete from auth.users (revokes access permanently)
+    if (authUserId) {
+      await admin.auth.admin.deleteUser(authUserId);
+    }
+
+    // Delete from staff_members
+    await admin.from("staff_members").delete().eq("id", data.staffId);
+
+    return { success: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unexpected error revoking staff.";
     return { success: false, error: message };
   }
 }

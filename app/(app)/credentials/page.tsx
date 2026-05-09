@@ -1,20 +1,29 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Topbar } from "@/components/topbar";
-import { USERS, type Credential } from "@/lib/mock-data";
+import { type Credential } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
 import { Eye, EyeOff, Copy, Check, Plus, Shield, Lock, Trash2, ExternalLink } from "lucide-react";
 import { AdminOnly } from "@/components/admin-guard";
 
-function CredentialRow({ cred, isLast }: { cred: Credential; isLast: boolean }) {
+interface LiveStaff {
+  id: string; user_id: string | null; email: string;
+  first_name: string | null; last_name: string | null; avatar_initials: string;
+}
+function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
+function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
+function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
+
+function CredentialRow({ cred, isLast, liveStaff }: { cred: Credential; isLast: boolean; liveStaff: LiveStaff[] }) {
   const { updateCredentialAccess, deleteCredential } = useStore();
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState<"user" | "pass" | null>(null);
   const [showAccessMenu, setShowAccessMenu] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const allowedUsers = USERS.filter((u) => cred.allowedStaff.includes(u.id));
-  const staffUsers = USERS.filter((u) => u.role === "staff");
+  const allowedUsers = liveStaff.filter((s) => cred.allowedStaff.includes(staffAuthId(s)));
+  const staffUsers = liveStaff;
 
   function copyToClipboard(text: string, field: "user" | "pass") {
     navigator.clipboard.writeText(text).then(() => {
@@ -108,9 +117,9 @@ function CredentialRow({ cred, isLast }: { cred: Credential; isLast: boolean }) 
           <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#ef444420", color: "#ef4444" }}>Admin only</span>
         ) : (
           <div className="flex -space-x-2">
-            {allowedUsers.map((u) => (
-              <div key={u.id} title={u.name} className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2" style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}>
-                {u.avatar}
+            {allowedUsers.map((s) => (
+              <div key={s.id} title={staffName(s)} className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2" style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}>
+                {staffInitials(s)}
               </div>
             ))}
           </div>
@@ -128,19 +137,20 @@ function CredentialRow({ cred, isLast }: { cred: Credential; isLast: boolean }) 
             <div className="fixed inset-0 z-10" onClick={() => setShowAccessMenu(false)} />
             <div className="absolute right-0 top-full mt-1 rounded-lg z-20 shadow-lg overflow-hidden" style={{ background: "#0e1e30", border: "1px solid #1c3248", minWidth: "180px" }}>
               <p className="text-xs font-semibold px-3 pt-2.5 pb-1" style={{ color: "#4a7090" }}>STAFF ACCESS</p>
-              {staffUsers.map((u) => {
-                const hasAccess = cred.allowedStaff.includes(u.id);
+              {staffUsers.map((s) => {
+                const id = staffAuthId(s);
+                const hasAccess = cred.allowedStaff.includes(id);
                 return (
                   <button
-                    key={u.id}
-                    onClick={() => toggleAccess(u.id)}
+                    key={s.id}
+                    onClick={() => toggleAccess(id)}
                     className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: "#cce4ff" }}
                   >
                     <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "#38b6e8", color: "#fff" }}>
-                      {u.avatar}
+                      {staffInitials(s)}
                     </div>
-                    <span className="flex-1 text-left">{u.name}</span>
+                    <span className="flex-1 text-left">{staffName(s)}</span>
                     <div className="w-4 h-4 rounded border flex items-center justify-center" style={{ borderColor: hasAccess ? "#22c55e" : "#1c3248", background: hasAccess ? "#22c55e" : "transparent" }}>
                       {hasAccess && <Check size={10} color="#fff" />}
                     </div>
@@ -166,6 +176,13 @@ function CredentialRow({ cred, isLast }: { cred: Credential; isLast: boolean }) 
 
 export default function CredentialsPage() {
   const { credentials, clients } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
+
+  useEffect(() => {
+    supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
+      .eq("status", "active")
+      .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
+  }, []);
 
   const grouped = clients.map((client) => ({
     client,
@@ -208,7 +225,7 @@ export default function CredentialsPage() {
             ) : (
               <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
                 {creds.map((cred, i) => (
-                  <CredentialRow key={cred.id} cred={cred} isLast={i === creds.length - 1} />
+                  <CredentialRow key={cred.id} cred={cred} isLast={i === creds.length - 1} liveStaff={liveStaff} />
                 ))}
               </div>
             )}

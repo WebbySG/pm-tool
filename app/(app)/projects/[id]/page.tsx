@@ -186,7 +186,9 @@ export default function ProjectDetailPage() {
                 </div>
                 {showAssignMenu && (
                   <div className="absolute top-full right-0 mt-1 rounded-lg z-20 shadow-lg overflow-hidden" style={{ background: "#0e1e30", border: "1px solid #1c3248", minWidth: "180px" }}>
-                    {unassignedUsers.length === 0 ? (
+                    {liveStaff.length === 0 ? (
+                      <p className="px-3 py-2 text-sm" style={{ color: "#4a7090" }}>Loading staff…</p>
+                    ) : unassignedUsers.length === 0 ? (
                       <p className="px-3 py-2 text-sm" style={{ color: "#4a7090" }}>All staff assigned</p>
                     ) : unassignedUsers.map((s) => (
                       <button
@@ -204,7 +206,9 @@ export default function ProjectDetailPage() {
                   </div>
                 )}
                 <span className="text-xs" style={{ color: "#4a7090" }}>
-                  Due {new Date(project.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" })}
+                  {project.dueDate && !isNaN(new Date(project.dueDate).getTime())
+                    ? `Due ${new Date(project.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" })}`
+                    : "No due date set"}
                 </span>
               </div>
             </div>
@@ -246,6 +250,7 @@ export default function ProjectDetailPage() {
               tasks={project.tasks}
               onTaskClick={(task) => setSelectedTask(task)}
               onAddTask={(status: TaskStatus) => { setAddTaskCol(status); setShowAddTask(true); }}
+              liveStaff={liveStaff}
             />
           )}
 
@@ -259,6 +264,7 @@ export default function ProjectDetailPage() {
                 setAddTaskCol("todo");
                 setShowAddTask(true);
               }}
+              liveStaff={liveStaff}
             />
           )}
 

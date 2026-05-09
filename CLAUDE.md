@@ -330,3 +330,95 @@ After completing a development task, Claude must report in this format:
 - Mention anything that could not be verified or needs future work.
 
 Do not give vague completion updates. Be specific.
+
+---
+
+## 11. WebbyOps PM Tool — Application Knowledge
+
+This section records permanent knowledge about the WebbyOps PM Tool application. Update this section whenever new structural, database, or business-rule knowledge is discovered.
+
+### Application Purpose
+
+WebbyOps is a project management SaaS tool for a web and SEO agency. It manages client projects, tasks, team workloads, content pipelines, credentials, and templates.
+
+### Tech Stack
+
+- **Frontend:** Next.js App Router, React, Tailwind CSS, CSS variables for theming
+- **State:** Zustand with `persist` middleware (sessionStorage)
+- **Database/Auth:** Supabase (PostgreSQL + Auth + Storage)
+- **Drag and Drop:** DnD Kit
+- **Deployment:** GitHub Actions → VPS via `appleboy/ssh-action`
+- **VPS:** Runs HTTP (not HTTPS) — `crypto.randomUUID()` is unavailable; always use the `uuid()` helper in `lib/store.ts`
+
+### Role System
+
+- **Admin:** Full access to all features, all projects, all tasks, all management pages
+- **Staff:** View only assigned projects; create/edit/delete own tasks only; no credentials, templates, or team pages
+- **Content Access:** Controlled per-staff via `can_access_content` boolean in `staff_members`
+- Role resolved by: `user_roles` table first (owner/admin → admin role), then `staff_members.pm_role`
+- **Critical:** Staff must NOT have rows in `user_roles`, or they will incorrectly receive admin role
+
+### Admin Must Always Be Able To Edit
+
+**Tasks:** title, status, priority, assignee, due date (must save to DB), description, tags, recurring, subtasks, delete
+
+**Projects:** name, description, type, phase, due date, start date, client, channel, assigned staff, delete
+
+**Everything else:** templates, credentials, channels, clients — full CRUD
+
+### Supabase Tables
+
+| Table | Key Columns |
+|---|---|
+| `staff_members` | `id`, `user_id` (auth UUID), `email`, `first_name`, `last_name`, `avatar_initials`, `pm_role`, `status`, `can_access_content` |
+| `user_roles` | `user_id`, `role` (owner/admin = admin) |
+| `pm_projects` | `id`, `name`, `description`, `type`, `phase`, `client_id`, `channel_id`, `start_date`, `due_date`, `assigned_staff` (uuid[]) |
+| `pm_tasks` | `id`, `project_id`, `parent_id`, `title`, `description`, `status`, `priority`, `type`, `assignee_id`, `due_date`, `tags`, `recurring`, `recurring_day`, `sort_order` |
+| `pm_channels` | `id`, `name`, `color`, `order` |
+| `pm_clients` | `id`, `name`, `website`, `industry` |
+| `pm_credentials` | credentials with `allowed_staff` array |
+| `pm_project_templates`, `pm_task_templates` | templates |
+| `pm_notifications` | notifications |
+| `pm_task_attachments` | file attachments |
+
+### Key Development Patterns
+
+- **Live staff:** Always fetch from `staff_members` where `status = 'active'`. Auth ID = `s.user_id ?? s.id`
+- **Assignee IDs:** Always Supabase auth UUIDs — never "u1", "u2", "u3" or any mock ID
+- **Store refresh:** `refresh()` called in app layout on every pathname change — data stays current without manual reload
+- **DB writes must be awaited:** Never fire-and-forget `dbAddProject`, `dbAddTask` etc. — silent failures cause data loss
+- **UUID:** Use `uuid()` from `lib/store.ts` — calls `crypto.randomUUID()` on HTTPS, Math.random fallback on HTTP
+
+### Known Recurring Mistakes
+
+1. Using `USERS` from `lib/mock-data.ts` — always use live Supabase staff instead
+2. Hardcoding `"u1"`, `"u2"`, `"u3"` as user/assignee/uploader IDs — always use `user?.id` from `useAuth()`
+3. Not awaiting DB writes — always `await` inserts/updates
+4. `uuid()` calling itself recursively — must call `crypto.randomUUID()` not `uuid()`
+5. Staff appearing in `user_roles` — removes them or they get admin role
+6. `confirmation_token` NULL in auth.users — Supabase requires empty string `''` not NULL
+7. PostgREST schema cache stale after migrations — run `NOTIFY pgrst, 'reload schema'`
+8. `initialized` in persist partialize — causes stale data; keep it out of persisted state
+
+### Key File Map
+
+```
+app/(app)/layout.tsx          — Auth guard, store refresh on navigation
+app/(app)/dashboard/page.tsx  — Admin: full team; Staff: own tasks only
+app/(app)/projects/page.tsx   — Project list, channels, DnD, admin-only controls
+app/(app)/projects/new/page.tsx — Create project (admin only), live staff
+app/(app)/projects/[id]/page.tsx — Project detail, kanban, schedule, files, pinned
+app/(app)/tasks/page.tsx      — All tasks (role filtered)
+app/(app)/team/page.tsx       — Team management, invites, content access toggle
+app/(app)/credentials/page.tsx — Credentials (admin only)
+app/(app)/templates/page.tsx  — Templates (admin only)
+app/(app)/content/            — Content (per-staff access control)
+components/sidebar.tsx        — Navigation, role-filtered
+components/task-drawer.tsx    — Full task edit panel
+components/kanban-board.tsx   — Kanban board
+components/schedule-tab.tsx   — Schedule/calendar view
+lib/store.ts                  — Zustand store: init(), refresh(), all CRUD
+lib/db.ts                     — Supabase query layer
+lib/auth-context.tsx          — PmUser, role resolution, canAccessContent
+lib/mock-data.ts              — Types only. USERS array is dead — do not use in UI
+```

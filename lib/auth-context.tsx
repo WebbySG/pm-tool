@@ -61,14 +61,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(pmUser);
         setLoading(false);
 
-        // When an invited user accepts their invite, link their auth ID to staff_members
+        // When an invited staff member accepts their invite, link their auth ID and clean up any
+        // auto-assigned user_roles entry that a DB trigger may have created.
         if (event === "SIGNED_IN") {
           supabase
             .from("staff_members")
-            .update({ user_id: session.user.id, status: "active" })
+            .select("id, pm_role")
             .eq("email", session.user.email ?? "")
-            .is("user_id", null)
-            .then(() => {});
+            .maybeSingle()
+            .then(({ data: staffRow }) => {
+              if (staffRow && staffRow.pm_role === "staff") {
+                // Link user_id (only if not yet linked)
+                supabase
+                  .from("staff_members")
+                  .update({ user_id: session.user.id, status: "active" })
+                  .eq("id", staffRow.id)
+                  .is("user_id", null)
+                  .then(() => {});
+                // Remove any auto-assigned owner/admin role — staff must not be in user_roles
+                supabase.from("user_roles").delete().eq("user_id", session.user.id).then(() => {});
+              }
+            });
         }
       } else {
         setUser(null);

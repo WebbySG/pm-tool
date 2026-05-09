@@ -4,8 +4,8 @@ import { Topbar } from "@/components/topbar";
 import { AdminOnly } from "@/components/admin-guard";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
-import { inviteStaff } from "@/app/actions/invite";
-import { UserPlus, Mail, Clock, CheckCircle2, X, Send, Loader2 } from "lucide-react";
+import { inviteStaff, revokeStaff } from "@/app/actions/invite";
+import { UserPlus, Mail, Clock, CheckCircle2, X, Send, Loader2, UserMinus } from "lucide-react";
 
 const priorityColor: Record<string, string> = {
   urgent: "#ef4444", high: "#f59e0b", medium: "#818cf8", low: "#22c55e",
@@ -126,6 +126,20 @@ function TeamContent() {
     setTimeout(() => setToast(""), 4000);
   }
 
+  async function handleRevoke(s: StaffMember) {
+    const label = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
+    if (!confirm(`Remove ${label} from the team? This will revoke their access immediately.`)) return;
+    const result = await revokeStaff({ staffId: s.id, userId: s.user_id, email: s.email });
+    if (result.success) {
+      setStaff((prev) => prev.filter((m) => m.id !== s.id));
+      setToast(`${label} has been removed.`);
+      setTimeout(() => setToast(""), 3000);
+    } else {
+      setToast(`Error: ${result.error}`);
+      setTimeout(() => setToast(""), 4000);
+    }
+  }
+
   async function toggleContentAccess(s: StaffMember) {
     const next = !s.can_access_content;
     await supabase.from("staff_members").update({ can_access_content: next }).eq("id", s.id);
@@ -183,6 +197,14 @@ function TeamContent() {
                 >
                   <Clock size={11} /> Pending
                 </span>
+                <button
+                  onClick={() => handleRevoke(s)}
+                  title="Revoke invite"
+                  className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
+                  style={{ color: "#ef4444" }}
+                >
+                  <X size={14} />
+                </button>
               </div>
             ))}
           </div>
@@ -228,6 +250,16 @@ function TeamContent() {
                     >
                       {s.pm_role}
                     </span>
+                    {s.pm_role === "staff" && (
+                      <button
+                        onClick={() => handleRevoke(s)}
+                        title="Remove staff member"
+                        className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
+                        style={{ color: "#ef4444" }}
+                      >
+                        <UserMinus size={15} />
+                      </button>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)", borderColor: "var(--border)" }}>

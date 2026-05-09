@@ -133,7 +133,7 @@ function TaskPanel({
 }) {
   const {
     updateTaskStatus, updateTaskPriority, updateTaskAssignee, updateTaskDescription,
-    updateTaskRecurring,
+    updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
   } = useStore();
   const { user } = useAuth();
@@ -145,6 +145,8 @@ function TaskPanel({
   const [newSubtask, setNewSubtask] = useState("");
   const [newSubtaskAssignee, setNewSubtaskAssignee] = useState(task.assigneeId);
   const [description, setDescription] = useState(task.description);
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(task.title);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showPriorityMenu, setShowPriorityMenu] = useState(false);
   const [showAssigneeMenu, setShowAssigneeMenu] = useState(false);
@@ -152,6 +154,12 @@ function TaskPanel({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function handleSaveTitle() {
+    const t = titleDraft.trim();
+    if (t && t !== task.title) updateTaskTitle(projectId, task.id, t);
+    setTitleEditing(false);
+  }
 
   const status = statusOptions.find((s) => s.key === task.status)!;
   const priority = priorityOptions.find((p) => p.key === task.priority)!;
@@ -175,9 +183,10 @@ function TaskPanel({
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
     setUploading(true);
+    const uploadedBy = user?.id ?? "";
     try {
       for (const file of files) {
-        await uploadTaskAttachment(projectId, task.id, file);
+        await uploadTaskAttachment(projectId, task.id, file, uploadedBy);
       }
     } finally {
       setUploading(false);
@@ -221,7 +230,26 @@ function TaskPanel({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-5">
-        <h2 className="text-xl font-semibold leading-snug" style={{ color: "#cce4ff" }}>{task.title}</h2>
+        {canEdit && titleEditing ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={handleSaveTitle}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSaveTitle(); if (e.key === "Escape") { setTitleDraft(task.title); setTitleEditing(false); } }}
+            className="text-xl font-semibold leading-snug w-full px-2 py-1 rounded-lg outline-none"
+            style={{ color: "#cce4ff", background: "#0e1e30", border: "1px solid #38b6e8" }}
+          />
+        ) : (
+          <h2
+            className="text-xl font-semibold leading-snug cursor-pointer hover:opacity-80 transition-opacity"
+            style={{ color: "#cce4ff" }}
+            onClick={() => { if (canEdit) { setTitleDraft(task.title); setTitleEditing(true); } }}
+            title={canEdit ? "Click to edit title" : undefined}
+          >
+            {task.title}
+          </h2>
+        )}
 
         {/* Meta */}
         <div className="grid grid-cols-2 gap-3">
@@ -311,9 +339,14 @@ function TaskPanel({
           {/* Due date */}
           <div>
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Due Date</p>
-            <input type="date" defaultValue={task.dueDate}
+            <input
+              type="date"
+              value={task.dueDate ?? ""}
+              onChange={(e) => canEdit && e.target.value && updateTaskDueDate(projectId, task.id, e.target.value)}
               className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff", opacity: canEdit ? 1 : 0.6 }}
+              readOnly={!canEdit}
+            />
           </div>
 
           {/* Recurring */}
