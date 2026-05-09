@@ -51,7 +51,7 @@ export default function LoginPage() {
           >
             <Zap size={24} color="#fff" fill="#fff" />
           </div>
-          <h1 className="text-2xl font-extrabold text-gradient tracking-tight">AgencyOS</h1>
+          <h1 className="text-2xl font-extrabold text-gradient tracking-tight">WebbyOps</h1>
           <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
             Sign in to your workspace
           </p>

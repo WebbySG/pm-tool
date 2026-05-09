@@ -421,7 +421,7 @@ export default function ReviewPage() {
               style={{ background: "linear-gradient(135deg, #38b6e8, #ff6b47)" }}>
               <Zap size={10} color="#fff" fill="#fff" />
             </div>
-            <p className="text-xs">Powered by AgencyOS</p>
+            <p className="text-xs">Powered by WebbyOps</p>
           </div>
         </div>
       </div>

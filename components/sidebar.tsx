@@ -44,7 +44,7 @@ export function Sidebar() {
         >
           <Zap size={17} color="#fff" fill="#fff" />
         </div>
-        <span className="font-extrabold text-base tracking-tight text-gradient">AgencyOS</span>
+        <span className="font-extrabold text-base tracking-tight text-gradient">WebbyOps</span>
       </div>
 
       {/* ── Nav ── */}
