@@ -174,13 +174,13 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Team Workload — live staff */}
+          {/* Team Workload — live staff (admin sees all; staff sees only themselves) */}
           <div
             className="anim-up rounded-2xl overflow-hidden"
             style={{ animationDelay: "0.28s", background: "#070d18", border: "1px solid #1c2030" }}
           >
             <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #1c2030", background: "#12151f" }}>
-              <h2 className="font-bold text-sm" style={{ color: "#cce4ff" }}>Team Workload</h2>
+              <h2 className="font-bold text-sm" style={{ color: "#cce4ff" }}>{isAdmin ? "Team Workload" : "My Tasks"}</h2>
               {isAdmin && (
                 <Link href="/team" className="text-xs font-semibold px-2.5 py-1 rounded-lg" style={{ background: "#22d3ee20", color: "#22d3ee" }}>
                   View all →
@@ -192,7 +192,7 @@ export default function DashboardPage() {
               {liveStaff.length === 0 && (
                 <p className="text-xs text-center py-4" style={{ color: "#4a7090" }}>No active staff yet.</p>
               )}
-              {liveStaff.map((s, si) => {
+              {(isAdmin ? liveStaff : liveStaff.filter((s) => (s.user_id ?? s.id) === user?.id)).map((s, si) => {
                 const avatarColor = AVATAR_COLORS[si % AVATAR_COLORS.length];
                 const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
                 const initials = s.avatar_initials || name.slice(0, 2).toUpperCase();
