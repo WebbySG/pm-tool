@@ -74,7 +74,7 @@ export default function ProjectDetailPage() {
   const [pinForm, setPinForm] = useState({ type: "link" as "link" | "document" | "message", title: "", content: "", url: "" });
   const initialTask: NewTaskForm = {
     title: "", description: "", assigneeId: "", priority: "medium",
-    dueDate: new Date().toISOString().split("T")[0], type: "webdev",
+    dueDate: "", type: "webdev",
     recurring: null, recurringDay: "", tags: "",
   };
   const [newTask, setNewTask, clearTaskDraft, taskRestored] = useDraft(

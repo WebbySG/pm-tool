@@ -94,7 +94,9 @@ export default function ArchivePage() {
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="flex items-center gap-1 text-xs" style={{ color: "#4a7090" }}>
                           <Calendar size={11} />
-                          {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                          {task.dueDate
+                            ? new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })
+                            : "No date"}
                         </div>
                         {assignee && (
                           <div

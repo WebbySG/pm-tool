@@ -33,7 +33,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
 export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
-  const overdue = task.status !== "done" && new Date(task.dueDate) < new Date();
+  const overdue = task.status !== "done" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
   return (
@@ -71,10 +71,14 @@ export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClic
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1 text-xs" style={{ color: overdue ? "#ef4444" : "#4a7090" }}>
-            <Calendar size={10} />
-            {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
-          </span>
+          {task.dueDate ? (
+            <span className="flex items-center gap-1 text-xs" style={{ color: overdue ? "#ef4444" : "#4a7090" }}>
+              <Calendar size={10} />
+              {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+            </span>
+          ) : (
+            <span className="text-xs" style={{ color: "#1c3248" }}>No date</span>
+          )}
           {task.attachments.length > 0 && (
             <span className="flex items-center gap-0.5 text-xs" style={{ color: "#4a7090" }}>
               <Paperclip size={10} />{task.attachments.length}

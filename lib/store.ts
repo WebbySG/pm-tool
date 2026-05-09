@@ -398,7 +398,7 @@ export const useStore = create<Store>()(
 
   updateTaskDueDate: async (projectId, taskId, dueDate) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { dueDate }) })) }));
-    await db.dbUpdateTask(taskId, { due_date: dueDate });
+    await db.dbUpdateTask(taskId, { due_date: dueDate || null });
   },
 
   updateTaskRecurring: async (projectId, taskId, recurring) => {

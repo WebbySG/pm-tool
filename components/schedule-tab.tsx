@@ -236,6 +236,7 @@ export function ScheduleTab({
   const recurringIds = new Set<string>();
 
   for (const task of project.tasks) {
+    if (!task.dueDate) continue;
     const { month, week } = getSlot(projectStart, task.dueDate);
 
     if (task.recurring === "weekly") {
@@ -275,11 +276,13 @@ export function ScheduleTab({
 
         // Count tasks in this month
         const monthTaskCount = project.tasks.filter((t) => {
+          if (!t.dueDate) return false;
           const { month } = getSlot(projectStart, t.dueDate);
           return month === monthNum;
         }).length;
 
         const hasRecurringThisMonth = project.tasks.some((t) => {
+          if (!t.dueDate) return false;
           const { month } = getSlot(projectStart, t.dueDate);
           return (t.recurring === "weekly" || t.recurring === "monthly") && month <= monthNum;
         });

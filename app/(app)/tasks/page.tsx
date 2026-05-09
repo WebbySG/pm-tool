@@ -56,7 +56,7 @@ function TaskGroup({
           const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
           const avatarColor = AVATAR_COLORS[liveStaff.indexOf(assignee!) % AVATAR_COLORS.length] ?? "#818cf8";
           const sc = statusConfig[task.status];
-          const overdue = task.status !== "done" && new Date(task.dueDate) < new Date();
+          const overdue = task.status !== "done" && !!task.dueDate && new Date(task.dueDate) < new Date();
           return (
             <div
               key={task.id}
@@ -95,7 +95,9 @@ function TaskGroup({
                   style={{ color: overdue ? "#ef4444" : "#4a7090" }}
                 >
                   <Calendar size={11} />
-                  {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                  {task.dueDate
+                    ? new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })
+                    : "No date"}
                 </div>
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
@@ -150,9 +152,10 @@ export default function TasksPage() {
   const todayStr = now.toDateString();
 
   const grouped = {
-    overdue:  filtered.filter((t) => new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
-    today:    filtered.filter((t) => new Date(t.dueDate).toDateString() === todayStr),
-    upcoming: filtered.filter((t) => new Date(t.dueDate) > now),
+    overdue:  filtered.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
+    today:    filtered.filter((t) => t.dueDate && new Date(t.dueDate).toDateString() === todayStr),
+    upcoming: filtered.filter((t) => t.dueDate && new Date(t.dueDate) > now),
+    noDate:   filtered.filter((t) => !t.dueDate),
   };
 
   async function handleComplete(task: TaskWithProject) {
@@ -201,6 +204,7 @@ export default function TasksPage() {
         <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
         <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
         <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
+        <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
 
         {filtered.length === 0 && (
           <div className="text-center py-16 flex flex-col items-center gap-3">

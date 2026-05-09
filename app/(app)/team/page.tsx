@@ -240,7 +240,7 @@ function TeamContent() {
               const open = userTasks.filter((t) => t.status !== "done");
               const inProgress = userTasks.filter((t) => t.status === "in_progress");
               const review = userTasks.filter((t) => t.status === "review");
-              const overdue = open.filter((t) => new Date(t.dueDate) < new Date());
+              const overdue = open.filter((t) => t.dueDate && new Date(t.dueDate) < new Date());
               const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
 
               return (
@@ -318,7 +318,7 @@ function TeamContent() {
                     <p className="text-xs font-bold mb-3 tracking-widest" style={{ color: "var(--text-muted)" }}>ACTIVE TASKS</p>
                     {open.slice(0, 4).map((task) => {
                       const project = projects.find((p) => p.id === task.projectId);
-                      const isOverdue = new Date(task.dueDate) < new Date();
+                      const isOverdue = !!task.dueDate && new Date(task.dueDate) < new Date();
                       return (
                         <Link
                           key={task.id}
@@ -332,7 +332,9 @@ function TeamContent() {
                             {project && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{project.name}</p>}
                           </div>
                           <span className="text-xs shrink-0" style={{ color: isOverdue ? "#f87171" : "var(--text-muted)" }}>
-                            {new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                            {task.dueDate
+                              ? new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" })
+                              : "No date"}
                           </span>
                         </Link>
                       );

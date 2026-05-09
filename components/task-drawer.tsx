@@ -342,7 +342,7 @@ function TaskPanel({
             <input
               type="date"
               value={task.dueDate ?? ""}
-              onChange={(e) => canEdit && e.target.value && updateTaskDueDate(projectId, task.id, e.target.value)}
+              onChange={(e) => canEdit && updateTaskDueDate(projectId, task.id, e.target.value)}
               className="w-full px-3 py-2 rounded-lg text-sm outline-none"
               style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff", opacity: canEdit ? 1 : 0.6 }}
               readOnly={!canEdit}
