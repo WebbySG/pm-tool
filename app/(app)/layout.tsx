@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth-context";
 import { useStore } from "@/lib/store";
@@ -25,11 +25,17 @@ function AppLoader() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const initialized = useStore((s) => s.initialized);
+  const refresh = useStore((s) => s.refresh);
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (initialized) refresh();
+  }, [pathname]);
 
   if (loading || !initialized) return <AppLoader />;
   if (!user) return null;

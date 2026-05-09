@@ -32,6 +32,7 @@ interface Store {
 
   // Init
   init: () => Promise<void>;
+  refresh: () => Promise<void>;
 
   // Channel actions
   addChannel: (name: string, color: string) => Promise<void>;
@@ -180,6 +181,11 @@ export const useStore = create<Store>()(
     if (get().initialized) return;
     const data = await db.loadAll();
     set({ ...data, initialized: true });
+  },
+
+  refresh: async () => {
+    const data = await db.loadAll();
+    set(data);
   },
 
   // ─── Channels ─────────────────────────────────────────────────────────────
