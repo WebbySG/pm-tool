@@ -4,25 +4,36 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 
+const REMEMBER_KEY = "webbyops_remembered_email";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
 
   // If already authenticated, skip the login form entirely
+  // Also restore remembered email
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) router.replace("/dashboard");
     });
+    const saved = localStorage.getItem(REMEMBER_KEY);
+    if (saved) { setEmail(saved); setRemember(true); }
   }, [router]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
+    if (remember) {
+      localStorage.setItem(REMEMBER_KEY, email.trim());
+    } else {
+      localStorage.removeItem(REMEMBER_KEY);
+    }
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (error) {
       setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
@@ -137,6 +148,25 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+
+            {/* Remember me */}
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <div
+                onClick={() => setRemember(!remember)}
+                className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
+                style={{
+                  background: remember ? "var(--accent)" : "transparent",
+                  border: `1.5px solid ${remember ? "var(--accent)" : "var(--border)"}`,
+                }}
+              >
+                {remember && (
+                  <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
+                    <path d="M1 3.5L3.5 6L8 1" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </div>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Remember my email</span>
+            </label>
 
             <button
               type="submit"
