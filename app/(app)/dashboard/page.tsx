@@ -36,12 +36,13 @@ export default function DashboardPage() {
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
+    if (!user?.id) return;
     supabase
       .from("staff_members")
       .select("*")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
-  }, []);
+  }, [user?.id]);
 
   const isAdmin = user?.pmRole === "admin";
 

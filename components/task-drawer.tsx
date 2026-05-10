@@ -54,12 +54,14 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
   const [stack, setStack] = useState<Task[]>([rootTask]);
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const { projects } = useStore();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user?.id) return;
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
-  }, []);
+  }, [user?.id]);
 
   // Keep every task in the stack live from the store
   function liveTask(taskId: string): Task | null {

@@ -266,10 +266,11 @@ export default function ProjectsPage() {
   const [filterStaff, setFilterStaff] = useState("all");
 
   useEffect(() => {
+    if (!user?.id) return;
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
-  }, []);
+  }, [user?.id]);
   const [overChannelId, setOverChannelId] = useState<string | null>(null);
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");

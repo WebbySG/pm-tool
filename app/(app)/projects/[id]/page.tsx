@@ -83,6 +83,7 @@ export default function ProjectDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (!user?.id) return;
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => {
@@ -90,7 +91,7 @@ export default function ProjectDetailPage() {
         setLiveStaff(staff);
         setNewTask((prev) => ({ ...prev, assigneeId: prev.assigneeId || (staff[0] ? staffAuthId(staff[0]) : "") }));
       });
-  }, []);
+  }, [user?.id]);
 
   const projectRaw = projects.find((p) => p.id === params.id);
   if (!projectRaw) return notFound();

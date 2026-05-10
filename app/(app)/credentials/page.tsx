@@ -6,6 +6,7 @@ import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2 } from "lucide-react";
 import { AdminOnly } from "@/components/admin-guard";
+import { useAuth } from "@/lib/auth-context";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -202,13 +203,15 @@ function CredentialRow({ cred, isLast, liveStaff }: { cred: Credential; isLast: 
 
 export default function CredentialsPage() {
   const { credentials } = useStore();
+  const { user } = useAuth();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
+    if (!user?.id) return;
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
-  }, []);
+  }, [user?.id]);
 
   // Group by free-text client name (ungrouped if blank)
   const clientNames = Array.from(new Set(credentials.map((c) => c.client || ""))).sort();
