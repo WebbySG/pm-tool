@@ -157,6 +157,7 @@ function TaskPanel({
   const [descEditing, setDescEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [approvalLoading, setApprovalLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -207,11 +208,15 @@ function TaskPanel({
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
     setUploading(true);
+    setUploadError(null);
     const uploadedBy = user?.id ?? "";
     try {
       for (const file of files) {
         await uploadTaskAttachment(projectId, task.id, file, uploadedBy);
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setUploadError(msg || "Upload failed. Please try again.");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -549,6 +554,9 @@ function TaskPanel({
               onChange={handleFileChange}
               disabled={uploading} />
           </label>
+          {uploadError && (
+            <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {uploadError}</p>
+          )}
         </div>
       </div>
 

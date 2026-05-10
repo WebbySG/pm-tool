@@ -20,8 +20,10 @@ export async function uploadArticleImage(file: File): Promise<string> {
 
 export async function uploadAttachment(file: File, taskId: string): Promise<{ url: string; name: string; size: string; type: AttachmentType }> {
   const ext = file.name.split(".").pop() ?? "";
-  const path = `${taskId}/${Date.now()}_${file.name}`;
-  const { error } = await supabase.storage.from(ATTACHMENTS_BUCKET).upload(path, file);
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `${taskId}/${Date.now()}_${safeName}`;
+  const contentType = file.type || "application/octet-stream";
+  const { error } = await supabase.storage.from(ATTACHMENTS_BUCKET).upload(path, file, { contentType });
   if (error) throw error;
   const { data } = supabase.storage.from(ATTACHMENTS_BUCKET).getPublicUrl(path);
   const size = file.size > 1_048_576
