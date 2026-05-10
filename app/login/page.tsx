@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
@@ -12,6 +12,13 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const router = useRouter();
 
+  // If already authenticated, skip the login form entirely
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) router.replace("/dashboard");
+    });
+  }, [router]);
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -21,6 +28,8 @@ export default function LoginPage() {
       setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
       setLoading(false);
     } else {
+      // Safety: reset loading after 8s in case navigation stalls
+      setTimeout(() => setLoading(false), 8000);
       router.replace("/dashboard");
     }
   }
