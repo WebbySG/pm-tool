@@ -348,7 +348,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 - **Database/Auth:** Supabase (PostgreSQL + Auth + Storage)
 - **Drag and Drop:** DnD Kit
 - **Deployment:** GitHub Actions → VPS via `appleboy/ssh-action`
-- **VPS:** Runs HTTP (not HTTPS) — `crypto.randomUUID()` is unavailable; always use the `uuid()` helper in `lib/store.ts`
+- **VPS:** Runs HTTPS at `https://os.webby.sg` (SSL via Let's Encrypt, auto-renews) — `crypto.randomUUID()` is available; the `uuid()` helper in `lib/store.ts` will use it automatically
 
 ### Role System
 

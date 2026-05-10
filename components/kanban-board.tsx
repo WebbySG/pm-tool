@@ -33,7 +33,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
 export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
-  const overdue = task.status !== "done" && !!task.dueDate && new Date(task.dueDate) < new Date();
+  const overdue = task.status !== "done" && task.status !== "pending_approval" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
   return (
@@ -42,6 +42,12 @@ export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClic
       className="rounded-lg p-3 flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity select-none"
       style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}
     >
+      {task.status === "pending_approval" && (
+        <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
+          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "#a855f7" }} />
+          Pending Approval
+        </div>
+      )}
       <div className="flex items-start justify-between gap-1">
         <p className="text-sm font-medium leading-snug flex-1" style={{ color: "#cce4ff" }}>{task.title}</p>
         <div className="flex items-center gap-1 shrink-0 mt-0.5">
@@ -218,7 +224,7 @@ export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask, liveStaf
             status={key}
             label={label}
             color={color}
-            tasks={tasks.filter((t) => t.status === key)}
+            tasks={tasks.filter((t) => t.status === key || (key === "review" && t.status === "pending_approval"))}
             onTaskClick={onTaskClick}
             onAddTask={onAddTask}
             liveStaff={liveStaff}

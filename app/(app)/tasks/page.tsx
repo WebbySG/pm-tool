@@ -24,16 +24,17 @@ const priorityColor: Record<string, string> = {
 };
 
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  todo:        { label: "To Do",       color: "#64748b", bg: "#64748b20" },
-  in_progress: { label: "In Progress", color: "#3b82f6", bg: "#3b82f620" },
-  review:      { label: "Review",      color: "#f59e0b", bg: "#f59e0b20" },
-  done:        { label: "Done",        color: "#22c55e", bg: "#22c55e20" },
+  todo:             { label: "To Do",            color: "#64748b", bg: "#64748b20" },
+  in_progress:      { label: "In Progress",      color: "#3b82f6", bg: "#3b82f620" },
+  review:           { label: "Review",           color: "#f59e0b", bg: "#f59e0b20" },
+  pending_approval: { label: "Pending Approval", color: "#a855f7", bg: "#a855f720" },
+  done:             { label: "Done",             color: "#22c55e", bg: "#22c55e20" },
 };
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
 function TaskGroup({
-  title, tasks, accent, icon, onSelect, onComplete, liveStaff,
+  title, tasks, accent, icon, onSelect, onComplete, onRequestApproval, isAdmin, liveStaff,
 }: {
   title: string;
   tasks: TaskWithProject[];
@@ -41,6 +42,8 @@ function TaskGroup({
   icon?: React.ReactNode;
   onSelect: (task: TaskWithProject) => void;
   onComplete: (task: TaskWithProject) => void;
+  onRequestApproval: (task: TaskWithProject) => void;
+  isAdmin: boolean;
   liveStaff: LiveStaff[];
 }) {
   if (tasks.length === 0) return null;
@@ -68,13 +71,28 @@ function TaskGroup({
                 borderLeft: `3px solid ${priorityColor[task.priority]}`,
               }}
             >
-              {/* Complete checkbox */}
-              <button
-                onClick={(e) => { e.stopPropagation(); onComplete(task); }}
-                className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 hover:scale-110 transition-transform"
-                style={{ borderColor: "#22c55e" }}
-                title="Mark complete"
-              />
+              {/* Complete / request approval button */}
+              {task.status === "pending_approval" ? (
+                <div
+                  className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+                  style={{ borderColor: "#a855f7" }}
+                  title="Awaiting approval"
+                />
+              ) : isAdmin ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onComplete(task); }}
+                  className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 hover:scale-110 transition-transform"
+                  style={{ borderColor: "#22c55e" }}
+                  title="Mark complete"
+                />
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRequestApproval(task); }}
+                  className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 hover:scale-110 transition-transform"
+                  style={{ borderColor: "#a855f7" }}
+                  title="Request completion approval"
+                />
+              )}
 
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>
@@ -116,7 +134,7 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, updateTaskStatus } = useStore();
+  const { projects, updateTaskStatus, requestTaskApproval } = useStore();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
@@ -162,6 +180,11 @@ export default function TasksPage() {
     await updateTaskStatus(task.projectId, task.id, "done");
   }
 
+  async function handleRequestApproval(task: TaskWithProject) {
+    const name = user?.name ?? "Staff";
+    await requestTaskApproval(task.projectId, task.id, name, task.title);
+  }
+
   // Keep selected task in sync with store updates
   const liveSelectedTask = selectedTask
     ? projects.find((p) => p.id === selectedTask.projectId)?.tasks.find((t) => t.id === selectedTask.id) ?? null
@@ -201,10 +224,10 @@ export default function TasksPage() {
           )}
         </div>
 
-        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
-        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
-        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
-        <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} liveStaff={liveStaff} />
+        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+        <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
 
         {filtered.length === 0 && (
           <div className="text-center py-16 flex flex-col items-center gap-3">

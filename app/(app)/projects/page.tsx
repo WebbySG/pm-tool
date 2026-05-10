@@ -21,14 +21,6 @@ function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
-const PHASE_COLOR: Record<string, string> = {
-  discovery: "#38b6e8", design: "#a855f7", development: "#3b82f6", qa: "#f59e0b", launch: "#22c55e",
-};
-
-const PHASE_LABEL: Record<string, string> = {
-  discovery: "Discovery", design: "Design", development: "Dev", qa: "QA", launch: "Launch",
-};
-
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
 const CHANNEL_COLORS = ["#38b6e8", "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
@@ -45,7 +37,6 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
   const total = project.tasks.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const typeColor = project.type === "seo" ? "#22c55e" : project.type === "both" ? "#a855f7" : "#38b6e8";
-  const phaseColor = PHASE_COLOR[project.phase] ?? "#38b6e8";
   const dueDateMs = project.dueDate ? new Date(project.dueDate).getTime() : NaN;
   const daysLeft = isNaN(dueDateMs) ? null : Math.ceil((dueDateMs - Date.now()) / 86400000);
   const assignedStaff = liveStaff.filter((s) => project.assignedStaff.includes(staffAuthId(s)));
@@ -78,12 +69,6 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
             style={{ background: typeColor + "25", color: typeColor }}
           >
             {project.type === "seo" ? "SEO" : project.type === "both" ? "Web + SEO" : "Web Dev"}
-          </span>
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded-full"
-            style={{ background: phaseColor + "25", color: phaseColor }}
-          >
-            {PHASE_LABEL[project.phase] ?? project.phase}
           </span>
           <div className="flex-1" />
           {isAdmin && (

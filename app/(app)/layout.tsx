@@ -25,6 +25,7 @@ function AppLoader() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const initialized = useStore((s) => s.initialized);
+  const init = useStore((s) => s.init);
   const refresh = useStore((s) => s.refresh);
   const router = useRouter();
   const pathname = usePathname();
@@ -32,6 +33,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (!initialized) init();
+  }, [initialized]);
 
   useEffect(() => {
     if (initialized) refresh();

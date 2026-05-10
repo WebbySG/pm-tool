@@ -33,7 +33,7 @@ export interface ArticleComment {
   resolved: boolean;
   createdAt: string;
 }
-export type TaskStatus = "todo" | "in_progress" | "review" | "done";
+export type TaskStatus = "todo" | "in_progress" | "review" | "pending_approval" | "done";
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";
@@ -172,6 +172,7 @@ export interface Notification {
   body: string;
   type: string;
   projectId: string | null;
+  taskId?: string | null;
   read: boolean;
   createdAt: string;
 }

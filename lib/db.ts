@@ -173,6 +173,7 @@ export async function loadAll() {
     id: r.id as string, title: r.title as string,
     body: (r.body as string) ?? "", type: (r.type as string) ?? "info",
     projectId: (r.project_id as string | null) ?? null,
+    taskId: (r.task_id as string | null) ?? null,
     read: r.read as boolean, createdAt: r.created_at as string,
   }));
 
@@ -356,7 +357,9 @@ export async function dbDeleteTemplateTask(taskTemplateId: string) {
 
 export async function dbAddNotification(id: string, data: Omit<Notification, "id" | "createdAt" | "read">) {
   const { error } = await supabase.from("pm_notifications").insert({
-    id, title: data.title, body: data.body, type: data.type, project_id: data.projectId ?? null,
+    id, title: data.title, body: data.body, type: data.type,
+    project_id: data.projectId ?? null,
+    task_id: data.taskId ?? null,
   });
   if (error) console.error("dbAddNotification", error);
 }

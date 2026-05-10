@@ -56,7 +56,7 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, templates, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem } = useStore();
+  const { projects, templates, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned">("board");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -104,11 +104,12 @@ export default function ProjectDetailPage() {
   // Staff only see tasks assigned to them; admins see everything
   const boardTasks = isAdmin ? project.tasks : project.tasks.filter((t) => t.assigneeId === user?.id);
 
-  function handleAddTask() {
+  async function handleAddTask() {
     if (!newTask.title.trim()) return;
-    addTask(project.id, {
+    const title = newTask.title.trim();
+    await addTask(project.id, {
       projectId: project.id,
-      title: newTask.title.trim(),
+      title,
       description: newTask.description,
       type: newTask.type,
       status: addTaskCol as Task["status"],
@@ -119,6 +120,15 @@ export default function ProjectDetailPage() {
       recurring: newTask.recurring,
       recurringDay: newTask.recurringDay || undefined,
     });
+    if (!isAdmin) {
+      const staffName = user?.name ?? "A staff member";
+      await addNotification({
+        title: "New Task Created",
+        body: `${staffName} created a new task: "${title}" in ${project.name}.`,
+        type: "task_assigned",
+        projectId: project.id,
+      });
+    }
     setShowAddTask(false);
     clearTaskDraft();
   }

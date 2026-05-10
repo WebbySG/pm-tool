@@ -61,6 +61,8 @@ interface Store {
   deleteCredential: (credId: string) => Promise<void>;
 
   // Task actions
+  requestTaskApproval: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
+  approveTaskCompletion: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   updateTaskStatus: (projectId: string, taskId: string, status: TaskStatus) => Promise<void>;
   updateTaskPriority: (projectId: string, taskId: string, priority: TaskPriority) => Promise<void>;
   updateTaskAssignee: (projectId: string, taskId: string, assigneeId: string) => Promise<void>;
@@ -182,13 +184,22 @@ export const useStore = create<Store>()(
 
   init: async () => {
     if (get().initialized) return;
-    const data = await db.loadAll();
-    set({ ...data, initialized: true });
+    try {
+      const data = await db.loadAll();
+      set({ ...data, initialized: true });
+    } catch (e) {
+      console.error("store init failed", e);
+      set({ initialized: true });
+    }
   },
 
   refresh: async () => {
-    const data = await db.loadAll();
-    set(data);
+    try {
+      const data = await db.loadAll();
+      set(data);
+    } catch (e) {
+      console.error("store refresh failed", e);
+    }
   },
 
   // ─── Channels ─────────────────────────────────────────────────────────────
@@ -370,6 +381,30 @@ export const useStore = create<Store>()(
   },
 
   // ─── Tasks ────────────────────────────────────────────────────────────────
+
+  requestTaskApproval: async (projectId, taskId, staffName, taskTitle) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "pending_approval" }) })) }));
+    await db.dbUpdateTask(taskId, { status: "pending_approval" });
+    await get().addNotification({
+      title: "Task Approval Requested",
+      body: `${staffName} has completed "${taskTitle}" and is requesting your approval.`,
+      type: "approval_request",
+      projectId,
+      taskId,
+    });
+  },
+
+  approveTaskCompletion: async (projectId, taskId, taskTitle) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
+    await db.dbUpdateTask(taskId, { status: "done" });
+    await get().addNotification({
+      title: "Task Approved",
+      body: `"${taskTitle}" has been approved and marked as complete.`,
+      type: "task_assigned",
+      projectId,
+      taskId,
+    });
+  },
 
   updateTaskStatus: async (projectId, taskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
