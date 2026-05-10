@@ -46,20 +46,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Hard timeout: if auth hasn't resolved in 8s, unblock the app
+    const timeout = setTimeout(() => setLoading(false), 8000);
+
     // Hydrate from existing session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        setUser(await buildPmUser(session.user.id, session.user.email ?? ""));
+      try {
+        if (session?.user) {
+          setUser(await buildPmUser(session.user.id, session.user.email ?? ""));
+        }
+      } catch (e) {
+        console.error("auth getSession buildPmUser failed", e);
+      } finally {
+        clearTimeout(timeout);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     // React to auth changes (login, invite acceptance, logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
-        setUser(pmUser);
-        setLoading(false);
+        try {
+          const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
+          setUser(pmUser);
+        } catch (e) {
+          console.error("auth onAuthStateChange buildPmUser failed", e);
+        } finally {
+          setLoading(false);
+        }
 
         // When an invited staff member accepts their invite, link their auth ID and clean up any
         // auto-assigned user_roles entry that a DB trigger may have created.
@@ -89,7 +103,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function signOut() {
