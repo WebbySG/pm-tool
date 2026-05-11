@@ -21,11 +21,15 @@ const TYPE_OPTIONS: { value: TaskType | "any"; label: string; color: string }[] 
   { value: "any", label: "Any", color: "#4a7090" },
 ];
 
-const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#38b6e8", low: "#22c55e",
-};
+function PRIORITY_COLOR(p: TaskPriority): string {
+  const n = typeof p === "number" ? p : 5;
+  if (n <= 2) return "#ef4444";
+  if (n <= 4) return "#f59e0b";
+  if (n <= 6) return "#38b6e8";
+  return "#22c55e";
+}
 
-const PRIORITY_OPTIONS: TaskPriority[] = ["low", "medium", "high", "urgent"];
+const PRIORITY_OPTIONS: TaskPriority[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 function typeColor(type: TaskType | "any") {
   return TYPE_OPTIONS.find((t) => t.value === type)?.color ?? "#4a7090";
@@ -55,7 +59,7 @@ function AddTaskForm({
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("medium");
+  const [priority, setPriority] = useState<TaskPriority>(5);
   const [type, setType] = useState<TaskType>(defaultType);
   const [daysFromStart, setDaysFromStart] = useState(0);
   const [recurring, setRecurring] = useState<RecurringFrequency>(null);
@@ -110,11 +114,11 @@ function AddTaskForm({
         </div>
         <select
           value={priority}
-          onChange={(e) => setPriority(e.target.value as TaskPriority)}
+          onChange={(e) => setPriority(Number(e.target.value) as TaskPriority)}
           className="px-2 py-1 rounded text-xs outline-none"
           style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
         >
-          {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+          {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>P{p}</option>)}
         </select>
         <select
           value={type}
@@ -267,11 +271,11 @@ function TaskNode({
             </div>
             <select
               value={editPriority}
-              onChange={(e) => setEditPriority(e.target.value as TaskPriority)}
+              onChange={(e) => setEditPriority(Number(e.target.value) as TaskPriority)}
               className="px-2 py-1 rounded text-xs outline-none"
               style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
             >
-              {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>P{p}</option>)}
             </select>
             <select
               value={editType}
@@ -343,7 +347,7 @@ function TaskNode({
             {task.recurring && <RefreshCw size={11} style={{ color: "#38b6e8" }} />}
             <span
               className="text-xs px-1.5 py-0.5 rounded-full capitalize"
-              style={{ background: PRIORITY_COLOR[task.priority] + "20", color: PRIORITY_COLOR[task.priority] }}
+              style={{ background: PRIORITY_COLOR(task.priority) + "20", color: PRIORITY_COLOR(task.priority) }}
             >
               {task.priority}
             </span>

@@ -47,7 +47,7 @@ type NewTaskForm = {
   title: string;
   description: string;
   assigneeId: string;
-  priority: "low" | "medium" | "high" | "urgent";
+  priority: number;
   dueDate: string;
   type: TaskType;
   recurring: "weekly" | "monthly" | "every-3-months" | "every-4-months" | "every-6-months" | "yearly" | null;
@@ -86,7 +86,7 @@ export default function ProjectDetailPage() {
   const [addTaskCol, setAddTaskCol] = useState("todo");
   const [pinForm, setPinForm] = useState({ type: "link" as "link" | "document" | "message", title: "", content: "", url: "" });
   const initialTask: NewTaskForm = {
-    title: "", description: "", assigneeId: "", priority: "medium",
+    title: "", description: "", assigneeId: "", priority: 5,
     dueDate: "", type: "webdev",
     recurring: null, recurringDay: "", tags: "",
   };
@@ -921,11 +921,8 @@ export default function ProjectDetailPage() {
                 </div>
                 <div>
                   <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority</p>
-                  <select value={newTask.priority} onChange={(e) => setNewTask({ ...newTask, priority: e.target.value as NewTaskForm["priority"] })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
+                  <select value={newTask.priority} onChange={(e) => setNewTask({ ...newTask, priority: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                    {[1,2,3,4,5,6,7,8,9,10].map((p) => <option key={p} value={p}>P{p}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1161,7 +1158,7 @@ export default function ProjectDetailPage() {
                               className="flex items-center gap-3 px-4 py-2"
                               style={{ borderBottom: i < tpl.tasks.length - 1 ? "1px solid #1c324840" : "none" }}
                             >
-                              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: task.priority === "urgent" ? "#ef4444" : task.priority === "high" ? "#f59e0b" : task.priority === "medium" ? "#38b6e8" : "#22c55e" }} />
+                              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: (() => { const n = typeof task.priority === "number" ? task.priority : 5; return n <= 2 ? "#ef4444" : n <= 4 ? "#f59e0b" : n <= 6 ? "#38b6e8" : "#22c55e"; })() }} />
                               <p className="text-xs flex-1" style={{ color: "#cce4ff" }}>{task.title}</p>
                               <span className="text-xs" style={{ color: "#8b90a750" }}>Day {task.daysFromStart}{task.recurring ? ` · ${task.recurring}` : ""}</span>
                             </div>

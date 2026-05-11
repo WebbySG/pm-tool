@@ -24,17 +24,23 @@ function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).
 const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
-  { key: "review", label: "Review", color: "#f59e0b" },
-  { key: "pending_approval", label: "Pending Approval", color: "#a855f7" },
+  { key: "pending_review", label: "Pending Review", color: "#a855f7" },
+  { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
 ];
 
-const priorityOptions = [
-  { key: "urgent" as const, label: "Urgent", color: "#ef4444" },
-  { key: "high" as const, label: "High", color: "#f59e0b" },
-  { key: "medium" as const, label: "Medium", color: "#38b6e8" },
-  { key: "low" as const, label: "Low", color: "#22c55e" },
-];
+function priorityColor(p: number): string {
+  if (p <= 2) return "#ef4444";
+  if (p <= 4) return "#f59e0b";
+  if (p <= 6) return "#38b6e8";
+  return "#22c55e";
+}
+
+const PRIORITY_LABELS: Record<number, string> = {
+  1: "P1 · Critical", 2: "P2 · Urgent", 3: "P3 · High", 4: "P4 · High",
+  5: "P5 · Medium", 6: "P6 · Medium", 7: "P7 · Low", 8: "P8 · Low",
+  9: "P9 · Minimal", 10: "P10 · Minimal",
+};
 
 const attachIcon = { image: Image, video: Video, document: FileText, link: Link2 };
 
@@ -77,7 +83,20 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
     return project ? find(project.tasks) : null;
   }
 
-  function pushTask(task: Task) { setStack((s) => [...s, task]); }
+  const MAX_DRAWERS = 4;
+
+  function pushTask(task: Task, fromDepth?: number) {
+    setStack((s) => {
+      // If task already in stack, just truncate to it
+      const existingIdx = s.findIndex((t) => t.id === task.id);
+      if (existingIdx !== -1) return s.slice(0, existingIdx + 1);
+      // If opened from a specific depth, truncate stack to that depth + 1 then push
+      const base = fromDepth !== undefined ? s.slice(0, fromDepth + 1) : s;
+      const next = [...base, task];
+      // Cap at MAX_DRAWERS
+      return next.length > MAX_DRAWERS ? next.slice(next.length - MAX_DRAWERS) : next;
+    });
+  }
   function popTask() { setStack((s) => s.slice(0, -1)); }
 
   // Side-by-side layout: drawers don't overlap
@@ -117,7 +136,7 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
                 parentTask={parentTask}
                 onGoBack={popTask}
                 onClose={onClose}
-                onOpenChild={(child) => pushTask(child)}
+                onOpenChild={(child) => pushTask(child, i)}
                 liveStaff={liveStaff}
               />
             </div>
@@ -147,7 +166,7 @@ function TaskPanel({
     updateTaskStatus, updateTaskPriority, updateTaskAssignee, updateTaskDescription,
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
-    requestTaskApproval, approveTaskCompletion,
+    requestTaskApproval, approveTaskCompletion, rejectTask,
   } = useStore();
   const { user } = useAuth();
 
@@ -197,8 +216,17 @@ function TaskPanel({
     }
   }
 
-  const status = statusOptions.find((s) => s.key === task.status)!;
-  const priority = priorityOptions.find((p) => p.key === task.priority)!;
+  async function handleReject() {
+    setApprovalLoading(true);
+    try {
+      await rejectTask(projectId, task.id, task.title);
+    } finally {
+      setApprovalLoading(false);
+    }
+  }
+
+  const status = statusOptions.find((s) => s.key === task.status) ?? statusOptions[0];
+  const prio = typeof task.priority === "number" ? task.priority : 5;
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
@@ -319,7 +347,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_approval" && s.key !== "done"))
+                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "revision_required" && s.key !== "done"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -334,30 +362,26 @@ function TaskPanel({
           </div>
 
           {/* Priority */}
-          <div className="relative">
-            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority</p>
-            <button
-              onClick={() => { if (!isAdmin) return; setShowPriorityMenu(!showPriorityMenu); setShowStatusMenu(false); setShowAssigneeMenu(false); }}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: priority.color, opacity: isAdmin ? 1 : 0.6, cursor: isAdmin ? "pointer" : "default" }}
-            >
-              <span className="w-2 h-2 rounded-full" style={{ background: priority.color }} />
-              {priority.label}
-              <ChevronDown size={13} className="ml-auto" style={{ color: "#4a7090" }} />
-            </button>
-            {showPriorityMenu && (
-              <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
-                {priorityOptions.map((p) => (
-                  <button key={p.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
-                    style={{ color: p.color, background: p.key === task.priority ? "#1c3248" : "transparent" }}
-                    onClick={() => { updateTaskPriority(projectId, task.id, p.key); setShowPriorityMenu(false); }}>
-                    <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
-                    {p.label}
-                    {p.key === task.priority && <Check size={12} className="ml-auto" />}
-                  </button>
-                ))}
-              </div>
-            )}
+          <div>
+            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority (1 = highest)</p>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+              <span className="text-xs font-bold px-1.5 py-0.5 rounded"
+                style={{ background: priorityColor(prio) + "25", color: priorityColor(prio) }}>
+                P{prio}
+              </span>
+              <span className="flex-1 text-sm" style={{ color: priorityColor(prio) }}>
+                {PRIORITY_LABELS[prio] ?? `P${prio}`}
+              </span>
+              {isAdmin && (
+                <input
+                  type="range" min={1} max={10} step={1} value={prio}
+                  onChange={(e) => updateTaskPriority(projectId, task.id, Number(e.target.value))}
+                  className="w-24"
+                  style={{ accentColor: priorityColor(prio) }}
+                />
+              )}
+            </div>
           </div>
 
           {/* Assignee */}
@@ -470,7 +494,16 @@ function TaskPanel({
                     onClick={() => onOpenChild(sub)}
                   >
                     <button
-                      onClick={(e) => { e.stopPropagation(); updateSubtaskStatus(projectId, task.id, sub.id, isDone ? "todo" : "done"); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isDone) {
+                          updateSubtaskStatus(projectId, task.id, sub.id, "todo");
+                        } else if (isAdmin) {
+                          updateSubtaskStatus(projectId, task.id, sub.id, "done");
+                        } else {
+                          updateSubtaskStatus(projectId, task.id, sub.id, "pending_review");
+                        }
+                      }}
                       className="w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-colors"
                       style={{ borderColor: subStatus.color, background: isDone ? subStatus.color : "transparent" }}
                     >
@@ -485,8 +518,11 @@ function TaskPanel({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        const order: TaskStatus[] = ["todo", "in_progress", "review", "done"];
-                        const next = order[(order.indexOf(sub.status) + 1) % order.length];
+                        const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
+                        const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "revision_required", "done"];
+                        const order = isAdmin ? adminOrder : staffOrder;
+                        const idx = order.indexOf(sub.status as TaskStatus);
+                        const next = order[(idx === -1 ? 0 : idx + 1) % order.length];
                         updateSubtaskStatus(projectId, task.id, sub.id, next);
                       }}
                       className="text-xs px-1.5 py-0.5 rounded-full shrink-0 hover:opacity-70 transition-opacity"
@@ -649,43 +685,56 @@ function TaskPanel({
       )}
 
       {/* Footer */}
-      <div className="flex items-center gap-2 px-6 py-4 shrink-0" style={{ borderTop: "1px solid #1c3248" }}>
-        {canGoBack && (
-          <button onClick={onGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
-        )}
-        {/* Admin: approve if pending */}
-        {isAdmin && task.status === "pending_approval" && (
-          <button
-            onClick={handleApprove}
-            disabled={approvalLoading}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
-            style={{ background: "#22c55e", color: "#fff", opacity: approvalLoading ? 0.7 : 1 }}
-          >
-            {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            Approve Completion
-          </button>
-        )}
-        {/* Staff on own task: request approval or show pending state */}
-        {!isAdmin && isMyTask && task.status !== "done" && task.status !== "pending_approval" && (
-          <button
-            onClick={handleRequestApproval}
-            disabled={approvalLoading}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
-            style={{ background: "#a855f7", color: "#fff", opacity: approvalLoading ? 0.7 : 1 }}
-          >
-            {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-            Request Approval
-          </button>
-        )}
-        {!isAdmin && isMyTask && task.status === "pending_approval" && (
-          <div className="flex-1 py-2 rounded-lg text-sm font-medium text-center" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
-            Awaiting Admin Approval...
+      <div className="flex flex-col gap-2 px-6 py-4 shrink-0" style={{ borderTop: "1px solid #1c3248" }}>
+        {/* Admin: approve + reject when pending review */}
+        {isAdmin && task.status === "pending_review" && (
+          <div className="flex gap-2">
+            <button
+              onClick={handleReject}
+              disabled={approvalLoading}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+              style={{ background: "#f59e0b20", border: "1px solid #f59e0b40", color: "#f59e0b", opacity: approvalLoading ? 0.7 : 1 }}
+            >
+              {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+              Request Revision
+            </button>
+            <button
+              onClick={handleApprove}
+              disabled={approvalLoading}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+              style={{ background: "#22c55e", color: "#fff", opacity: approvalLoading ? 0.7 : 1 }}
+            >
+              {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Approve
+            </button>
           </div>
         )}
-        {/* Default close button when no special action shown */}
-        {(isAdmin ? task.status !== "pending_approval" : (!isMyTask || task.status === "done")) && !canGoBack && (
-          <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Done</button>
-        )}
+        <div className="flex items-center gap-2">
+          {canGoBack && (
+            <button onClick={onGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
+          )}
+          {/* Staff on own task: request review or show pending state */}
+          {!isAdmin && isMyTask && task.status !== "done" && task.status !== "pending_review" && (
+            <button
+              onClick={handleRequestApproval}
+              disabled={approvalLoading}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+              style={{ background: "#a855f7", color: "#fff", opacity: approvalLoading ? 0.7 : 1 }}
+            >
+              {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+              Submit for Review
+            </button>
+          )}
+          {!isAdmin && isMyTask && task.status === "pending_review" && (
+            <div className="flex-1 py-2 rounded-lg text-sm font-medium text-center" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
+              Awaiting Admin Review...
+            </div>
+          )}
+          {/* Default close button */}
+          {(isAdmin ? task.status !== "pending_review" : (!isMyTask || task.status === "done")) && !canGoBack && (
+            <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Done</button>
+          )}
+        </div>
       </div>
     </div>
   );

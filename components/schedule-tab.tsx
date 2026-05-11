@@ -35,9 +35,13 @@ function slotEndDate(projectStart: Date, month: number, week: number): string {
 const STATUS_COLORS: Record<string, string> = {
   todo: "#4a7090", in_progress: "#38b6e8", review: "#f59e0b", done: "#22c55e",
 };
-const PRIORITY_COLORS: Record<string, string> = {
-  low: "#22c55e", medium: "#38b6e8", high: "#f59e0b", urgent: "#ef4444",
-};
+function PRIORITY_COLORS(p: number | string): string {
+  const n = typeof p === "number" ? p : 5;
+  if (n <= 2) return "#ef4444";
+  if (n <= 4) return "#f59e0b";
+  if (n <= 6) return "#38b6e8";
+  return "#22c55e";
+}
 
 // ── Task row ───────────────────────────────────────────────────────────────────
 function TaskRow({
@@ -81,8 +85,8 @@ function TaskRow({
       {/* Priority dot */}
       <div
         className="w-1.5 h-1.5 rounded-full shrink-0"
-        style={{ background: PRIORITY_COLORS[task.priority] }}
-        title={task.priority}
+        style={{ background: PRIORITY_COLORS(task.priority) }}
+        title={`P${task.priority}`}
       />
 
       {/* Title */}

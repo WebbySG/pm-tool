@@ -245,7 +245,7 @@ export default function NewProjectPage() {
                               className="flex items-center gap-3 px-4 py-2"
                               style={{ borderBottom: i < tpl.tasks.length - 1 ? "1px solid #1c324840" : "none" }}
                             >
-                              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: task.priority === "urgent" ? "#ef4444" : task.priority === "high" ? "#f59e0b" : task.priority === "medium" ? "#38b6e8" : "#22c55e" }} />
+                              <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: (() => { const n = typeof task.priority === "number" ? task.priority : 5; return n <= 2 ? "#ef4444" : n <= 4 ? "#f59e0b" : n <= 6 ? "#38b6e8" : "#22c55e"; })() }} />
                               <p className="text-xs flex-1" style={{ color: "#cce4ff" }}>{task.title}</p>
                               <span className="text-xs" style={{ color: "#8b90a750" }}>Day {task.daysFromStart}{task.recurring ? ` · ${task.recurring}` : ""}</span>
                             </div>

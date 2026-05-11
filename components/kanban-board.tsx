@@ -22,19 +22,24 @@ import { Calendar, Plus, Paperclip, RefreshCw } from "lucide-react";
 const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
-  { key: "review", label: "Review", color: "#f59e0b" },
+  { key: "pending_review", label: "Pending Review", color: "#a855f7" },
+  { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
 ];
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#38b6e8", low: "#22c55e",
-};
+function priorityColor(p: number): string {
+  if (p <= 2) return "#ef4444";
+  if (p <= 4) return "#f59e0b";
+  if (p <= 6) return "#38b6e8";
+  return "#22c55e";
+}
 
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
 export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
-  const overdue = task.status !== "done" && task.status !== "pending_approval" && !!task.dueDate && new Date(task.dueDate) < new Date();
+  const overdue = task.status !== "done" && task.status !== "pending_review" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
+  const prio = typeof task.priority === "number" ? task.priority : 5;
 
   return (
     <div
@@ -42,17 +47,19 @@ export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClic
       className="rounded-lg p-3 flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity select-none"
       style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}
     >
-      {task.status === "pending_approval" && (
-        <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
-          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "#a855f7" }} />
-          Pending Approval
+      {task.status === "revision_required" && (
+        <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#f59e0b20", color: "#f59e0b", border: "1px solid #f59e0b40" }}>
+          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "#f59e0b" }} />
+          Revision Required
         </div>
       )}
       <div className="flex items-start justify-between gap-1">
         <p className="text-sm font-medium leading-snug flex-1" style={{ color: "#cce4ff" }}>{task.title}</p>
         <div className="flex items-center gap-1 shrink-0 mt-0.5">
           {task.recurring && <RefreshCw size={10} style={{ color: "#38b6e8" }} />}
-          <div className="w-1.5 h-1.5 rounded-full" style={{ background: PRIORITY_COLOR[task.priority] }} />
+          <span className="text-xs font-bold rounded px-1 leading-none" style={{ background: priorityColor(prio) + "25", color: priorityColor(prio), border: `1px solid ${priorityColor(prio)}40` }}>
+            P{prio}
+          </span>
         </div>
       </div>
 
@@ -217,14 +224,14 @@ export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask, liveStaf
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(5, minmax(200px, 1fr))", overflowX: "auto" }}>
         {STATUS_COLS.map(({ key, label, color }) => (
           <KanbanColumn
             key={key}
             status={key}
             label={label}
             color={color}
-            tasks={tasks.filter((t) => t.status === key || (key === "review" && t.status === "pending_approval"))}
+            tasks={tasks.filter((t) => t.status === key)}
             onTaskClick={onTaskClick}
             onAddTask={onAddTask}
             liveStaff={liveStaff}

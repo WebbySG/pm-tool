@@ -7,9 +7,13 @@ import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-const priorityColor: Record<string, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#38b6e8", low: "#22c55e",
-};
+function priorityColor(p: number | string): string {
+  const n = typeof p === "number" ? p : 5;
+  if (n <= 2) return "#ef4444";
+  if (n <= 4) return "#f59e0b";
+  if (n <= 6) return "#38b6e8";
+  return "#22c55e";
+}
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
@@ -55,7 +59,7 @@ export default function DashboardPage() {
   const statValues = [
     projects.length,
     allTasks.filter((t) => t.status === "in_progress").length,
-    allTasks.filter((t) => t.status === "review").length,
+    allTasks.filter((t) => t.status === "pending_review").length,
     allTasks.filter((t) => t.status !== "done" && t.dueDate && new Date(t.dueDate) < new Date()).length,
   ];
 
@@ -242,7 +246,7 @@ export default function DashboardPage() {
                 <p className="text-xs font-bold mb-3 tracking-widest" style={{ color: "#4a7090" }}>UPCOMING DUE</p>
                 {recentTasks.map((task) => (
                   <div key={task.id} className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor[task.priority], boxShadow: `0 0 5px ${priorityColor[task.priority]}80` }} />
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor(task.priority), boxShadow: `0 0 5px ${priorityColor(task.priority)}80` }} />
                     <p className="text-xs truncate flex-1 font-medium" style={{ color: "#c4c9e0" }}>{task.title}</p>
                     <p className="text-xs shrink-0" style={{ color: "#4a7090" }}>
                       {task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-SG", { day: "numeric", month: "short" }) : "—"}

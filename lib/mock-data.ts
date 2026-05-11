@@ -33,8 +33,8 @@ export interface ArticleComment {
   resolved: boolean;
   createdAt: string;
 }
-export type TaskStatus = "todo" | "in_progress" | "review" | "pending_approval" | "done";
-export type TaskPriority = "low" | "medium" | "high" | "urgent";
+export type TaskStatus = "todo" | "in_progress" | "pending_review" | "revision_required" | "done";
+export type TaskPriority = number; // 1 (highest) – 10 (lowest)
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";
 export type PinnedType = "link" | "document" | "message" | "image";

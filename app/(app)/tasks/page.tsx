@@ -19,16 +19,20 @@ function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).
 
 type TaskWithProject = Task & { projectName: string; projectId: string };
 
-const priorityColor: Record<string, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#38b6e8", low: "#22c55e",
-};
+function priorityColor(p: number | string): string {
+  const n = typeof p === "number" ? p : 5;
+  if (n <= 2) return "#ef4444";
+  if (n <= 4) return "#f59e0b";
+  if (n <= 6) return "#38b6e8";
+  return "#22c55e";
+}
 
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  todo:             { label: "To Do",            color: "#64748b", bg: "#64748b20" },
-  in_progress:      { label: "In Progress",      color: "#3b82f6", bg: "#3b82f620" },
-  review:           { label: "Review",           color: "#f59e0b", bg: "#f59e0b20" },
-  pending_approval: { label: "Pending Approval", color: "#a855f7", bg: "#a855f720" },
-  done:             { label: "Done",             color: "#22c55e", bg: "#22c55e20" },
+  todo:              { label: "To Do",             color: "#64748b", bg: "#64748b20" },
+  in_progress:       { label: "In Progress",       color: "#3b82f6", bg: "#3b82f620" },
+  pending_review:    { label: "Pending Review",    color: "#a855f7", bg: "#a855f720" },
+  revision_required: { label: "Revision Required", color: "#f59e0b", bg: "#f59e0b20" },
+  done:              { label: "Done",              color: "#22c55e", bg: "#22c55e20" },
 };
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
@@ -68,15 +72,15 @@ function TaskGroup({
               style={{
                 background: "#0f1d2e",
                 borderBottom: i < tasks.length - 1 ? "1px solid #1c3248" : "none",
-                borderLeft: `3px solid ${priorityColor[task.priority]}`,
+                borderLeft: `3px solid ${priorityColor(task.priority)}`,
               }}
             >
               {/* Complete / request approval button */}
-              {task.status === "pending_approval" ? (
+              {task.status === "pending_review" ? (
                 <div
                   className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
                   style={{ borderColor: "#a855f7" }}
-                  title="Awaiting approval"
+                  title="Awaiting review"
                 />
               ) : isAdmin ? (
                 <button
@@ -164,7 +168,14 @@ export default function TasksPage() {
   const filtered = activeTasks.filter((t) => {
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
-    if (filterPriority !== "all" && t.priority !== filterPriority) return false;
+    if (filterPriority !== "all") {
+      const p = typeof t.priority === "number" ? t.priority : 5;
+      const fp = Number(filterPriority);
+      if (fp === 1 && p > 2) return false;
+      if (fp === 3 && (p < 3 || p > 4)) return false;
+      if (fp === 5 && (p < 5 || p > 6)) return false;
+      if (fp === 7 && p < 7) return false;
+    }
     return true;
   });
 
@@ -260,10 +271,10 @@ export default function TasksPage() {
               </select>
               <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
                 <option value="all">All Priorities</option>
-                <option value="urgent">Urgent</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
+                <option value="1">P1-2 (Critical)</option>
+                <option value="3">P3-4 (High)</option>
+                <option value="5">P5-6 (Medium)</option>
+                <option value="7">P7-10 (Low)</option>
               </select>
               <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
 

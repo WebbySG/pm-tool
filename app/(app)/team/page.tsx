@@ -8,9 +8,13 @@ import { inviteStaff, revokeStaff } from "@/app/actions/invite";
 import { UserPlus, Mail, Clock, CheckCircle2, X, Send, Loader2, UserMinus } from "lucide-react";
 import Link from "next/link";
 
-const priorityColor: Record<string, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#818cf8", low: "#22c55e",
-};
+function priorityColor(p: number | string): string {
+  const n = typeof p === "number" ? p : 5;
+  if (n <= 2) return "#ef4444";
+  if (n <= 4) return "#f59e0b";
+  if (n <= 6) return "#818cf8";
+  return "#22c55e";
+}
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
 interface StaffMember {
@@ -239,7 +243,7 @@ function TeamContent() {
               const userTasks = allTasks.filter((t) => t.assigneeId === (s.user_id ?? s.id));
               const open = userTasks.filter((t) => t.status !== "done");
               const inProgress = userTasks.filter((t) => t.status === "in_progress");
-              const review = userTasks.filter((t) => t.status === "review");
+              const review = userTasks.filter((t) => t.status === "pending_review");
               const overdue = open.filter((t) => t.dueDate && new Date(t.dueDate) < new Date());
               const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
 
@@ -326,7 +330,7 @@ function TeamContent() {
                           className="flex items-center gap-3 mb-2 rounded-lg px-2 py-1.5 -mx-2 hover:opacity-80 transition-opacity"
                           style={{ background: "transparent" }}
                         >
-                          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor[task.priority] }} />
+                          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: priorityColor(task.priority) }} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm truncate" style={{ color: "var(--text)" }}>{task.title}</p>
                             {project && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{project.name}</p>}
