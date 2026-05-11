@@ -68,14 +68,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
+        // IMPORTANT: do NOT await any Supabase calls here. auth-js holds the
+        // internal auth lock for the duration of this callback. Calling
+        // supabase.from() (via buildPmUser) internally calls getSession(),
+        // which tries to re-acquire the same lock → circular deadlock.
+        // setTimeout defers the work to run after the lock is released.
         const mySeq = ++seqRef.current;
         if (session?.user) {
-          const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
-          if (mySeq === seqRef.current) {
-            setUser(pmUser);
-            setLoading(false);
-          }
+          const { id, email } = session.user;
+          setTimeout(async () => {
+            const pmUser = await buildPmUser(id, email ?? "");
+            if (mySeq === seqRef.current) {
+              setUser(pmUser);
+              setLoading(false);
+            }
+          }, 0);
         } else {
           setUser(null);
           setLoading(false);
