@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth-context";
@@ -7,9 +7,16 @@ import { useStore } from "@/lib/store";
 import { Zap } from "lucide-react";
 
 function AppLoader() {
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setTimedOut(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <div
-      className="min-h-screen flex items-center justify-center"
+      className="min-h-screen flex flex-col items-center justify-center gap-4"
       style={{ background: "var(--bg-base)" }}
     >
       <div
@@ -18,6 +25,20 @@ function AppLoader() {
       >
         <Zap size={20} color="#fff" fill="#fff" />
       </div>
+      {timedOut && (
+        <div className="flex flex-col items-center gap-2 text-center">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Taking too long — session may be stuck.
+          </p>
+          <a
+            href="/logout"
+            className="text-sm font-semibold px-4 py-2 rounded-xl"
+            style={{ background: "var(--accent)", color: "#fff" }}
+          >
+            Sign out &amp; reset
+          </a>
+        </div>
+      )}
     </div>
   );
 }
