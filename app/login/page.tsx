@@ -16,15 +16,11 @@ export default function LoginPage() {
   const [slowWarning, setSlowWarning] = useState(false);
   const router = useRouter();
 
-  // If already authenticated, skip the login form entirely
-  // Also restore remembered email
+  // Restore remembered email on mount
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) router.replace("/dashboard");
-    });
     const saved = localStorage.getItem(REMEMBER_KEY);
     if (saved) { setEmail(saved); setRemember(true); }
-  }, [router]);
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
