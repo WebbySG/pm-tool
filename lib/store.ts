@@ -184,8 +184,11 @@ export const useStore = create<Store>()(
 
   init: async () => {
     if (get().initialized) return;
+    const bail = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("init timeout")), 10000)
+    );
     try {
-      const data = await db.loadAll();
+      const data = await Promise.race([db.loadAll(), bail]);
       set({ ...data, initialized: true });
     } catch (e) {
       console.error("store init failed", e);

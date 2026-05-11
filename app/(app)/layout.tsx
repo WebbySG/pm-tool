@@ -35,8 +35,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [user, loading, router]);
 
   useEffect(() => {
-    if (!initialized) init();
-  }, [initialized]);
+    if (!loading && !initialized) init();
+  }, [loading, initialized]);
 
   useEffect(() => {
     if (initialized) refresh();
