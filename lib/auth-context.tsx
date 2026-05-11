@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 
 export interface PmUser {
@@ -62,21 +62,49 @@ async function buildPmUser(authId: string, email: string): Promise<PmUser> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<PmUser | null>(null);
   const [loading, setLoading] = useState(true);
+  // Version counter: prevents a stale buildPmUser result from overwriting a
+  // more recent SIGNED_OUT or TOKEN_REFRESHED event that arrived while we waited.
+  const seqRef = useRef(0);
 
   useEffect(() => {
-    // onAuthStateChange is the single source of truth for auth state.
-    // INITIAL_SESSION fires once on mount after Supabase has fully resolved the
-    // stored session (including any token refresh network call). Using this as
-    // the only loading gate means we never set loading=false before auth is ready.
+    // Phase 1: getSession() resolves the stored session immediately (including
+    // token refresh if the access token is expired). This handles the page-refresh
+    // case without relying on the async onAuthStateChange INITIAL_SESSION event,
+    // which can race with other events fired at startup.
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      const mySeq = ++seqRef.current;
+      if (session?.user) {
+        const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
+        if (mySeq === seqRef.current) {
+          setUser(pmUser);
+          setLoading(false);
+        }
+      } else {
+        if (mySeq === seqRef.current) {
+          setUser(null);
+          setLoading(false);
+        }
+      }
+    });
+
+    // Phase 2: listen for subsequent auth changes (login, logout, token refresh).
+    // INITIAL_SESSION is skipped — already handled by getSession() above.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
+        if (event === "INITIAL_SESSION") return;
+        const mySeq = ++seqRef.current;
         if (session?.user) {
           const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
-          setUser(pmUser);
+          if (mySeq === seqRef.current) {
+            setUser(pmUser);
+            setLoading(false);
+          }
         } else {
-          setUser(null);
+          if (mySeq === seqRef.current) {
+            setUser(null);
+            setLoading(false);
+          }
         }
-        setLoading(false);
       }
     );
 
