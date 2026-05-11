@@ -4,7 +4,7 @@ import { type Task } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
-import { Calendar, AlertTriangle, Archive } from "lucide-react";
+import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -134,9 +134,10 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, updateTaskStatus, requestTaskApproval } = useStore();
+  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus } = useStore();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
+  const [activeTab, setActiveTab] = useState<"tasks" | "content">("tasks");
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -191,54 +192,203 @@ export default function TasksPage() {
     ? projects.find((p) => p.id === selectedTask.projectId)?.tasks.find((t) => t.id === selectedTask.id) ?? null
     : null;
 
+  // Content approval data
+  const contentArticles = isAdmin
+    ? articles
+    : articles.filter((a) => a.submittedById === user?.id);
+  const pendingContentCount = contentArticles.filter((a) => a.status === "pending_review").length;
+
+  const articleStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+    draft:              { label: "Draft",             color: "#64748b", bg: "#64748b20", icon: <FileEdit size={12} /> },
+    pending_review:     { label: "Pending Review",    color: "#f59e0b", bg: "#f59e0b20", icon: <Clock size={12} /> },
+    changes_requested:  { label: "Changes Requested", color: "#ef4444", bg: "#ef444420", icon: <XCircle size={12} /> },
+    approved:           { label: "Approved",          color: "#22c55e", bg: "#22c55e20", icon: <CheckCircle2 size={12} /> },
+    published:          { label: "Published",         color: "#38b6e8", bg: "#38b6e820", icon: <CheckCircle2 size={12} /> },
+  };
+
+  const articlesByProject = contentArticles.reduce<Record<string, typeof contentArticles>>((acc, a) => {
+    const key = a.projectId ?? "__none__";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(a);
+    return acc;
+  }, {});
+
   return (
     <>
       <Topbar title="All Tasks" />
       <div className="p-6 flex flex-col gap-6">
-        <div className="flex items-center gap-2 flex-wrap">
-          <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
-            <option value="all">All Members</option>
-            {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
-          </select>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
-            <option value="all">All Types</option>
-            <option value="webdev">Web Dev</option>
-            <option value="seo">SEO</option>
-          </select>
-          <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
-            <option value="all">All Priorities</option>
-            <option value="urgent">Urgent</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-          <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
 
-          {doneCount > 0 && (
-            <Link
-              href="/archive"
-              className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
-              style={{ background: "#22c55e15", border: "1px solid #22c55e30", color: "#22c55e" }}
-            >
-              <Archive size={13} /> Archive ({doneCount})
-            </Link>
-          )}
+        {/* Tab switcher */}
+        <div className="flex items-center gap-1 p-1 rounded-xl w-fit" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+          <button
+            onClick={() => setActiveTab("tasks")}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all"
+            style={{
+              background: activeTab === "tasks" ? "#1c3248" : "transparent",
+              color: activeTab === "tasks" ? "#cce4ff" : "#4a7090",
+            }}
+          >
+            Project Tasks
+          </button>
+          <button
+            onClick={() => setActiveTab("content")}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "content" ? "#1c3248" : "transparent",
+              color: activeTab === "content" ? "#cce4ff" : "#4a7090",
+            }}
+          >
+            Content Approval
+            {pendingContentCount > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{pendingContentCount}</span>
+            )}
+          </button>
         </div>
 
-        <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-        <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-        <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-        <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+        {/* PROJECT TASKS TAB */}
+        {activeTab === "tasks" && (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                <option value="all">All Members</option>
+                {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
+              </select>
+              <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                <option value="all">All Types</option>
+                <option value="webdev">Web Dev</option>
+                <option value="seo">SEO</option>
+              </select>
+              <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                <option value="all">All Priorities</option>
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
 
-        {filtered.length === 0 && (
-          <div className="text-center py-16 flex flex-col items-center gap-3">
-            <p className="text-sm" style={{ color: "#4a7090" }}>
-              {activeTasks.length === 0 ? "All tasks completed! Check the archive." : "No tasks match the current filters."}
-            </p>
-            {doneCount > 0 && (
-              <Link href="/archive" className="text-sm hover:opacity-80 transition-opacity" style={{ color: "#22c55e" }}>
-                View {doneCount} completed task{doneCount !== 1 ? "s" : ""} in Archive →
-              </Link>
+              {doneCount > 0 && (
+                <Link
+                  href="/archive"
+                  className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                  style={{ background: "#22c55e15", border: "1px solid #22c55e30", color: "#22c55e" }}
+                >
+                  <Archive size={13} /> Archive ({doneCount})
+                </Link>
+              )}
+            </div>
+
+            <TaskGroup title="Overdue" tasks={grouped.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+
+            {filtered.length === 0 && (
+              <div className="text-center py-16 flex flex-col items-center gap-3">
+                <p className="text-sm" style={{ color: "#4a7090" }}>
+                  {activeTasks.length === 0 ? "All tasks completed! Check the archive." : "No tasks match the current filters."}
+                </p>
+                {doneCount > 0 && (
+                  <Link href="/archive" className="text-sm hover:opacity-80 transition-opacity" style={{ color: "#22c55e" }}>
+                    View {doneCount} completed task{doneCount !== 1 ? "s" : ""} in Archive →
+                  </Link>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* CONTENT APPROVAL TAB */}
+        {activeTab === "content" && (
+          <div className="flex flex-col gap-6">
+            {/* Status summary */}
+            <div className="flex items-center gap-3 flex-wrap">
+              {(["pending_review", "approved", "changes_requested", "draft", "published"] as const).map((s) => {
+                const count = contentArticles.filter((a) => a.status === s).length;
+                const sc = articleStatusConfig[s];
+                if (!count) return null;
+                return (
+                  <div key={s} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: sc.bg, color: sc.color }}>
+                    {sc.icon} {sc.label}: {count}
+                  </div>
+                );
+              })}
+              {contentArticles.length === 0 && (
+                <p className="text-sm" style={{ color: "#4a7090" }}>No articles yet.</p>
+              )}
+            </div>
+
+            {/* Articles grouped by project */}
+            {Object.entries(articlesByProject).map(([projectId, projectArticles]) => {
+              const proj = projects.find((p) => p.id === projectId);
+              const projName = proj?.name ?? "No Project";
+              const pendingInProject = projectArticles.filter((a) => a.status === "pending_review").length;
+              return (
+                <div key={projectId}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="text-sm font-semibold" style={{ color: "#cce4ff" }}>{projName}</h3>
+                    {pendingInProject > 0 && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{pendingInProject} pending</span>
+                    )}
+                  </div>
+                  <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
+                    {projectArticles.map((article, i) => {
+                      const sc = articleStatusConfig[article.status] ?? articleStatusConfig.draft;
+                      return (
+                        <div
+                          key={article.id}
+                          className="flex items-center gap-4 px-4 py-3"
+                          style={{
+                            background: "#0f1d2e",
+                            borderBottom: i < projectArticles.length - 1 ? "1px solid #1c3248" : "none",
+                          }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{article.title}</p>
+                            <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
+                              by {article.submittedByName || "Unknown"} · {new Date(article.updatedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.color }}>
+                              {sc.icon} {sc.label}
+                            </span>
+                            {isAdmin && article.status === "pending_review" && (
+                              <>
+                                <button
+                                  onClick={() => approveArticleAsAdmin(article.id)}
+                                  className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
+                                  style={{ background: "#22c55e20", color: "#22c55e", border: "1px solid #22c55e40" }}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => updateArticleStatus(article.id, "changes_requested")}
+                                  className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
+                                  style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
+                                >
+                                  Changes
+                                </button>
+                              </>
+                            )}
+                            <Link href={`/content/${article.id}`} className="text-xs hover:opacity-80" style={{ color: "#38b6e8" }}>
+                              View →
+                            </Link>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {contentArticles.length === 0 && (
+              <div className="text-center py-16 flex flex-col items-center gap-3">
+                <FileEdit size={32} style={{ color: "#1c3248" }} />
+                <p className="text-sm" style={{ color: "#4a7090" }}>No articles yet. Staff can create articles from the Content page.</p>
+                <Link href="/content" className="text-sm hover:opacity-80" style={{ color: "#38b6e8" }}>Go to Content →</Link>
+              </div>
             )}
           </div>
         )}

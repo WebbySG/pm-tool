@@ -105,6 +105,7 @@ interface Store {
   createArticle: (data: Omit<Article, "id" | "wordCount" | "reviewToken" | "createdAt" | "updatedAt">) => Promise<string>;
   updateArticleStatus: (id: string, status: ArticleStatus, adminNotes?: string) => Promise<void>;
   deleteArticle: (id: string) => Promise<void>;
+  approveArticleAsAdmin: (id: string, adminNotes?: string) => Promise<void>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -698,6 +699,20 @@ export const useStore = create<Store>()(
   deleteArticle: async (id) => {
     await db.dbDeleteArticle(id);
     set((s) => ({ articles: s.articles.filter((a) => a.id !== id) }));
+  },
+
+  approveArticleAsAdmin: async (id, adminNotes) => {
+    const patch: Parameters<typeof db.dbUpdateArticle>[1] = {
+      status: "approved",
+      client_approval: "approved",
+    };
+    if (adminNotes !== undefined) patch.admin_notes = adminNotes;
+    await db.dbUpdateArticle(id, patch);
+    set((s) => ({
+      articles: s.articles.map((a) =>
+        a.id === id ? { ...a, status: "approved" as const, clientApproval: "approved" as const, adminNotes: adminNotes ?? a.adminNotes } : a
+      ),
+    }));
   },
   }),
   {

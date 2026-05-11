@@ -62,6 +62,7 @@ export async function loadAll() {
     { data: tplRows },
     { data: tplTaskRows },
     { data: notifRows },
+    { data: articleRows },
   ] = await Promise.all([
     supabase.from("pm_clients").select("*"),
     supabase.from("pm_channels").select("*").order("order"),
@@ -72,6 +73,7 @@ export async function loadAll() {
     supabase.from("pm_project_templates").select("*"),
     supabase.from("pm_task_templates").select("*"),
     supabase.from("pm_notifications").select("*").order("created_at", { ascending: false }),
+    supabase.from("pm_articles").select("*").order("created_at", { ascending: false }),
   ]);
 
   const clients: Client[] = (clientRows ?? []).map((r: Row) => ({
@@ -177,7 +179,9 @@ export async function loadAll() {
     read: r.read as boolean, createdAt: r.created_at as string,
   }));
 
-  return { clients, channels, projects, credentials, templates: [...templateMap.values()], notifications };
+  const articles: Article[] = (articleRows ?? []).map(rowToArticle);
+
+  return { clients, channels, projects, credentials, templates: [...templateMap.values()], notifications, articles };
 }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────

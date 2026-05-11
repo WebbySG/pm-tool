@@ -10,8 +10,9 @@ import { Topbar } from "@/components/topbar";
 import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
-  Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2,
+  Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2, FileEdit, CheckCircle2, Clock, AlertCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
 
@@ -56,9 +57,9 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, templates, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification } = useStore();
+  const { projects, templates, articles, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned">("board");
+  const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content">("board");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddPin, setShowAddPin] = useState(false);
@@ -327,20 +328,35 @@ export default function ProjectDetailPage() {
 
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
-            {(["board", "schedule", "files", "pinned"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className="px-4 py-2.5 text-sm font-medium capitalize transition-colors"
-                style={{
-                  color: activeTab === tab ? "#38b6e8" : "#4a7090",
-                  borderBottom: activeTab === tab ? "2px solid #38b6e8" : "2px solid transparent",
-                  marginBottom: "-1px",
-                }}
-              >
-                {tab === "files" ? `Files (${project.media.length})` : tab === "pinned" ? `Pinned (${project.pinnedItems.length})` : tab === "schedule" ? "Schedule" : "Board"}
-              </button>
-            ))}
+            {(["board", "schedule", "files", "pinned", "content"] as const).map((tab) => {
+              const projectArticles = articles.filter((a) => a.projectId === project.id);
+              const pendingCount = projectArticles.filter((a) => a.status === "pending_review").length;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className="px-4 py-2.5 text-sm font-medium capitalize transition-colors relative"
+                  style={{
+                    color: activeTab === tab ? "#38b6e8" : "#4a7090",
+                    borderBottom: activeTab === tab ? "2px solid #38b6e8" : "2px solid transparent",
+                    marginBottom: "-1px",
+                  }}
+                >
+                  {tab === "files" ? `Files (${project.media.length})`
+                    : tab === "pinned" ? `Pinned (${project.pinnedItems.length})`
+                    : tab === "schedule" ? "Schedule"
+                    : tab === "content" ? (
+                      <span className="flex items-center gap-1.5">
+                        Content
+                        {pendingCount > 0 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{pendingCount}</span>
+                        )}
+                      </span>
+                    )
+                    : "Board"}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -444,6 +460,102 @@ export default function ProjectDetailPage() {
               )}
             </div>
           )}
+
+          {/* CONTENT */}
+          {activeTab === "content" && (() => {
+            const projectArticles = articles.filter((a) => a.projectId === project.id);
+            const statusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+              draft:           { label: "Draft",           color: "#64748b", bg: "#64748b20", icon: <FileEdit size={13} /> },
+              pending_review:  { label: "Pending Review",  color: "#f59e0b", bg: "#f59e0b20", icon: <Clock size={13} /> },
+              changes_requested: { label: "Changes Requested", color: "#ef4444", bg: "#ef444420", icon: <AlertCircle size={13} /> },
+              approved:        { label: "Approved",        color: "#22c55e", bg: "#22c55e20", icon: <CheckCircle2 size={13} /> },
+              published:       { label: "Published",       color: "#38b6e8", bg: "#38b6e820", icon: <CheckCircle2 size={13} /> },
+            };
+            const postTypeLabel: Record<string, string> = { gmb: "GMB Post", website: "Website Post", other: "Other" };
+            return (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm" style={{ color: "#4a7090" }}>{projectArticles.length} article{projectArticles.length !== 1 ? "s" : ""}</p>
+                  <Link
+                    href="/content/new"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                    style={{ background: "#38b6e815", border: "1px solid #38b6e840", color: "#38b6e8" }}
+                  >
+                    + New Article
+                  </Link>
+                </div>
+
+                {projectArticles.length === 0 && (
+                  <div className="text-center py-12 flex flex-col items-center gap-2">
+                    <FileEdit size={28} style={{ color: "#1c3248" }} />
+                    <p className="text-sm" style={{ color: "#4a7090" }}>No articles linked to this project yet.</p>
+                    <Link href="/content/new" className="text-sm hover:opacity-80" style={{ color: "#38b6e8" }}>
+                      Create the first article →
+                    </Link>
+                  </div>
+                )}
+
+                <div className="rounded-xl overflow-hidden" style={{ border: projectArticles.length ? "1px solid #1c3248" : "none" }}>
+                  {projectArticles.map((article, i) => {
+                    const sc = statusConfig[article.status] ?? statusConfig.draft;
+                    return (
+                      <div
+                        key={article.id}
+                        className="flex items-center gap-4 px-4 py-3 hover:opacity-80 transition-opacity"
+                        style={{
+                          background: "#0f1d2e",
+                          borderBottom: i < projectArticles.length - 1 ? "1px solid #1c3248" : "none",
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{article.title}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs" style={{ color: "#4a7090" }}>{postTypeLabel[article.postType] ?? article.postType}</span>
+                            {article.targetKeyword && (
+                              <span className="text-xs" style={{ color: "#4a7090" }}>· {article.targetKeyword}</span>
+                            )}
+                            <span className="text-xs" style={{ color: "#4a7090" }}>· {article.submittedByName || "Unknown"}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.color }}>
+                            {sc.icon} {sc.label}
+                          </span>
+                          {isAdmin && article.status === "pending_review" && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => approveArticleAsAdmin(article.id)}
+                                className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
+                                style={{ background: "#22c55e20", color: "#22c55e", border: "1px solid #22c55e40" }}
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => updateArticleStatus(article.id, "changes_requested")}
+                                className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
+                                style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
+                              >
+                                Changes
+                              </button>
+                            </div>
+                          )}
+                          <Link
+                            href={`/content/${article.id}`}
+                            className="text-xs hover:opacity-80 transition-opacity"
+                            style={{ color: "#38b6e8" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            View →
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* PINNED */}
           {activeTab === "pinned" && (
