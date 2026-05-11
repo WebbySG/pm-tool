@@ -70,12 +70,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         // IMPORTANT: do NOT await any Supabase calls here. auth-js holds the
-        // internal auth lock for the duration of this callback. Calling
+        // internal auth lock for the entire duration of this callback. Calling
         // supabase.from() (via buildPmUser) internally calls getSession(),
         // which tries to re-acquire the same lock → circular deadlock.
-        // setTimeout defers the work to run after the lock is released.
+        // setTimeout(0) defers the DB work to run after the lock is released.
         const mySeq = ++seqRef.current;
         if (session?.user) {
+          // Set loading=true NOW (synchronous, no lock issue) so the app layout
+          // doesn't see the transient !loading && !user state and redirect to
+          // /login while buildPmUser is still awaiting its DB queries.
+          setLoading(true);
           const { id, email } = session.user;
           setTimeout(async () => {
             const pmUser = await buildPmUser(id, email ?? "");
