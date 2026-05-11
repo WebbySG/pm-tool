@@ -34,14 +34,20 @@ export default function LoginPage() {
     } else {
       localStorage.removeItem(REMEMBER_KEY);
     }
+    // Hard timeout — if signInWithPassword hangs, unblock the button after 15s
+    const safety = setTimeout(() => {
+      setLoading(false);
+      setError("Request timed out. Check your connection and try again.");
+    }, 15000);
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    clearTimeout(safety);
     if (error) {
       setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
       setLoading(false);
     } else {
-      // Safety: reset loading after 8s in case navigation stalls
-      setTimeout(() => setLoading(false), 8000);
       router.replace("/dashboard");
+      // Fallback if navigation stalls
+      setTimeout(() => setLoading(false), 8000);
     }
   }
 
