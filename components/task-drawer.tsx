@@ -181,6 +181,7 @@ function TaskPanel({
   const [titleDraft, setTitleDraft] = useState(task.title);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showPriorityMenu, setShowPriorityMenu] = useState(false);
+  const [localPrio, setLocalPrio] = useState<number | null>(null);
   const [showAssigneeMenu, setShowAssigneeMenu] = useState(false);
   const [descEditing, setDescEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -226,7 +227,7 @@ function TaskPanel({
   }
 
   const status = statusOptions.find((s) => s.key === task.status) ?? statusOptions[0];
-  const prio = typeof task.priority === "number" ? task.priority : 5;
+  const prio = localPrio ?? (typeof task.priority === "number" ? task.priority : 5);
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
 
@@ -363,23 +364,34 @@ function TaskPanel({
 
           {/* Priority */}
           <div>
-            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority (1 = highest)</p>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
-              <span className="text-xs font-bold px-1.5 py-0.5 rounded"
-                style={{ background: priorityColor(prio) + "25", color: priorityColor(prio) }}>
-                P{prio}
-              </span>
-              <span className="flex-1 text-sm" style={{ color: priorityColor(prio) }}>
-                {PRIORITY_LABELS[prio] ?? `P${prio}`}
-              </span>
+            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority</p>
+            <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg"
+              style={{ background: "#0e1e30", border: `1px solid ${priorityColor(prio)}40` }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold px-2 py-0.5 rounded"
+                  style={{ background: priorityColor(prio) + "25", color: priorityColor(prio), minWidth: 28, textAlign: "center" }}>
+                  P{prio}
+                </span>
+                <span className="flex-1 text-sm font-medium" style={{ color: priorityColor(prio) }}>
+                  {PRIORITY_LABELS[prio] ?? `P${prio}`}
+                </span>
+              </div>
               {isAdmin && (
-                <input
-                  type="range" min={1} max={10} step={1} value={prio}
-                  onChange={(e) => updateTaskPriority(projectId, task.id, Number(e.target.value))}
-                  className="w-24"
-                  style={{ accentColor: priorityColor(prio) }}
-                />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: "#ef4444" }}>1</span>
+                  <input
+                    type="range" min={1} max={10} step={1} value={prio}
+                    onChange={(e) => setLocalPrio(Number(e.target.value))}
+                    onPointerUp={(e) => {
+                      const v = Number((e.target as HTMLInputElement).value);
+                      setLocalPrio(null);
+                      updateTaskPriority(projectId, task.id, v);
+                    }}
+                    className="flex-1"
+                    style={{ accentColor: priorityColor(prio) }}
+                  />
+                  <span className="text-xs" style={{ color: "#22c55e" }}>10</span>
+                </div>
               )}
             </div>
           </div>

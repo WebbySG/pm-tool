@@ -107,6 +107,12 @@ function TaskGroup({
 
               <div className="flex items-center gap-3 shrink-0">
                 <span
+                  className="text-xs font-bold px-1.5 py-0.5 rounded hidden sm:block"
+                  style={{ background: priorityColor(task.priority) + "20", color: priorityColor(task.priority), border: `1px solid ${priorityColor(task.priority)}40` }}
+                >
+                  P{typeof task.priority === "number" ? task.priority : 5}
+                </span>
+                <span
                   className="text-xs font-medium px-2 py-0.5 rounded-full hidden sm:block"
                   style={{ background: sc.bg, color: sc.color }}
                 >
