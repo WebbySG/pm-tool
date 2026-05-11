@@ -56,14 +56,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [user, loading, router]);
 
   useEffect(() => {
-    if (!initialized) init();
-  }, [initialized]);
+    init();
+  }, []);
 
   useEffect(() => {
     if (initialized) refresh();
   }, [pathname]);
 
-  if (loading || !initialized) return <AppLoader />;
+  if (loading) return <AppLoader />;
   if (!user) return null;
 
   return (
