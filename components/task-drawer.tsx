@@ -80,27 +80,32 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
   function pushTask(task: Task) { setStack((s) => [...s, task]); }
   function popTask() { setStack((s) => s.slice(0, -1)); }
 
+  // Side-by-side layout: drawers don't overlap
+  const drawerWidth = stack.length === 1 ? 600 : stack.length === 2 ? 520 : 440;
+
   return (
     <>
       <div className="fixed inset-0 z-40" style={{ background: "#00000060" }} onClick={onClose} />
-      <div className="fixed top-0 right-0 h-screen z-50 flex" style={{ pointerEvents: "none" }}>
+      <div className="fixed top-0 right-0 h-screen z-50" style={{ pointerEvents: "none" }}>
         {stack.map((stackEntry, i) => {
           const live = liveTask(stackEntry.id) ?? stackEntry;
           const isTop = i === stack.length - 1;
-          const offset = (stack.length - 1 - i) * 24;
+          const depth = i;
+          const rightPos = (stack.length - 1 - i) * drawerWidth;
+          const parentTask = i > 0 ? (liveTask(stack[i - 1].id) ?? stack[i - 1]) : undefined;
           return (
             <div
               key={stackEntry.id + "-" + i}
-              className="absolute top-0 h-full flex flex-col transition-transform"
+              className="absolute top-0 h-full flex flex-col"
               style={{
-                width: 600,
-                right: offset,
-                background: "#0f1d2e",
-                borderLeft: "1px solid #1c3248",
+                width: drawerWidth,
+                right: rightPos,
+                background: depth === 0 ? "#0f1d2e" : "#0a1828",
+                borderLeft: depth === 0 ? "1px solid #1c3248" : "3px solid #38b6e8",
                 pointerEvents: "auto",
                 zIndex: i,
-                boxShadow: isTop ? "-8px 0 32px #00000040" : "none",
-                filter: isTop ? "none" : `brightness(${0.85 - (stack.length - 1 - i) * 0.05})`,
+                boxShadow: isTop ? "-8px 0 32px #00000050" : "-2px 0 12px #00000030",
+                transition: "width 0.2s ease",
               }}
             >
               <TaskPanel
@@ -108,6 +113,8 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
                 projectId={projectId}
                 isTop={isTop}
                 canGoBack={i > 0}
+                depth={depth}
+                parentTask={parentTask}
                 onGoBack={popTask}
                 onClose={onClose}
                 onOpenChild={(child) => pushTask(child)}
@@ -123,12 +130,14 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
 
 // ─── Single task panel ────────────────────────────────────────────────────────
 function TaskPanel({
-  task, projectId, isTop, canGoBack, onGoBack, onClose, onOpenChild, liveStaff,
+  task, projectId, isTop, canGoBack, depth, parentTask, onGoBack, onClose, onOpenChild, liveStaff,
 }: {
   task: Task;
   projectId: string;
   isTop: boolean;
   canGoBack: boolean;
+  depth: number;
+  parentTask?: Task;
   onGoBack: () => void;
   onClose: () => void;
   onOpenChild: (task: Task) => void;
@@ -225,21 +234,32 @@ function TaskPanel({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Child breadcrumb bar */}
+      {depth > 0 && parentTask && (
+        <div className="flex items-center gap-1.5 px-5 pt-3 pb-0 shrink-0">
+          <span className="text-xs" style={{ color: "#4a7090" }}>↳ Subtask of</span>
+          <span className="text-xs font-semibold truncate" style={{ color: "#38b6e8" }}>{parentTask.title}</span>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 shrink-0" style={{ borderBottom: "1px solid #1c3248" }}>
+      <div className="flex items-center gap-3 px-5 py-3.5 shrink-0" style={{ borderBottom: `1px solid ${depth > 0 ? "#1c3a52" : "#1c3248"}` }}>
         {canGoBack && (
           <button onClick={onGoBack} className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: "#4a7090" }}>
             ←
           </button>
         )}
         <div className="flex items-center gap-2 flex-1 min-w-0">
+          {depth > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ background: "#38b6e822", color: "#38b6e8", border: "1px solid #38b6e845" }}>
+              ↳ SUBTASK
+            </span>
+          )}
           {task.recurring && (
             <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full shrink-0" style={{ background: "#38b6e820", color: "#38b6e8" }}>
               <RefreshCw size={10} /> {{ weekly: "Weekly", monthly: "Monthly", "every-3-months": "Every 3 mo", "every-4-months": "Every 4 mo", "every-6-months": "Every 6 mo", yearly: "Yearly" }[task.recurring] ?? task.recurring}
             </span>
-          )}
-          {task.parentId && (
-            <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#1c3248", color: "#4a7090" }}>child</span>
           )}
           <span className="text-xs font-mono truncate" style={{ color: "#4a7090" }}>{task.id.slice(0, 8).toUpperCase()}</span>
         </div>

@@ -249,25 +249,27 @@ export default function ArticleDetailPage() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-2 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
+              <div className="flex gap-2 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
                 {article.status !== "approved" && article.status !== "published" && (
                   <button
                     onClick={() => handleStatusChange("approved")}
                     disabled={saving}
-                    className="flex items-center gap-2 w-full py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                    style={{ background: "#22c55e20", color: "#22c55e", border: "1px solid #22c55e40" }}
+                    className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl text-xs font-semibold disabled:opacity-50 transition-all hover:brightness-110"
+                    style={{ background: "#22c55e22", color: "#22c55e", border: "1px solid #22c55e50" }}
                   >
-                    <CheckCircle2 size={15} /> Approve Article
+                    <CheckCircle2 size={20} strokeWidth={2} />
+                    Approve
                   </button>
                 )}
                 {article.status !== "changes_requested" && (
                   <button
                     onClick={() => handleStatusChange("changes_requested")}
                     disabled={saving}
-                    className="flex items-center gap-2 w-full py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                    style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
+                    className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl text-xs font-semibold disabled:opacity-50 transition-all hover:brightness-110"
+                    style={{ background: "#ef444422", color: "#ef4444", border: "1px solid #ef444450" }}
                   >
-                    <XCircle size={15} /> Request Changes
+                    <XCircle size={20} strokeWidth={2} />
+                    Request Changes
                   </button>
                 )}
                 {article.status === "approved" && (
