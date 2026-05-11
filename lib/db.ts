@@ -500,3 +500,82 @@ export async function dbAddArticleComment(data: Omit<ArticleComment, "id" | "cre
 export async function dbResolveComment(commentId: string): Promise<void> {
   await supabase.from("pm_article_comments").update({ resolved: true }).eq("id", commentId);
 }
+
+// ─── Weekly Reports ───────────────────────────────────────────────────────────
+
+export interface WeeklyReportTask {
+  id: string;
+  title: string;
+  status: string;
+  assigneeName: string;
+  dueDate: string;
+}
+
+export interface WeeklyReport {
+  id: string;
+  projectId: string;
+  weekStarting: string;
+  summaryNotes: string;
+  tasksSnapshot: WeeklyReportTask[];
+  shareToken: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+function rowToWeeklyReport(r: Row): WeeklyReport {
+  return {
+    id: r.id as string,
+    projectId: r.project_id as string,
+    weekStarting: r.week_starting as string,
+    summaryNotes: (r.summary_notes as string) ?? "",
+    tasksSnapshot: (r.tasks_snapshot as WeeklyReportTask[]) ?? [],
+    shareToken: r.share_token as string,
+    createdBy: (r.created_by as string | null) ?? null,
+    createdAt: r.created_at as string,
+  };
+}
+
+export async function dbGetWeeklyReports(projectId: string): Promise<WeeklyReport[]> {
+  const { data } = await supabase
+    .from("pm_weekly_reports")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("week_starting", { ascending: false });
+  return (data ?? []).map((r) => rowToWeeklyReport(r as Row));
+}
+
+export async function dbGetWeeklyReportByToken(token: string): Promise<WeeklyReport | null> {
+  const { data } = await supabase
+    .from("pm_weekly_reports")
+    .select("*")
+    .eq("share_token", token)
+    .maybeSingle();
+  return data ? rowToWeeklyReport(data as Row) : null;
+}
+
+export async function dbCreateWeeklyReport(
+  projectId: string,
+  weekStarting: string,
+  summaryNotes: string,
+  tasksSnapshot: WeeklyReportTask[],
+  createdBy: string | null,
+): Promise<WeeklyReport | null> {
+  const { data, error } = await supabase
+    .from("pm_weekly_reports")
+    .insert({ project_id: projectId, week_starting: weekStarting, summary_notes: summaryNotes, tasks_snapshot: tasksSnapshot, created_by: createdBy })
+    .select()
+    .single();
+  if (error) { console.error("dbCreateWeeklyReport", error); return null; }
+  return rowToWeeklyReport(data as Row);
+}
+
+export async function dbUpdateWeeklyReport(id: string, patch: { summaryNotes?: string; tasksSnapshot?: WeeklyReportTask[] }): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (patch.summaryNotes !== undefined) update.summary_notes = patch.summaryNotes;
+  if (patch.tasksSnapshot !== undefined) update.tasks_snapshot = patch.tasksSnapshot;
+  await supabase.from("pm_weekly_reports").update(update).eq("id", id);
+}
+
+export async function dbDeleteWeeklyReport(id: string): Promise<void> {
+  await supabase.from("pm_weekly_reports").delete().eq("id", id);
+}

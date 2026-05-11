@@ -11,7 +11,9 @@ import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
   Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2, FileEdit, CheckCircle2, Clock, AlertCircle,
+  BarChart2, Plus, Copy, Trash2, ChevronRight,
 } from "lucide-react";
+import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
@@ -59,7 +61,17 @@ export default function ProjectDetailPage() {
   const isAdmin = user?.pmRole === "admin";
   const { projects, templates, articles, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content">("board");
+  const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content" | "reports">("board");
+  // ── Weekly reports state ──────────────────────────────────────────────────
+  const [reports, setReports] = useState<WeeklyReport[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [showNewReport, setShowNewReport] = useState(false);
+  const [newReportWeek, setNewReportWeek] = useState("");
+  const [newReportNotes, setNewReportNotes] = useState("");
+  const [savingReport, setSavingReport] = useState(false);
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [editingNotes, setEditingNotes] = useState("");
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddPin, setShowAddPin] = useState(false);
@@ -93,6 +105,63 @@ export default function ProjectDetailPage() {
         setNewTask((prev) => ({ ...prev, assigneeId: prev.assigneeId || (staff[0] ? staffAuthId(staff[0]) : "") }));
       });
   }, [user?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+    setReportsLoading(true);
+    dbGetWeeklyReports(params.id).then((data) => { setReports(data); setReportsLoading(false); });
+  }, [activeTab, params.id]);
+
+  // Default the new-report week to Monday of the current week
+  useEffect(() => {
+    if (!showNewReport) return;
+    const today = new Date();
+    const day = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    setNewReportWeek(monday.toISOString().slice(0, 10));
+  }, [showNewReport]);
+
+  async function handleCreateReport() {
+    if (!newReportWeek) return;
+    setSavingReport(true);
+    // Build snapshot from tasks due in the selected week
+    const weekStart = new Date(newReportWeek + "T00:00:00");
+    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+    const snap = project.tasks
+      .filter((t) => {
+        if (!t.dueDate) return false;
+        const d = new Date(t.dueDate + "T00:00:00");
+        return d >= weekStart && d <= weekEnd;
+      })
+      .map((t) => {
+        const assignee = liveStaff.find((s) => staffAuthId(s) === t.assigneeId);
+        return { id: t.id, title: t.title, status: t.status, assigneeName: assignee ? staffName(assignee) : "", dueDate: t.dueDate ?? "" };
+      });
+    const report = await dbCreateWeeklyReport(params.id, newReportWeek, newReportNotes, snap, user?.id ?? null);
+    if (report) setReports((prev) => [report, ...prev]);
+    setShowNewReport(false);
+    setNewReportNotes("");
+    setSavingReport(false);
+  }
+
+  function handleCopyLink(token: string) {
+    const url = `${window.location.origin}/report/${token}`;
+    navigator.clipboard.writeText(url);
+    setCopiedToken(token);
+    setTimeout(() => setCopiedToken(null), 2000);
+  }
+
+  async function handleSaveReportNotes(id: string) {
+    await dbUpdateWeeklyReport(id, { summaryNotes: editingNotes });
+    setReports((prev) => prev.map((r) => r.id === id ? { ...r, summaryNotes: editingNotes } : r));
+    setEditingReportId(null);
+  }
+
+  async function handleDeleteReport(id: string) {
+    await dbDeleteWeeklyReport(id);
+    setReports((prev) => prev.filter((r) => r.id !== id));
+  }
 
   const projectRaw = projects.find((p) => p.id === params.id);
   if (!projectRaw) return notFound();
@@ -328,7 +397,7 @@ export default function ProjectDetailPage() {
 
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
-            {(["board", "schedule", "files", "pinned", "content"] as const).map((tab) => {
+            {(["board", "schedule", "files", "pinned", "content", "reports"] as const).map((tab) => {
               const projectArticles = articles.filter((a) => a.projectId === project.id);
               const pendingCount = projectArticles.filter((a) => a.status === "pending_review").length;
               return (
@@ -345,6 +414,11 @@ export default function ProjectDetailPage() {
                   {tab === "files" ? `Files (${project.media.length})`
                     : tab === "pinned" ? `Pinned (${project.pinnedItems.length})`
                     : tab === "schedule" ? "Schedule"
+                    : tab === "reports" ? (
+                      <span className="flex items-center gap-1.5">
+                        <BarChart2 size={13} />Reports
+                      </span>
+                    )
                     : tab === "content" ? (
                       <span className="flex items-center gap-1.5">
                         Content
@@ -619,8 +693,186 @@ export default function ProjectDetailPage() {
               </div>
             </div>
           )}
+          {/* REPORTS */}
+          {activeTab === "reports" && (() => {
+            function fmtDate(iso: string) {
+              return new Date(iso + "T00:00:00").toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
+            }
+            function weekRange(iso: string) {
+              const end = new Date(iso + "T00:00:00"); end.setDate(end.getDate() + 6);
+              return `${fmtDate(iso)} – ${fmtDate(end.toISOString().slice(0, 10))}`;
+            }
+            // Group by month
+            const byMonth: Record<string, WeeklyReport[]> = {};
+            for (const r of reports) {
+              const key = new Date(r.weekStarting + "T00:00:00").toLocaleDateString("en-SG", { month: "long", year: "numeric" });
+              if (!byMonth[key]) byMonth[key] = [];
+              byMonth[key].push(r);
+            }
+            return (
+              <div className="flex flex-col gap-5">
+                {/* Toolbar */}
+                {isAdmin && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setShowNewReport(true)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                      style={{ background: "#38b6e8", color: "#fff" }}
+                    >
+                      <Plus size={14} /> New Week Report
+                    </button>
+                  </div>
+                )}
+
+                {reportsLoading && <p className="text-sm" style={{ color: "#4a7090" }}>Loading…</p>}
+                {!reportsLoading && reports.length === 0 && (
+                  <div className="flex flex-col items-center gap-2 py-12">
+                    <BarChart2 size={32} style={{ color: "#1c3248" }} />
+                    <p className="text-sm" style={{ color: "#4a7090" }}>No reports yet. Create the first weekly report.</p>
+                  </div>
+                )}
+
+                {Object.entries(byMonth).map(([month, monthReports]) => (
+                  <div key={month}>
+                    <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "#4a7090" }}>{month}</p>
+                    <div className="flex flex-col gap-3">
+                      {monthReports.map((r) => {
+                        const totalTasks = r.tasksSnapshot.length;
+                        const doneTasks = r.tasksSnapshot.filter((t) => t.status === "done").length;
+                        const shareUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/report/${r.shareToken}`;
+                        return (
+                          <div key={r.id} className="rounded-xl p-4 flex flex-col gap-3"
+                            style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+                            {/* Report header */}
+                            <div className="flex items-start gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold" style={{ color: "#cce4ff" }}>Week of {weekRange(r.weekStarting)}</p>
+                                <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
+                                  {doneTasks}/{totalTasks} tasks · Created {fmtDate(r.createdAt.slice(0, 10))}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={() => handleCopyLink(r.shareToken)}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
+                                  style={{ background: copiedToken === r.shareToken ? "#22c55e20" : "#1c3248", color: copiedToken === r.shareToken ? "#22c55e" : "#4a7090" }}
+                                >
+                                  <Copy size={11} /> {copiedToken === r.shareToken ? "Copied!" : "Copy link"}
+                                </button>
+                                <a href={shareUrl} target="_blank" rel="noreferrer"
+                                  className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
+                                  style={{ color: "#4a7090" }}>
+                                  <ExternalLink size={13} />
+                                </a>
+                                {isAdmin && (
+                                  <button onClick={() => handleDeleteReport(r.id)}
+                                    className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
+                                    style={{ color: "#4a7090" }}>
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Task pills */}
+                            {totalTasks > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {r.tasksSnapshot.map((t) => (
+                                  <span key={t.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+                                    style={{ background: t.status === "done" ? "#22c55e15" : "#1c3248", color: t.status === "done" ? "#22c55e" : "#4a7090", border: `1px solid ${t.status === "done" ? "#22c55e30" : "transparent"}` }}>
+                                    {t.status === "done" ? "✓" : "○"} {t.title}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Notes */}
+                            {editingReportId === r.id ? (
+                              <div className="flex flex-col gap-2">
+                                <textarea
+                                  autoFocus
+                                  value={editingNotes}
+                                  onChange={(e) => setEditingNotes(e.target.value)}
+                                  rows={3}
+                                  placeholder="Add notes for the client…"
+                                  className="w-full px-3 py-2 rounded-lg text-xs outline-none resize-none"
+                                  style={{ background: "#0e1e30", border: "1px solid #38b6e8", color: "#cce4ff" }}
+                                />
+                                <div className="flex gap-2">
+                                  <button onClick={() => handleSaveReportNotes(r.id)}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                                    style={{ background: "#22c55e20", color: "#22c55e" }}>Save</button>
+                                  <button onClick={() => setEditingReportId(null)}
+                                    className="px-3 py-1.5 rounded-lg text-xs"
+                                    style={{ color: "#4a7090" }}>Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-start gap-2">
+                                <p className="flex-1 text-xs leading-relaxed" style={{ color: r.summaryNotes ? "#cce4ff" : "#4a7090" }}>
+                                  {r.summaryNotes || (isAdmin ? "No notes — click to add a summary for the client." : "No notes.")}
+                                </p>
+                                {isAdmin && (
+                                  <button onClick={() => { setEditingReportId(r.id); setEditingNotes(r.summaryNotes); }}
+                                    className="shrink-0" style={{ color: "#38b6e8" }}>
+                                    <Pencil size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
+
+      {/* New Report Modal */}
+      {showNewReport && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowNewReport(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="rounded-xl w-full max-w-sm flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Week Report</h3>
+                <button onClick={() => setShowNewReport(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+              </div>
+              <div>
+                <label className="text-xs block mb-1.5" style={{ color: "#4a7090" }}>Week Starting (Monday)</label>
+                <input type="date" value={newReportWeek} onChange={(e) => setNewReportWeek(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+                <p className="text-xs mt-1" style={{ color: "#4a7090" }}>
+                  Tasks with due dates in this week will be included automatically.
+                </p>
+              </div>
+              <div>
+                <label className="text-xs block mb-1.5" style={{ color: "#4a7090" }}>Notes for Client (optional)</label>
+                <textarea value={newReportNotes} onChange={(e) => setNewReportNotes(e.target.value)} rows={3}
+                  placeholder="Summary of the week's work…"
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowNewReport(false)}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-medium"
+                  style={{ background: "#1c3248", color: "#cce4ff" }}>Cancel</button>
+                <button onClick={handleCreateReport} disabled={savingReport || !newReportWeek}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ background: "#38b6e8", color: "#fff" }}>
+                  {savingReport ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  {savingReport ? "Creating…" : "Create Report"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Add Task Modal */}
       {showAddTask && (

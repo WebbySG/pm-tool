@@ -168,6 +168,8 @@ function TaskPanel({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [approvalLoading, setApprovalLoading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [confirmDeleteAttachmentId, setConfirmDeleteAttachmentId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function handleSaveTitle() {
@@ -531,21 +533,35 @@ function TaskPanel({
             <div className="flex flex-col gap-2">
               {task.attachments.map((att) => {
                 const Icon = attachIcon[att.type];
+                const isImage = att.type === "image";
                 return (
-                  <div key={att.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg group"
-                    style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
-                    <Icon size={15} style={{ color: "#38b6e8" }} />
+                  <div key={att.id}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg group"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", cursor: isImage ? "pointer" : "default" }}
+                    onClick={() => isImage && setImagePreviewUrl(att.url)}
+                  >
+                    {isImage ? (
+                      <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 border" style={{ borderColor: "#1c3248" }}>
+                        <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                      </div>
+                    ) : (
+                      <Icon size={15} style={{ color: "#38b6e8" }} />
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm truncate" style={{ color: "#cce4ff" }}>{att.name}</p>
-                      <p className="text-xs" style={{ color: "#4a7090" }}>{att.size}</p>
+                      <p className="text-xs" style={{ color: "#4a7090" }}>
+                        {att.size}{isImage ? " · click to preview" : ""}
+                      </p>
                     </div>
-                    <a href={att.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
-                      className="p-1 rounded hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
+                    <a href={att.url} target="_blank" rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1.5 rounded-lg hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
                       style={{ color: "#4a7090" }}>
                       <ExternalLink size={13} />
                     </a>
-                    <button onClick={() => deleteAttachment(projectId, task.id, att.id)}
-                      className="p-1 rounded hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteAttachmentId(att.id); }}
+                      className="p-1.5 rounded-lg hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
                       style={{ color: "#ef4444" }}>
                       <Trash2 size={13} />
                     </button>
@@ -579,6 +595,58 @@ function TaskPanel({
           )}
         </div>
       </div>
+
+      {/* Image lightbox */}
+      {imagePreviewUrl && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-8"
+          style={{ background: "#000000b0" }}
+          onClick={() => setImagePreviewUrl(null)}>
+          <div className="relative max-w-5xl max-h-full" onClick={(e) => e.stopPropagation()}>
+            <img src={imagePreviewUrl} alt="preview" className="max-w-full max-h-[85vh] rounded-xl object-contain"
+              style={{ boxShadow: "0 24px 64px #00000080" }} />
+            <button onClick={() => setImagePreviewUrl(null)}
+              className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: "#00000080", color: "#fff" }}>
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete attachment confirmation */}
+      {confirmDeleteAttachmentId && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          style={{ background: "#000000b0" }}>
+          <div className="rounded-2xl p-6 flex flex-col gap-4 w-72"
+            style={{ background: "#0f1d2e", border: "1px solid #1c3248", boxShadow: "0 16px 48px #00000060" }}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#ef444420" }}>
+                <Trash2 size={18} style={{ color: "#ef4444" }} />
+              </div>
+              <div>
+                <p className="font-semibold text-sm" style={{ color: "#cce4ff" }}>Delete attachment?</p>
+                <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>This cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDeleteAttachmentId(null)}
+                className="flex-1 py-2 rounded-lg text-sm font-medium"
+                style={{ background: "#1c3248", color: "#cce4ff" }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deleteAttachment(projectId, task.id, confirmDeleteAttachmentId);
+                  setConfirmDeleteAttachmentId(null);
+                }}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: "#ef4444", color: "#fff" }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center gap-2 px-6 py-4 shrink-0" style={{ borderTop: "1px solid #1c3248" }}>
