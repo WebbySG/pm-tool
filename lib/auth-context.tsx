@@ -52,11 +52,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Hard timeout: if auth hasn't resolved in 8s, unblock the app
-    const timeout = setTimeout(() => setLoading(false), 8000);
+    let mounted = true;
 
-    // Hydrate from existing session
+    // Hydrate from existing session.
+    // getSession() reads from localStorage — fast for valid tokens, or makes one
+    // network call to refresh an expired token. On Singapore this should be < 2s.
+    // We do NOT set a short timeout here because that was the root cause of the
+    // redirect loop: the timeout fired before the refresh network call completed,
+    // set loading=false with user=null, and triggered the login redirect.
+    // The onAuthStateChange fallback below catches any genuine "no session" case.
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!mounted) return;
       try {
         if (session?.user) {
           setUser(await buildPmUser(session.user.id, session.user.email ?? ""));
@@ -64,9 +70,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.error("auth getSession buildPmUser failed", e);
       } finally {
-        clearTimeout(timeout);
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
+    }).catch(() => {
+      if (mounted) setLoading(false);
     });
 
     // React to auth changes (login, invite acceptance, logout)
@@ -115,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => {
-      clearTimeout(timeout);
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
