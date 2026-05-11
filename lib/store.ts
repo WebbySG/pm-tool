@@ -716,7 +716,7 @@ export const useStore = create<Store>()(
   },
   }),
   {
-    name: "pm-store-v1",
+    name: "pm-store-v2",
     storage: createJSONStorage(() =>
       typeof window !== "undefined" ? sessionStorage : {
         getItem: () => null,

@@ -70,7 +70,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     // React to auth changes (login, invite acceptance, logout)
+    // Skip INITIAL_SESSION — getSession() above owns the initial loading state.
+    // Handling it here causes a race: if the stored token is stale/wrong-project it
+    // fires null first, sets loading=false with no user, and triggers a login redirect
+    // before getSession() can resolve with the real session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "INITIAL_SESSION") return;
       if (session?.user) {
         try {
           const pmUser = await buildPmUser(session.user.id, session.user.email ?? "");
