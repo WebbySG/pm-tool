@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [slowWarning, setSlowWarning] = useState(false);
   const router = useRouter();
 
   // If already authenticated, skip the login form entirely
@@ -29,18 +30,24 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setSlowWarning(false);
     if (remember) {
       localStorage.setItem(REMEMBER_KEY, email.trim());
     } else {
       localStorage.removeItem(REMEMBER_KEY);
     }
-    // Hard timeout — if signInWithPassword hangs, unblock the button after 15s
-    const safety = setTimeout(() => {
+    // After 12s show "taking longer than usual" but keep trying
+    const slowTimer = setTimeout(() => setSlowWarning(true), 12000);
+    // Hard give-up after 90s
+    const giveUp = setTimeout(() => {
       setLoading(false);
-      setError("Request timed out. Check your connection and try again.");
-    }, 15000);
+      setSlowWarning(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }, 90000);
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    clearTimeout(safety);
+    clearTimeout(slowTimer);
+    clearTimeout(giveUp);
+    setSlowWarning(false);
     if (error) {
       setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
       setLoading(false);
@@ -185,6 +192,11 @@ export default function LoginPage() {
             >
               {loading ? <><Loader2 size={15} className="animate-spin" />Signing in…</> : "Sign In"}
             </button>
+            {slowWarning && (
+              <p className="text-xs text-center mt-1" style={{ color: "var(--text-muted)" }}>
+                Taking longer than usual — please wait…
+              </p>
+            )}
           </form>
         </div>
 
