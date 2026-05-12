@@ -4,7 +4,7 @@ import { type Task } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
-import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle, Plus, X } from "lucide-react";
+import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle, Plus, X, Paperclip } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -144,13 +144,14 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask } = useStore();
+  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask, uploadTaskAttachment } = useStore();
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskProject, setNewTaskProject] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState(5);
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [newTaskFiles, setNewTaskFiles] = useState<File[]>([]);
   const [creating, setCreating] = useState(false);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
@@ -489,6 +490,27 @@ export default function TasksPage() {
                     className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                     style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
                 </div>
+                <div className="col-span-2">
+                  <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Attach files (optional)</p>
+                  <label className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:opacity-80" style={{ border: "2px dashed #1c3248" }}>
+                    <Paperclip size={14} style={{ color: "#4a7090" }} />
+                    <span className="text-xs" style={{ color: "#4a7090" }}>
+                      {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
+                    </span>
+                    <input type="file" multiple className="hidden"
+                      accept="image/*,video/*,.pdf,.doc,.docx"
+                      onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
+                  </label>
+                  {newTaskFiles.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {newTaskFiles.map((f, i) => (
+                        <span key={i} className="text-xs px-2 py-0.5 rounded" style={{ background: "#1c3248", color: "#cce4ff" }}>
+                          {f.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex gap-2 pt-1">
@@ -498,7 +520,7 @@ export default function TasksPage() {
                     if (!newTaskProject || !newTaskTitle.trim()) return;
                     setCreating(true);
                     try {
-                      await addTask(newTaskProject, {
+                      const newTaskId = await addTask(newTaskProject, {
                         projectId: newTaskProject,
                         title: newTaskTitle.trim(),
                         description: "",
@@ -510,10 +532,17 @@ export default function TasksPage() {
                         tags: [],
                         recurring: null,
                       });
+                      if (newTaskFiles.length > 0 && newTaskId) {
+                        const uploadedBy = user?.id ?? "";
+                        for (const file of newTaskFiles) {
+                          await uploadTaskAttachment(newTaskProject, newTaskId, file, uploadedBy);
+                        }
+                      }
                       setShowNewTask(false);
                       setNewTaskTitle("");
                       setNewTaskDueDate("");
                       setNewTaskPriority(5);
+                      setNewTaskFiles([]);
                     } catch (err) {
                       const e = err as { message?: string };
                       alert(`Couldn't save: ${e?.message || "Unknown error"}`);

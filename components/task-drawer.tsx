@@ -37,35 +37,93 @@ function priorityColor(p: number): string {
   return "#22c55e";
 }
 
-function renderMarkdownLite(text: string): React.ReactNode {
-  const lines = text.split("\n");
-  return lines.map((line, i) => {
-    if (line.startsWith("## ")) {
-      return <div key={i} className="font-bold text-base mt-2 mb-1" style={{ color: "#cce4ff" }}>{renderInline(line.slice(3))}</div>;
-    }
-    if (line.startsWith("- ")) {
-      return <div key={i} className="flex gap-2 ml-1"><span style={{ color: "#38b6e8" }}>•</span><span>{renderInline(line.slice(2))}</span></div>;
-    }
-    if (line === "") return <div key={i} style={{ height: 6 }} />;
-    return <div key={i}>{renderInline(line)}</div>;
+// Strip dangerous HTML before rendering/storing (no script/style/event handlers/js: URLs).
+// Internal staff-only content, but defensive sanitisation is still good practice.
+function sanitizeHtml(html: string): string {
+  if (typeof document === "undefined") return html;
+  const tmpl = document.createElement("template");
+  tmpl.innerHTML = html;
+  tmpl.content.querySelectorAll("script,style,iframe,object,embed").forEach((n) => n.remove());
+  tmpl.content.querySelectorAll<HTMLElement>("*").forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.toLowerCase();
+      if (name.startsWith("on")) el.removeAttribute(attr.name);
+      else if ((name === "href" || name === "src") && value.trim().startsWith("javascript:")) el.removeAttribute(attr.name);
+    });
   });
+  return tmpl.innerHTML;
 }
 
-function renderInline(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-  while (rest.length > 0) {
-    const bold = rest.match(/\*\*(.+?)\*\*/);
-    const ital = rest.match(/\*(.+?)\*/);
-    const first = [bold, ital].filter((m): m is RegExpMatchArray => !!m && m.index !== undefined).sort((a, b) => a.index! - b.index!)[0];
-    if (!first) { parts.push(rest); break; }
-    if (first.index! > 0) parts.push(rest.slice(0, first.index));
-    if (first === bold) parts.push(<strong key={key++}>{first[1]}</strong>);
-    else parts.push(<em key={key++}>{first[1]}</em>);
-    rest = rest.slice(first.index! + first[0].length);
+// Detect whether stored description is HTML or legacy plain text. Legacy plain-text
+// descriptions (pre-rich-text) should still render with line breaks preserved.
+function isHtml(s: string): boolean {
+  return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span)\b/i.test(s);
+}
+
+// WYSIWYG editor using contentEditable + document.execCommand. Real bolding,
+// not markdown wrapping. Stores HTML; sanitised on save and on display.
+function RichEditor({ initialHtml, onSave }: { initialHtml: string; onSave: (html: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.innerHTML = isHtml(initialHtml)
+        ? sanitizeHtml(initialHtml)
+        : initialHtml.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+      ref.current.focus();
+      // Move cursor to end
+      const r = document.createRange();
+      r.selectNodeContents(ref.current);
+      r.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(r);
+    }
+  }, [initialHtml]);
+
+  function exec(cmd: string, value?: string) {
+    ref.current?.focus();
+    document.execCommand(cmd, false, value);
   }
-  return parts;
+
+  function handleBlur() {
+    if (!ref.current) return;
+    const html = sanitizeHtml(ref.current.innerHTML);
+    onSave(html === "<br>" ? "" : html);
+  }
+
+  const btn = (Ic: React.ComponentType<{ size?: number }>, cmd: string, title: string, value?: string) => (
+    <button
+      key={title}
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); exec(cmd, value); }}
+      className="p-1.5 rounded hover:opacity-80 transition-opacity"
+      style={{ color: "#9dd8f5" }}
+      title={title}
+    >
+      <Ic size={13} />
+    </button>
+  );
+
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #38b6e8", background: "#0e1e30" }}>
+      <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderBottom: "1px solid #1c3248" }}>
+        {btn(Bold, "bold", "Bold")}
+        {btn(Italic, "italic", "Italic")}
+        {btn(Heading, "formatBlock", "Heading", "<h3>")}
+        {btn(List, "insertUnorderedList", "Bulleted list")}
+        <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>Saves on click-away</span>
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        onBlur={handleBlur}
+        className="rich-content text-sm leading-relaxed px-3 py-2.5 outline-none"
+        style={{ background: "#0e1e30", color: "#cce4ff", minHeight: 120 }}
+        suppressContentEditableWarning
+      />
+    </div>
+  );
 }
 
 const PRIORITY_LABELS: Record<number, string> = {
@@ -494,69 +552,25 @@ function TaskPanel({
         <div>
           <p className="text-xs font-semibold mb-2" style={{ color: "#4a7090" }}>DESCRIPTION</p>
           {descEditing ? (
-            <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #38b6e8", background: "#0e1e30" }}>
-              <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderBottom: "1px solid #1c3248" }}>
-                {([
-                  { icon: Bold, wrap: "**", title: "Bold", prefix: false },
-                  { icon: Italic, wrap: "*", title: "Italic", prefix: false },
-                  { icon: Heading, wrap: "## ", title: "Heading", prefix: true },
-                  { icon: List, wrap: "- ", title: "List", prefix: true },
-                ] as const).map(({ icon: Ic, wrap, title, prefix }) => (
-                  <button
-                    key={title}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const ta = document.getElementById(`task-desc-${task.id}`) as HTMLTextAreaElement | null;
-                      if (!ta) return;
-                      const start = ta.selectionStart;
-                      const end = ta.selectionEnd;
-                      const before = description.slice(0, start);
-                      const sel = description.slice(start, end);
-                      const after = description.slice(end);
-                      const next = prefix
-                        ? `${before}${wrap}${sel || "text"}${after}`
-                        : `${before}${wrap}${sel || "text"}${wrap}${after}`;
-                      setDescription(next);
-                      requestAnimationFrame(() => {
-                        ta.focus();
-                        const pos = start + wrap.length + (sel || "text").length;
-                        ta.setSelectionRange(pos, pos);
-                      });
-                    }}
-                    className="p-1.5 rounded hover:opacity-80 transition-opacity"
-                    style={{ color: "#9dd8f5", background: "transparent" }}
-                    title={title}
-                  >
-                    <Ic size={13} />
-                  </button>
-                ))}
-                <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>Saves on click-away</span>
-              </div>
-              <textarea
-                id={`task-desc-${task.id}`}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onBlur={() => {
-                  if (description !== task.description) {
-                    updateTaskDescription(projectId, task.id, description);
-                  }
-                  setDescEditing(false);
-                }}
-                rows={6}
-                autoFocus
-                placeholder="Add a description… use **bold**, *italic*, ## heading, - bullet"
-                className="w-full px-3 py-2.5 text-sm outline-none resize-y"
-                style={{ background: "#0e1e30", color: "#cce4ff", minHeight: 120, border: "none" }}
-              />
-            </div>
+            <RichEditor
+              key={task.id}
+              initialHtml={task.description}
+              onSave={(html) => {
+                if (html !== task.description) updateTaskDescription(projectId, task.id, html);
+                setDescEditing(false);
+              }}
+            />
           ) : (
             <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-20"
               style={{ background: "#0e1e30", border: "1px solid #1c3248", cursor: canEdit ? "text" : "default" }}>
-              {task.description
-                ? <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#cce4ff" }}>{renderMarkdownLite(task.description)}</div>
-                : <p className="text-sm" style={{ color: "#8b90a750" }}>{canEdit ? "Click to add a description..." : "No description."}</p>
-              }
+              {task.description ? (
+                isHtml(task.description)
+                  ? <div className="rich-content text-sm leading-relaxed" style={{ color: "#cce4ff" }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(task.description) }} />
+                  : <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#cce4ff" }}>{task.description}</p>
+              ) : (
+                <p className="text-sm" style={{ color: "#8b90a750" }}>{canEdit ? "Click to add a description..." : "No description."}</p>
+              )}
             </div>
           )}
         </div>
