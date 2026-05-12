@@ -74,6 +74,7 @@ export default function ProjectDetailPage() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [addTaskError, setAddTaskError] = useState<string | null>(null);
   const [showAddPin, setShowAddPin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", startDate: "", dueDate: "" });
@@ -178,30 +179,39 @@ export default function ProjectDetailPage() {
   async function handleAddTask() {
     if (!newTask.title.trim()) return;
     const title = newTask.title.trim();
-    await addTask(project.id, {
-      projectId: project.id,
-      title,
-      description: newTask.description,
-      type: newTask.type,
-      status: addTaskCol as Task["status"],
-      priority: newTask.priority,
-      assigneeId: newTask.assigneeId,
-      dueDate: newTask.dueDate,
-      tags: newTask.tags ? newTask.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
-      recurring: newTask.recurring,
-      recurringDay: newTask.recurringDay || undefined,
-    });
-    if (!isAdmin) {
-      const staffName = user?.name ?? "A staff member";
-      await addNotification({
-        title: "New Task Created",
-        body: `${staffName} created a new task: "${title}" in ${project.name}.`,
-        type: "task_assigned",
+    setAddTaskError(null);
+    try {
+      await addTask(project.id, {
         projectId: project.id,
+        title,
+        description: newTask.description,
+        type: newTask.type,
+        status: addTaskCol as Task["status"],
+        priority: newTask.priority,
+        assigneeId: newTask.assigneeId,
+        dueDate: newTask.dueDate,
+        tags: newTask.tags ? newTask.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        recurring: newTask.recurring,
+        recurringDay: newTask.recurringDay || undefined,
       });
+      if (!isAdmin) {
+        const staffName = user?.name ?? "A staff member";
+        await addNotification({
+          title: "New Task Created",
+          body: `${staffName} created a new task: "${title}" in ${project.name}.`,
+          type: "task_assigned",
+          projectId: project.id,
+        });
+      }
+      setShowAddTask(false);
+      clearTaskDraft();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const friendly = /foreign key|not present in table/i.test(msg)
+        ? "Couldn't save: this project doesn't exist in the database. Try deleting and recreating the project."
+        : `Couldn't save task: ${msg}`;
+      setAddTaskError(friendly);
     }
-    setShowAddTask(false);
-    clearTaskDraft();
   }
 
   function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -955,6 +965,11 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
 
+              {addTaskError && (
+                <div className="px-3 py-2 rounded-lg text-xs" style={{ background: "#ef444420", border: "1px solid #ef444460", color: "#fca5a5" }}>
+                  ⚠ {addTaskError}
+                </div>
+              )}
               <div className="flex gap-2 pt-1">
                 <button onClick={handleAddTask} className="flex-1 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>
                   Create Task

@@ -487,7 +487,32 @@ export const useStore = create<Store>()(
     } else {
       set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: [...p.tasks, newTask] })) }));
     }
-    await db.dbAddTask(id, projectId, taskData);
+    try {
+      await db.dbAddTask(id, projectId, taskData);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // FK violation on project_id: project exists in store but not DB. Try to recover.
+      if (/foreign key|not present in table/i.test(msg) && /project/i.test(msg)) {
+        const project = get().projects.find((p) => p.id === projectId);
+        if (project) {
+          try {
+            await db.dbAddProject(projectId, {
+              clientId: project.clientId, channelId: project.channelId,
+              name: project.name, type: project.type, phase: project.phase,
+              description: project.description, startDate: project.startDate,
+              dueDate: project.dueDate, assignedStaff: project.assignedStaff,
+            });
+            await db.dbAddTask(id, projectId, taskData);
+            return id;
+          } catch (recoverErr) {
+            console.error("project recovery failed", recoverErr);
+          }
+        }
+      }
+      // Roll back optimistic update
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: removeTaskFromTree(p.tasks, id) })) }));
+      throw err;
+    }
     return id;
   },
 
