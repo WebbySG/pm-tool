@@ -208,7 +208,8 @@ export default function ProjectDetailPage() {
         });
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const e = err as { message?: string; details?: string; hint?: string; code?: string };
+      const msg = e?.message || e?.details || e?.hint || (typeof err === "string" ? err : JSON.stringify(err));
       const friendly = /foreign key|not present in table/i.test(msg)
         ? `Couldn't save "${title}" — project not in database. Delete and recreate the project.`
         : `Couldn't save "${title}": ${msg}`;
