@@ -179,21 +179,25 @@ export default function ProjectDetailPage() {
   async function handleAddTask() {
     if (!newTask.title.trim()) return;
     const title = newTask.title.trim();
+    const taskInput = {
+      projectId: project.id,
+      title,
+      description: newTask.description,
+      type: newTask.type,
+      status: addTaskCol as Task["status"],
+      priority: newTask.priority,
+      assigneeId: newTask.assigneeId,
+      dueDate: newTask.dueDate,
+      tags: newTask.tags ? newTask.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      recurring: newTask.recurring,
+      recurringDay: newTask.recurringDay || undefined,
+    };
+    // Close popup immediately — optimistic update has already populated the board
+    setShowAddTask(false);
     setAddTaskError(null);
+    clearTaskDraft();
     try {
-      await addTask(project.id, {
-        projectId: project.id,
-        title,
-        description: newTask.description,
-        type: newTask.type,
-        status: addTaskCol as Task["status"],
-        priority: newTask.priority,
-        assigneeId: newTask.assigneeId,
-        dueDate: newTask.dueDate,
-        tags: newTask.tags ? newTask.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
-        recurring: newTask.recurring,
-        recurringDay: newTask.recurringDay || undefined,
-      });
+      await addTask(project.id, taskInput);
       if (!isAdmin) {
         const staffName = user?.name ?? "A staff member";
         await addNotification({
@@ -203,13 +207,11 @@ export default function ProjectDetailPage() {
           projectId: project.id,
         });
       }
-      setShowAddTask(false);
-      clearTaskDraft();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const friendly = /foreign key|not present in table/i.test(msg)
-        ? "Couldn't save: this project doesn't exist in the database. Try deleting and recreating the project."
-        : `Couldn't save task: ${msg}`;
+        ? `Couldn't save "${title}" — project not in database. Delete and recreate the project.`
+        : `Couldn't save "${title}": ${msg}`;
       setAddTaskError(friendly);
     }
   }
@@ -322,6 +324,16 @@ export default function ProjectDetailPage() {
   return (
     <>
       <Topbar title={project.name} back={{ label: "Projects", href: "/projects" }} />
+      {addTaskError && (
+        <div className="fixed top-20 right-6 z-[60] max-w-md flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg"
+          style={{ background: "#1a0f12", border: "1px solid #ef444460", color: "#fca5a5", boxShadow: "0 12px 32px #00000060" }}>
+          <span className="text-base leading-none">⚠</span>
+          <div className="flex-1 text-sm leading-relaxed">{addTaskError}</div>
+          <button onClick={() => setAddTaskError(null)} className="text-xs hover:opacity-70" style={{ color: "#fca5a5" }}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div className="flex flex-col h-full">
 
         {/* Project header */}
@@ -965,11 +977,6 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
 
-              {addTaskError && (
-                <div className="px-3 py-2 rounded-lg text-xs" style={{ background: "#ef444420", border: "1px solid #ef444460", color: "#fca5a5" }}>
-                  ⚠ {addTaskError}
-                </div>
-              )}
               <div className="flex gap-2 pt-1">
                 <button onClick={handleAddTask} className="flex-1 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>
                   Create Task
