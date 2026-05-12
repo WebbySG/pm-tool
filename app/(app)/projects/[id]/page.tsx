@@ -11,7 +11,7 @@ import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
   Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2, FileEdit, CheckCircle2, Clock, AlertCircle,
-  BarChart2, Plus, Copy, Trash2, ChevronRight,
+  BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip,
 } from "lucide-react";
 import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
@@ -59,7 +59,7 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, templates, articles, addTask, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, templates, articles, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content" | "reports">("board");
   // ── Weekly reports state ──────────────────────────────────────────────────
@@ -75,6 +75,7 @@ export default function ProjectDetailPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addTaskError, setAddTaskError] = useState<string | null>(null);
+  const [newTaskFiles, setNewTaskFiles] = useState<File[]>([]);
   const [showAddPin, setShowAddPin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", startDate: "", dueDate: "" });
@@ -192,12 +193,21 @@ export default function ProjectDetailPage() {
       recurring: newTask.recurring,
       recurringDay: newTask.recurringDay || undefined,
     };
+    const filesToUpload = newTaskFiles;
     // Close popup immediately — optimistic update has already populated the board
     setShowAddTask(false);
     setAddTaskError(null);
+    setNewTaskFiles([]);
     clearTaskDraft();
     try {
-      await addTask(project.id, taskInput);
+      const newTaskId = await addTask(project.id, taskInput);
+      // Upload any attached files after task is created
+      if (filesToUpload.length > 0 && newTaskId) {
+        const uploadedBy = user?.id ?? "";
+        for (const file of filesToUpload) {
+          await uploadTaskAttachment(project.id, newTaskId, file, uploadedBy);
+        }
+      }
       if (!isAdmin) {
         const staffName = user?.name ?? "A staff member";
         await addNotification({
@@ -975,6 +985,27 @@ export default function ProjectDetailPage() {
                 <div className="col-span-2">
                   <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Tags (comma separated)</p>
                   <input type="text" placeholder="e.g. frontend, research" value={newTask.tags} onChange={(e) => setNewTask({ ...newTask, tags: e.target.value })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Attach files (optional)</p>
+                  <label className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:opacity-80" style={{ border: "2px dashed #1c3248" }}>
+                    <Paperclip size={14} style={{ color: "#4a7090" }} />
+                    <span className="text-xs" style={{ color: "#4a7090" }}>
+                      {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
+                    </span>
+                    <input type="file" multiple className="hidden"
+                      accept="image/*,video/*,.pdf,.doc,.docx"
+                      onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
+                  </label>
+                  {newTaskFiles.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {newTaskFiles.map((f, i) => (
+                        <span key={i} className="text-xs px-2 py-0.5 rounded" style={{ background: "#1c3248", color: "#cce4ff" }}>
+                          {f.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

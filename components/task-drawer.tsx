@@ -2,7 +2,8 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
-  Image, FileText, Link2, Video, Save, ChevronRight, Loader2, ExternalLink,
+  Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
+  Bold, Italic, List, Heading,
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
@@ -34,6 +35,37 @@ function priorityColor(p: number): string {
   if (p <= 4) return "#f59e0b";
   if (p <= 6) return "#38b6e8";
   return "#22c55e";
+}
+
+function renderMarkdownLite(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    if (line.startsWith("## ")) {
+      return <div key={i} className="font-bold text-base mt-2 mb-1" style={{ color: "#cce4ff" }}>{renderInline(line.slice(3))}</div>;
+    }
+    if (line.startsWith("- ")) {
+      return <div key={i} className="flex gap-2 ml-1"><span style={{ color: "#38b6e8" }}>•</span><span>{renderInline(line.slice(2))}</span></div>;
+    }
+    if (line === "") return <div key={i} style={{ height: 6 }} />;
+    return <div key={i}>{renderInline(line)}</div>;
+  });
+}
+
+function renderInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let rest = text;
+  let key = 0;
+  while (rest.length > 0) {
+    const bold = rest.match(/\*\*(.+?)\*\*/);
+    const ital = rest.match(/\*(.+?)\*/);
+    const first = [bold, ital].filter((m): m is RegExpMatchArray => !!m && m.index !== undefined).sort((a, b) => a.index! - b.index!)[0];
+    if (!first) { parts.push(rest); break; }
+    if (first.index! > 0) parts.push(rest.slice(0, first.index));
+    if (first === bold) parts.push(<strong key={key++}>{first[1]}</strong>);
+    else parts.push(<em key={key++}>{first[1]}</em>);
+    rest = rest.slice(first.index! + first[0].length);
+  }
+  return parts;
 }
 
 const PRIORITY_LABELS: Record<number, string> = {
@@ -460,27 +492,69 @@ function TaskPanel({
 
         {/* Description */}
         <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>DESCRIPTION</p>
-            {descEditing ? (
-              <button onClick={() => { updateTaskDescription(projectId, task.id, description); setDescEditing(false); }}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg"
-                style={{ background: "#22c55e20", color: "#22c55e" }}>
-                <Save size={11} /> Save
-              </button>
-            ) : canEdit ? (
-              <button onClick={() => setDescEditing(true)} className="text-xs" style={{ color: "#38b6e8" }}>Edit</button>
-            ) : null}
-          </div>
+          <p className="text-xs font-semibold mb-2" style={{ color: "#4a7090" }}>DESCRIPTION</p>
           {descEditing ? (
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} autoFocus
-              className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none"
-              style={{ background: "#0e1e30", border: "1px solid #38b6e8", color: "#cce4ff" }} />
+            <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #38b6e8", background: "#0e1e30" }}>
+              <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderBottom: "1px solid #1c3248" }}>
+                {([
+                  { icon: Bold, wrap: "**", title: "Bold", prefix: false },
+                  { icon: Italic, wrap: "*", title: "Italic", prefix: false },
+                  { icon: Heading, wrap: "## ", title: "Heading", prefix: true },
+                  { icon: List, wrap: "- ", title: "List", prefix: true },
+                ] as const).map(({ icon: Ic, wrap, title, prefix }) => (
+                  <button
+                    key={title}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      const ta = document.getElementById(`task-desc-${task.id}`) as HTMLTextAreaElement | null;
+                      if (!ta) return;
+                      const start = ta.selectionStart;
+                      const end = ta.selectionEnd;
+                      const before = description.slice(0, start);
+                      const sel = description.slice(start, end);
+                      const after = description.slice(end);
+                      const next = prefix
+                        ? `${before}${wrap}${sel || "text"}${after}`
+                        : `${before}${wrap}${sel || "text"}${wrap}${after}`;
+                      setDescription(next);
+                      requestAnimationFrame(() => {
+                        ta.focus();
+                        const pos = start + wrap.length + (sel || "text").length;
+                        ta.setSelectionRange(pos, pos);
+                      });
+                    }}
+                    className="p-1.5 rounded hover:opacity-80 transition-opacity"
+                    style={{ color: "#9dd8f5", background: "transparent" }}
+                    title={title}
+                  >
+                    <Ic size={13} />
+                  </button>
+                ))}
+                <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>Saves on click-away</span>
+              </div>
+              <textarea
+                id={`task-desc-${task.id}`}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onBlur={() => {
+                  if (description !== task.description) {
+                    updateTaskDescription(projectId, task.id, description);
+                  }
+                  setDescEditing(false);
+                }}
+                rows={6}
+                autoFocus
+                placeholder="Add a description… use **bold**, *italic*, ## heading, - bullet"
+                className="w-full px-3 py-2.5 text-sm outline-none resize-y"
+                style={{ background: "#0e1e30", color: "#cce4ff", minHeight: 120, border: "none" }}
+              />
+            </div>
           ) : (
-            <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-16"
+            <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-20"
               style={{ background: "#0e1e30", border: "1px solid #1c3248", cursor: canEdit ? "text" : "default" }}>
               {task.description
-                ? <p className="text-sm leading-relaxed" style={{ color: "#cce4ff" }}>{task.description}</p>
+                ? <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#cce4ff" }}>{renderMarkdownLite(task.description)}</div>
                 : <p className="text-sm" style={{ color: "#8b90a750" }}>{canEdit ? "Click to add a description..." : "No description."}</p>
               }
             </div>
@@ -604,8 +678,14 @@ function TaskPanel({
                     <a href={att.url} target="_blank" rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       className="p-1.5 rounded-lg hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
-                      style={{ color: "#4a7090" }}>
+                      style={{ color: "#4a7090" }} title="Open in new tab">
                       <ExternalLink size={13} />
+                    </a>
+                    <a href={att.url} download={att.name}
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1.5 rounded-lg hover:opacity-70 opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ color: "#38b6e8" }} title="Download">
+                      <Download size={13} />
                     </a>
                     <button
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteAttachmentId(att.id); }}

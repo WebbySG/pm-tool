@@ -4,7 +4,7 @@ import { type Task } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
-import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle, Plus, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -144,7 +144,14 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask } = useStore();
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [newTaskProject, setNewTaskProject] = useState("");
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskAssignee, setNewTaskAssignee] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState(5);
+  const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [creating, setCreating] = useState(false);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const [activeTab, setActiveTab] = useState<"tasks" | "content">("tasks");
@@ -284,10 +291,21 @@ export default function TasksPage() {
               </select>
               <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
 
+              <button
+                onClick={() => {
+                  setNewTaskProject(projects[0]?.id ?? "");
+                  setNewTaskAssignee(user?.id ?? "");
+                  setShowNewTask(true);
+                }}
+                className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                style={{ background: "#38b6e8", color: "#fff" }}
+              >
+                <Plus size={13} /> New Task
+              </button>
               {doneCount > 0 && (
                 <Link
                   href="/archive"
-                  className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
                   style={{ background: "#22c55e15", border: "1px solid #22c55e30", color: "#22c55e" }}
                 >
                   <Archive size={13} /> Archive ({doneCount})
@@ -416,6 +434,105 @@ export default function TasksPage() {
         projectId={selectedTask?.projectId ?? ""}
         onClose={() => setSelectedTask(null)}
       />
+
+      {showNewTask && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowNewTask(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="rounded-xl w-full max-w-md flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Task</h3>
+                <button onClick={() => setShowNewTask(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+              </div>
+
+              <div>
+                <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Project *</p>
+                <select value={newTaskProject} onChange={(e) => setNewTaskProject(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                  <option value="">— Select project —</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+
+              <input
+                autoFocus
+                type="text"
+                placeholder="Task title *"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Assignee</p>
+                  <select value={newTaskAssignee} onChange={(e) => setNewTaskAssignee(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                    <option value="">Unassigned</option>
+                    {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Priority</p>
+                  <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                    {[1,2,3,4,5,6,7,8,9,10].map((p) => <option key={p} value={p}>P{p}</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Due Date</p>
+                  <input type="date" value={newTaskDueDate} onChange={(e) => setNewTaskDueDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  disabled={!newTaskProject || !newTaskTitle.trim() || creating}
+                  onClick={async () => {
+                    if (!newTaskProject || !newTaskTitle.trim()) return;
+                    setCreating(true);
+                    try {
+                      await addTask(newTaskProject, {
+                        projectId: newTaskProject,
+                        title: newTaskTitle.trim(),
+                        description: "",
+                        type: "webdev",
+                        status: "todo",
+                        priority: newTaskPriority,
+                        assigneeId: newTaskAssignee,
+                        dueDate: newTaskDueDate,
+                        tags: [],
+                        recurring: null,
+                      });
+                      setShowNewTask(false);
+                      setNewTaskTitle("");
+                      setNewTaskDueDate("");
+                      setNewTaskPriority(5);
+                    } catch (err) {
+                      const e = err as { message?: string };
+                      alert(`Couldn't save: ${e?.message || "Unknown error"}`);
+                    } finally {
+                      setCreating(false);
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                  style={{ background: "#38b6e8", color: "#fff" }}>
+                  {creating ? "Creating…" : "Create Task"}
+                </button>
+                <button onClick={() => setShowNewTask(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
