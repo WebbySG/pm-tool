@@ -234,7 +234,7 @@ export async function dbAddTask(id: string, projectId: string, data: Partial<Tas
     recurring: data.recurring ?? null,
     recurring_day: data.recurringDay ?? null,
   });
-  if (error) console.error("dbAddTask", error);
+  if (error) { console.error("dbAddTask", error); throw error; }
 }
 
 export async function dbUpdateTask(taskId: string, patch: Row) {

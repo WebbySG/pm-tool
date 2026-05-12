@@ -487,7 +487,7 @@ export const useStore = create<Store>()(
     } else {
       set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: [...p.tasks, newTask] })) }));
     }
-    db.dbAddTask(id, projectId, taskData);
+    await db.dbAddTask(id, projectId, taskData);
     return id;
   },
 
