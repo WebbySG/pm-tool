@@ -2,6 +2,7 @@
 import { Bell, Search, Plus, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 interface TopbarProps {
   title: string;
@@ -11,7 +12,14 @@ interface TopbarProps {
 
 export function Topbar({ title, back, action }: TopbarProps) {
   const { notifications } = useStore();
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const { user } = useAuth();
+  const isAdmin = user?.pmRole === "admin";
+  // Admin bell only counts approval requests; staff see their full stream.
+  const unreadCount = notifications.filter((n) => {
+    if (n.read) return false;
+    if (isAdmin) return n.type === "approval_request";
+    return true;
+  }).length;
 
   return (
     <header

@@ -38,8 +38,14 @@ export default function NotificationsPage() {
   }
   const isAdmin = user?.pmRole === "admin";
   const [approvingId, setApprovingId] = useState<string | null>(null);
-  const unread = notifications.filter((n) => !n.read);
-  const read = notifications.filter((n) => n.read);
+  // Admin tray only shows staff approval requests — everything else is noise
+  // for them. Staff still see their full notification stream (approvals,
+  // revisions, mentions).
+  const visible = isAdmin
+    ? notifications.filter((n) => n.type === "approval_request")
+    : notifications;
+  const unread = visible.filter((n) => !n.read);
+  const read = visible.filter((n) => n.read);
 
   async function handleApprove(notifId: string, projectId: string, taskId: string, taskTitle: string) {
     setApprovingId(notifId);
