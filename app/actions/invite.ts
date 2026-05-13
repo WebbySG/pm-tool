@@ -82,6 +82,39 @@ export async function revokeStaff(data: { staffId: string; userId: string | null
       authUserId = users.find((u) => u.email === data.email)?.id ?? null;
     }
 
+    // Before deleting the auth user, reassign every task/project still
+    // referencing this user to the owner so they don't become invisible.
+    if (authUserId) {
+      const { data: ownerRow } = await admin
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "owner")
+        .limit(1)
+        .maybeSingle();
+      const ownerId = ownerRow?.user_id as string | undefined;
+
+      if (ownerId) {
+        // Reassign tasks
+        await admin
+          .from("pm_tasks")
+          .update({ assignee_id: ownerId })
+          .eq("assignee_id", authUserId);
+
+        // Replace in pm_projects.assigned_staff via RPC-style raw SQL.
+        // assigned_staff is text[]; remove the revoked UUID and add owner if missing.
+        const { data: affectedProjects } = await admin
+          .from("pm_projects")
+          .select("id, assigned_staff")
+          .contains("assigned_staff", [authUserId]);
+
+        for (const p of (affectedProjects ?? []) as { id: string; assigned_staff: string[] }[]) {
+          const next = p.assigned_staff.filter((u) => u !== authUserId);
+          if (!next.includes(ownerId)) next.push(ownerId);
+          await admin.from("pm_projects").update({ assigned_staff: next }).eq("id", p.id);
+        }
+      }
+    }
+
     // Delete from auth.users (revokes access permanently)
     if (authUserId) {
       await admin.auth.admin.deleteUser(authUserId);
