@@ -217,15 +217,6 @@ export default function ProjectDetailPage() {
           await uploadTaskAttachment(project.id, newTaskId, file, uploadedBy);
         }
       }
-      if (!isAdmin) {
-        const staffName = user?.name ?? "A staff member";
-        await addNotification({
-          title: "New Task Created",
-          body: `${staffName} created a new task: "${title}" in ${project.name}.`,
-          type: "task_assigned",
-          projectId: project.id,
-        });
-      }
     } catch (err: unknown) {
       const e = err as { message?: string; details?: string; hint?: string; code?: string };
       const msg = e?.message || e?.details || e?.hint || (typeof err === "string" ? err : JSON.stringify(err));

@@ -365,6 +365,23 @@ function TaskPanel({
   const [commentError, setCommentError] = useState<string | null>(null);
   const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
   const commentFileRef = useRef<HTMLInputElement>(null);
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [pendingMentions, setPendingMentions] = useState<{ id: string; label: string }[]>([]);
+
+  // Compute mention candidates from current state (kept lean — derives from liveStaff)
+  const mentionCandidates = mentionQuery === null
+    ? []
+    : liveStaff
+        .filter((s) => {
+          const id = staffAuthId(s);
+          if (id === user?.id) return false;
+          const q = mentionQuery.toLowerCase();
+          if (!q) return true;
+          return staffName(s).toLowerCase().includes(q) || s.email.toLowerCase().includes(q);
+        })
+        .slice(0, 6);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +393,90 @@ function TaskPanel({
     });
     return () => { cancelled = true; };
   }, [task.id]);
+
+  // Detect "@token" immediately before cursor in textarea. Returns the token
+  // (without @) and the start index of the @, or null if no active mention.
+  function detectMentionToken(text: string, cursor: number): { token: string; start: number } | null {
+    let i = cursor - 1;
+    while (i >= 0) {
+      const ch = text[i];
+      if (ch === "@") {
+        const before = i === 0 ? " " : text[i - 1];
+        if (/\s|^$/.test(before) || i === 0) {
+          return { token: text.slice(i + 1, cursor), start: i };
+        }
+        return null;
+      }
+      if (/\s/.test(ch)) return null;
+      i--;
+    }
+    return null;
+  }
+
+  function handleCommentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const text = e.target.value;
+    setCommentBody(text);
+    const cursor = e.target.selectionStart ?? text.length;
+    const mention = detectMentionToken(text, cursor);
+    if (mention) {
+      setMentionQuery(mention.token);
+      setMentionIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
+  }
+
+  function insertMention(staff: LiveStaff) {
+    const ta = commentTextareaRef.current;
+    if (!ta) return;
+    const text = commentBody;
+    const cursor = ta.selectionStart ?? text.length;
+    const mention = detectMentionToken(text, cursor);
+    if (!mention) return;
+    const label = staffName(staff).split(" ")[0] || staffName(staff);
+    const before = text.slice(0, mention.start);
+    const after = text.slice(cursor);
+    const insertion = `@${label} `;
+    const next = before + insertion + after;
+    setCommentBody(next);
+    const id = staffAuthId(staff);
+    setPendingMentions((prev) => prev.some((m) => m.id === id) ? prev : [...prev, { id, label }]);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = before.length + insertion.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
+  function handleCommentKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionQuery !== null && mentionCandidates.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        insertMention(mentionCandidates[mentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handlePostComment();
+    }
+  }
 
   async function handlePostComment() {
     const body = commentBody.trim();
@@ -395,31 +496,28 @@ function TaskPanel({
         attachmentSize = commentFile.size;
         attachmentType = uploaded.type;
       }
+      // Keep only mentions whose label is still present in the body
+      const activeMentions = pendingMentions.filter((m) => body.includes(`@${m.label}`));
+
       const inserted = await dbAddTaskComment({
         taskId: task.id, authorId: user.id, body,
         attachmentUrl, attachmentName, attachmentSize, attachmentType,
+        mentionedUserIds: activeMentions.map((m) => m.id),
       });
       if (!inserted) { setCommentError("Failed to post comment."); return; }
       setComments((prev) => [...prev, inserted]);
       setCommentBody("");
       setCommentFile(null);
+      setPendingMentions([]);
       if (commentFileRef.current) commentFileRef.current.value = "";
 
+      // Only @-mentions trigger notifications — no generic "X commented" spam.
+      // Staff who want someone to see their comment should @-mention them.
       const authorName = user.name ?? "Someone";
-      const isAuthorAssignee = task.assigneeId === user.id;
-      await addNotification({
-        title: isAdmin
-          ? `Admin commented on "${task.title}"`
-          : `${authorName} commented on "${task.title}"`,
-        body: body || (attachmentName ? `Attached: ${attachmentName}` : ""),
-        type: "mention",
-        projectId,
-        taskId: task.id,
-      });
-      // also DM-style notif to assignee if author is admin and assignee is someone else
-      if (isAdmin && task.assigneeId && !isAuthorAssignee) {
+      for (const m of activeMentions) {
+        if (m.id === user.id) continue;
         await addNotification({
-          title: `New comment on your task "${task.title}"`,
+          title: `${authorName} mentioned you in "${task.title}"`,
           body: body || (attachmentName ? `Attached: ${attachmentName}` : ""),
           type: "mention",
           projectId,
@@ -916,7 +1014,13 @@ function TaskPanel({
                         </p>
                       </div>
                       {c.body && (
-                        <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>{c.body}</p>
+                        <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
+                          {c.body.split(/(@[A-Za-z][A-Za-z0-9_-]*)/g).map((part, i) =>
+                            part.startsWith("@")
+                              ? <span key={i} style={{ color: "#38b6e8", fontWeight: 600 }}>{part}</span>
+                              : <span key={i}>{part}</span>
+                          )}
+                        </p>
                       )}
                       {c.attachmentUrl && (
                         <div className="mt-1.5 flex items-center gap-2 px-2 py-1.5 rounded-lg"
@@ -954,22 +1058,42 @@ function TaskPanel({
           )}
 
           {/* Composer */}
-          <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg"
+          <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg relative"
             style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
             <textarea
+              ref={commentTextareaRef}
               value={commentBody}
-              onChange={(e) => setCommentBody(e.target.value)}
-              placeholder="Leave a comment or ask a question..."
+              onChange={handleCommentChange}
+              onKeyDown={handleCommentKeyDown}
+              onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
+              placeholder="Leave a comment, ask a question, or @mention someone..."
               rows={2}
               className="bg-transparent text-sm outline-none resize-none"
               style={{ color: "#cce4ff" }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  handlePostComment();
-                }
-              }}
             />
+            {mentionQuery !== null && mentionCandidates.length > 0 && (
+              <div className="absolute left-2 bottom-full mb-1 rounded-lg overflow-hidden z-10 min-w-[200px]"
+                style={{ background: "#0a1626", border: "1px solid #1c3248", boxShadow: "0 8px 24px #00000080" }}>
+                {mentionCandidates.map((s, i) => {
+                  const active = i === mentionIndex;
+                  return (
+                    <button key={staffAuthId(s)} type="button"
+                      onMouseDown={(e) => { e.preventDefault(); insertMention(s); }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+                      style={{ background: active ? "#1c3248" : "transparent", color: "#cce4ff" }}>
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                        style={{ background: "#38b6e8", color: "#fff" }}>
+                        {staffInitials(s).charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate">{staffName(s)}</p>
+                        <p className="text-xs truncate" style={{ color: "#4a7090" }}>{s.email}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {commentFile && (
               <div className="flex items-center gap-2 px-2 py-1 rounded text-xs"
                 style={{ background: "#0a1626", color: "#cce4ff" }}>

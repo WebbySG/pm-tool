@@ -273,6 +273,7 @@ export type TaskComment = {
   attachmentName: string | null;
   attachmentSize: number | null;
   attachmentType: string | null;
+  mentionedUserIds: string[];
   createdAt: string;
 };
 
@@ -286,6 +287,7 @@ function rowToTaskComment(row: Row): TaskComment {
     attachmentName: (row.attachment_name as string | null) ?? null,
     attachmentSize: (row.attachment_size as number | null) ?? null,
     attachmentType: (row.attachment_type as string | null) ?? null,
+    mentionedUserIds: (row.mentioned_user_ids as string[] | null) ?? [],
     createdAt: row.created_at as string,
   };
 }
@@ -308,6 +310,7 @@ export async function dbAddTaskComment(input: {
   attachmentName?: string | null;
   attachmentSize?: number | null;
   attachmentType?: string | null;
+  mentionedUserIds?: string[];
 }): Promise<TaskComment | null> {
   const { data, error } = await supabase
     .from("pm_task_comments")
@@ -319,6 +322,7 @@ export async function dbAddTaskComment(input: {
       attachment_name: input.attachmentName ?? null,
       attachment_size: input.attachmentSize ?? null,
       attachment_type: input.attachmentType ?? null,
+      mentioned_user_ids: input.mentionedUserIds ?? [],
     })
     .select("*")
     .single();
