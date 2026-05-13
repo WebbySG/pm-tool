@@ -3,6 +3,7 @@ import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { Bot, AlertTriangle, CheckSquare, UserPlus, RefreshCw, CheckCheck, ClipboardCheck, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 const typeConfig: Record<string, { icon: typeof Bot; color: string; bg: string; label: string }> = {
@@ -24,7 +25,17 @@ function timeAgo(date: string) {
 
 export default function NotificationsPage() {
   const { notifications, markNotificationRead, markAllRead, approveTaskCompletion } = useStore();
+  const router = useRouter();
   const { user } = useAuth();
+
+  function openNotification(n: typeof notifications[number]) {
+    if (n.projectId && n.taskId) {
+      router.push(`/projects/${n.projectId}?task=${n.taskId}`);
+    } else if (n.projectId) {
+      router.push(`/projects/${n.projectId}`);
+    }
+    if (!n.read && n.type !== "approval_request") markNotificationRead(n.id);
+  }
   const isAdmin = user?.pmRole === "admin";
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const unread = notifications.filter((n) => !n.read);
@@ -63,12 +74,12 @@ export default function NotificationsPage() {
                 return (
                   <div
                     key={n.id}
-                    onClick={() => n.type !== "approval_request" && markNotificationRead(n.id)}
+                    onClick={() => openNotification(n)}
                     className="flex items-start gap-4 px-5 py-4 transition-opacity"
                     style={{
                       background: "#0f1d2e",
                       borderBottom: i < unread.length - 1 ? "1px solid #1c3248" : "none",
-                      cursor: n.type !== "approval_request" ? "pointer" : "default",
+                      cursor: n.projectId ? "pointer" : "default",
                     }}
                   >
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: config.bg }}>
@@ -123,8 +134,13 @@ export default function NotificationsPage() {
                 return (
                   <div
                     key={n.id}
+                    onClick={() => openNotification(n)}
                     className="flex items-start gap-4 px-5 py-4"
-                    style={{ background: "#0f1d2e80", borderBottom: i < read.length - 1 ? "1px solid #1c3248" : "none" }}
+                    style={{
+                      background: "#0f1d2e80",
+                      borderBottom: i < read.length - 1 ? "1px solid #1c3248" : "none",
+                      cursor: n.type !== "approval_request" && (n.projectId || n.taskId) ? "pointer" : "default",
+                    }}
                   >
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 opacity-50" style={{ background: config.bg }}>
                       <Icon size={16} style={{ color: config.color }} />

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { notFound } from "next/navigation";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { type Task, type TaskType, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -57,6 +57,8 @@ type NewTaskForm = {
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const taskQueryId = searchParams.get("task");
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const { projects, templates, articles, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
@@ -166,6 +168,13 @@ export default function ProjectDetailPage() {
   }
 
   const projectRaw = projects.find((p) => p.id === params.id);
+
+  useEffect(() => {
+    if (!taskQueryId || !projectRaw) return;
+    const t = projectRaw.tasks.find((x) => x.id === taskQueryId);
+    if (t) setSelectedTask(t);
+  }, [taskQueryId, projectRaw?.id, projectRaw?.tasks.length]);
+
   if (!projectRaw) return notFound();
   const project = projectRaw;
 

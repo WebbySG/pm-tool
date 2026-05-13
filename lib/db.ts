@@ -262,6 +262,75 @@ export async function dbDeleteAttachment(attachmentId: string) {
   await supabase.from("pm_task_attachments").delete().eq("id", attachmentId);
 }
 
+// ─── Task Comments ────────────────────────────────────────────────────────────
+
+export type TaskComment = {
+  id: string;
+  taskId: string;
+  authorId: string;
+  body: string;
+  attachmentUrl: string | null;
+  attachmentName: string | null;
+  attachmentSize: number | null;
+  attachmentType: string | null;
+  createdAt: string;
+};
+
+function rowToTaskComment(row: Row): TaskComment {
+  return {
+    id: row.id as string,
+    taskId: row.task_id as string,
+    authorId: row.author_id as string,
+    body: (row.body as string) ?? "",
+    attachmentUrl: (row.attachment_url as string | null) ?? null,
+    attachmentName: (row.attachment_name as string | null) ?? null,
+    attachmentSize: (row.attachment_size as number | null) ?? null,
+    attachmentType: (row.attachment_type as string | null) ?? null,
+    createdAt: row.created_at as string,
+  };
+}
+
+export async function dbListTaskComments(taskId: string): Promise<TaskComment[]> {
+  const { data, error } = await supabase
+    .from("pm_task_comments")
+    .select("*")
+    .eq("task_id", taskId)
+    .order("created_at", { ascending: true });
+  if (error) { console.error("dbListTaskComments", error); return []; }
+  return (data ?? []).map((r) => rowToTaskComment(r as Row));
+}
+
+export async function dbAddTaskComment(input: {
+  taskId: string;
+  authorId: string;
+  body: string;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  attachmentType?: string | null;
+}): Promise<TaskComment | null> {
+  const { data, error } = await supabase
+    .from("pm_task_comments")
+    .insert({
+      task_id: input.taskId,
+      author_id: input.authorId,
+      body: input.body,
+      attachment_url: input.attachmentUrl ?? null,
+      attachment_name: input.attachmentName ?? null,
+      attachment_size: input.attachmentSize ?? null,
+      attachment_type: input.attachmentType ?? null,
+    })
+    .select("*")
+    .single();
+  if (error) { console.error("dbAddTaskComment", error); return null; }
+  return rowToTaskComment(data as Row);
+}
+
+export async function dbDeleteTaskComment(commentId: string) {
+  const { error } = await supabase.from("pm_task_comments").delete().eq("id", commentId);
+  if (error) console.error("dbDeleteTaskComment", error);
+}
+
 // ─── Channels ────────────────────────────────────────────────────────────────
 
 export async function dbAddChannel(id: string, name: string, color: string, order: number) {

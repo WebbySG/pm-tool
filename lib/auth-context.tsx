@@ -76,11 +76,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // setTimeout(0) defers the DB work to run after the lock is released.
         const mySeq = ++seqRef.current;
         if (session?.user) {
+          const { id, email } = session.user;
+          // TOKEN_REFRESHED / USER_UPDATED fire on every tab refocus. If the
+          // user is already loaded and the auth id hasn't changed, do nothing —
+          // re-running buildPmUser tears down the page (AppLoader flash and
+          // remount) and loses scroll/modal state on every refocus.
+          if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+            // Same authenticated identity — skip the rebuild entirely.
+            // The session/JWT is updated inside supabase-js automatically.
+            return;
+          }
           // Set loading=true NOW (synchronous, no lock issue) so the app layout
           // doesn't see the transient !loading && !user state and redirect to
           // /login while buildPmUser is still awaiting its DB queries.
           setLoading(true);
-          const { id, email } = session.user;
           setTimeout(async () => {
             const pmUser = await buildPmUser(id, email ?? "");
             if (mySeq === seqRef.current) {

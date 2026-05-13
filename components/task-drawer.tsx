@@ -3,12 +3,13 @@ import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
-  Bold, Italic, List, Heading,
+  Bold, Italic, List, Heading, MessageSquare, Send,
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
+import { supabase, uploadAttachment } from "@/lib/supabase";
+import { dbListTaskComments, dbAddTaskComment, dbDeleteTaskComment, type TaskComment } from "@/lib/db";
 
 interface LiveStaff {
   id: string;
@@ -58,13 +59,19 @@ function sanitizeHtml(html: string): string {
 // Detect whether stored description is HTML or legacy plain text. Legacy plain-text
 // descriptions (pre-rich-text) should still render with line breaks preserved.
 function isHtml(s: string): boolean {
-  return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span)\b/i.test(s);
+  return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span|img)\b/i.test(s);
 }
 
 // WYSIWYG editor using contentEditable + document.execCommand. Real bolding,
 // not markdown wrapping. Stores HTML; sanitised on save and on display.
-function RichEditor({ initialHtml, onSave }: { initialHtml: string; onSave: (html: string) => void }) {
+function RichEditor({ initialHtml, onSave, onUploadFile }: {
+  initialHtml: string;
+  onSave: (html: string) => void;
+  onUploadFile?: (file: File) => Promise<{ url: string; name: string; type: "image" | "video" | "document" | "link" } | null>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
   useEffect(() => {
     if (ref.current) {
       ref.current.innerHTML = isHtml(initialHtml)
@@ -84,6 +91,56 @@ function RichEditor({ initialHtml, onSave }: { initialHtml: string; onSave: (htm
   function exec(cmd: string, value?: string) {
     ref.current?.focus();
     document.execCommand(cmd, false, value);
+  }
+
+  function insertNodeAtCursor(node: Node) {
+    ref.current?.focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) {
+      ref.current?.appendChild(node);
+    } else {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.setEndAfter(node);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+
+  async function handleEditorFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !onUploadFile) return;
+    setUploadingFile(true);
+    try {
+      const uploaded = await onUploadFile(file);
+      if (!uploaded) return;
+      if (uploaded.type === "image") {
+        const img = document.createElement("img");
+        img.src = uploaded.url;
+        img.alt = uploaded.name;
+        img.style.maxWidth = "100%";
+        img.style.borderRadius = "8px";
+        img.style.margin = "6px 0";
+        insertNodeAtCursor(img);
+      } else {
+        const link = document.createElement("a");
+        link.href = uploaded.url;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = `📎 ${uploaded.name}`;
+        insertNodeAtCursor(link);
+        insertNodeAtCursor(document.createElement("br"));
+      }
+      if (ref.current) {
+        const html = sanitizeHtml(ref.current.innerHTML);
+        onSave(html === "<br>" ? "" : html);
+      }
+    } finally {
+      setUploadingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   function handleBlur() {
@@ -112,6 +169,23 @@ function RichEditor({ initialHtml, onSave }: { initialHtml: string; onSave: (htm
         {btn(Italic, "italic", "Italic")}
         {btn(Heading, "formatBlock", "Heading", "<h3>")}
         {btn(List, "insertUnorderedList", "Bulleted list")}
+        {onUploadFile && (
+          <>
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
+              disabled={uploadingFile}
+              className="p-1.5 rounded hover:opacity-80 transition-opacity flex items-center gap-1"
+              style={{ color: "#9dd8f5" }}
+              title="Insert image or file"
+            >
+              {uploadingFile ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
+            </button>
+            <input ref={fileInputRef} type="file" className="hidden"
+              accept="image/*,video/*,.pdf,.doc,.docx"
+              onChange={handleEditorFile} />
+          </>
+        )}
         <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>Saves on click-away</span>
       </div>
       <div
@@ -256,7 +330,7 @@ function TaskPanel({
     updateTaskStatus, updateTaskPriority, updateTaskAssignee, updateTaskDescription,
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
-    requestTaskApproval, approveTaskCompletion, rejectTask,
+    requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
   } = useStore();
   const { user } = useAuth();
 
@@ -281,6 +355,90 @@ function TaskPanel({
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [confirmDeleteAttachmentId, setConfirmDeleteAttachmentId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── Comments ─────────────────────────────────────────────────────────────
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentBody, setCommentBody] = useState("");
+  const [commentFile, setCommentFile] = useState<File | null>(null);
+  const [postingComment, setPostingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
+  const commentFileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCommentsLoading(true);
+    dbListTaskComments(task.id).then((rows) => {
+      if (!cancelled) setComments(rows);
+    }).finally(() => {
+      if (!cancelled) setCommentsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [task.id]);
+
+  async function handlePostComment() {
+    const body = commentBody.trim();
+    if (!body && !commentFile) return;
+    if (!user?.id) { setCommentError("You must be signed in to comment."); return; }
+    setPostingComment(true);
+    setCommentError(null);
+    try {
+      let attachmentUrl: string | null = null;
+      let attachmentName: string | null = null;
+      let attachmentSize: number | null = null;
+      let attachmentType: string | null = null;
+      if (commentFile) {
+        const uploaded = await uploadAttachment(commentFile, task.id);
+        attachmentUrl = uploaded.url;
+        attachmentName = uploaded.name;
+        attachmentSize = commentFile.size;
+        attachmentType = uploaded.type;
+      }
+      const inserted = await dbAddTaskComment({
+        taskId: task.id, authorId: user.id, body,
+        attachmentUrl, attachmentName, attachmentSize, attachmentType,
+      });
+      if (!inserted) { setCommentError("Failed to post comment."); return; }
+      setComments((prev) => [...prev, inserted]);
+      setCommentBody("");
+      setCommentFile(null);
+      if (commentFileRef.current) commentFileRef.current.value = "";
+
+      const authorName = user.name ?? "Someone";
+      const isAuthorAssignee = task.assigneeId === user.id;
+      await addNotification({
+        title: isAdmin
+          ? `Admin commented on "${task.title}"`
+          : `${authorName} commented on "${task.title}"`,
+        body: body || (attachmentName ? `Attached: ${attachmentName}` : ""),
+        type: "mention",
+        projectId,
+        taskId: task.id,
+      });
+      // also DM-style notif to assignee if author is admin and assignee is someone else
+      if (isAdmin && task.assigneeId && !isAuthorAssignee) {
+        await addNotification({
+          title: `New comment on your task "${task.title}"`,
+          body: body || (attachmentName ? `Attached: ${attachmentName}` : ""),
+          type: "mention",
+          projectId,
+          taskId: task.id,
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCommentError(msg || "Failed to post comment.");
+    } finally {
+      setPostingComment(false);
+    }
+  }
+
+  async function handleDeleteComment(id: string) {
+    await dbDeleteTaskComment(id);
+    setComments((prev) => prev.filter((c) => c.id !== id));
+    setConfirmDeleteCommentId(null);
+  }
 
   function handleSaveTitle() {
     const t = titleDraft.trim();
@@ -559,6 +717,14 @@ function TaskPanel({
                 if (html !== task.description) updateTaskDescription(projectId, task.id, html);
                 setDescEditing(false);
               }}
+              onUploadFile={async (file) => {
+                try {
+                  return await uploadAttachment(file, task.id);
+                } catch (err) {
+                  console.error("description upload failed", err);
+                  return null;
+                }
+              }}
             />
           ) : (
             <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-20"
@@ -686,7 +852,9 @@ function TaskPanel({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm truncate" style={{ color: "#cce4ff" }}>{att.name}</p>
                       <p className="text-xs" style={{ color: "#4a7090" }}>
-                        {att.size}{isImage ? " · click to preview" : ""}
+                        {att.size}
+                        {att.uploadedAt && ` · ${new Date(att.uploadedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`}
+                        {isImage ? " · click to preview" : ""}
                       </p>
                     </div>
                     <a href={att.url} target="_blank" rel="noreferrer"
@@ -713,6 +881,130 @@ function TaskPanel({
             </div>
           </div>
         )}
+
+        {/* Comments */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <MessageSquare size={13} style={{ color: "#4a7090" }} />
+            <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>
+              COMMENTS{comments.length > 0 ? ` · ${comments.length}` : ""}
+            </p>
+          </div>
+
+          {commentsLoading && comments.length === 0 && (
+            <p className="text-xs px-1" style={{ color: "#4a7090" }}>Loading comments...</p>
+          )}
+
+          {comments.length > 0 && (
+            <div className="flex flex-col gap-2 mb-3">
+              {comments.map((c) => {
+                const author = liveStaff.find((s) => staffAuthId(s) === c.authorId);
+                const initials = author ? staffInitials(author).charAt(0) : "?";
+                const name = author ? staffName(author) : "Unknown";
+                const canDelete = c.authorId === user?.id || isAdmin;
+                const isImage = c.attachmentType === "image";
+                return (
+                  <div key={c.id} className="flex gap-2.5 px-3 py-2.5 rounded-lg group"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                      style={{ background: "#38b6e8", color: "#fff" }}>{initials}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-xs font-semibold" style={{ color: "#cce4ff" }}>{name}</p>
+                        <p className="text-xs" style={{ color: "#8b90a750" }}>
+                          {new Date(c.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                      {c.body && (
+                        <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>{c.body}</p>
+                      )}
+                      {c.attachmentUrl && (
+                        <div className="mt-1.5 flex items-center gap-2 px-2 py-1.5 rounded-lg"
+                          style={{ background: "#0a1626", border: "1px solid #1c3248" }}>
+                          {isImage ? (
+                            <button onClick={() => setImagePreviewUrl(c.attachmentUrl)} className="shrink-0">
+                              <img src={c.attachmentUrl} alt={c.attachmentName ?? ""} className="w-10 h-10 rounded object-cover" />
+                            </button>
+                          ) : (
+                            <FileText size={13} style={{ color: "#38b6e8" }} />
+                          )}
+                          <p className="text-xs flex-1 truncate" style={{ color: "#cce4ff" }}>{c.attachmentName}</p>
+                          <a href={c.attachmentUrl} target="_blank" rel="noreferrer"
+                            className="p-1 rounded hover:opacity-70" style={{ color: "#4a7090" }} title="Open">
+                            <ExternalLink size={11} />
+                          </a>
+                          <a href={c.attachmentUrl} download={c.attachmentName ?? "file"}
+                            className="p-1 rounded hover:opacity-70" style={{ color: "#38b6e8" }} title="Download">
+                            <Download size={11} />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                    {canDelete && (
+                      <button onClick={() => setConfirmDeleteCommentId(c.id)}
+                        className="p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity self-start"
+                        style={{ color: "#ef4444" }} title="Delete comment">
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Composer */}
+          <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg"
+            style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+            <textarea
+              value={commentBody}
+              onChange={(e) => setCommentBody(e.target.value)}
+              placeholder="Leave a comment or ask a question..."
+              rows={2}
+              className="bg-transparent text-sm outline-none resize-none"
+              style={{ color: "#cce4ff" }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  handlePostComment();
+                }
+              }}
+            />
+            {commentFile && (
+              <div className="flex items-center gap-2 px-2 py-1 rounded text-xs"
+                style={{ background: "#0a1626", color: "#cce4ff" }}>
+                <Paperclip size={11} style={{ color: "#38b6e8" }} />
+                <span className="flex-1 truncate">{commentFile.name}</span>
+                <button onClick={() => { setCommentFile(null); if (commentFileRef.current) commentFileRef.current.value = ""; }}
+                  style={{ color: "#ef4444" }}><X size={11} /></button>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer hover:opacity-80"
+                style={{ color: "#4a7090" }}>
+                <Paperclip size={12} />
+                Attach file
+                <input ref={commentFileRef} type="file" className="hidden"
+                  accept="image/*,video/*,.pdf,.doc,.docx"
+                  onChange={(e) => setCommentFile(e.target.files?.[0] ?? null)} />
+              </label>
+              <div className="flex-1" />
+              <button onClick={handlePostComment}
+                disabled={postingComment || (!commentBody.trim() && !commentFile)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{
+                  background: "#38b6e8", color: "#fff",
+                  opacity: postingComment || (!commentBody.trim() && !commentFile) ? 0.5 : 1,
+                }}>
+                {postingComment ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                Post
+              </button>
+            </div>
+          </div>
+          {commentError && (
+            <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {commentError}</p>
+          )}
+        </div>
 
         {/* Upload */}
         <div>
@@ -751,6 +1043,32 @@ function TaskPanel({
               style={{ background: "#00000080", color: "#fff" }}>
               <X size={16} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete comment confirmation */}
+      {confirmDeleteCommentId && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" style={{ background: "#000000b0" }}>
+          <div className="rounded-2xl p-6 flex flex-col gap-4 w-72"
+            style={{ background: "#0f1d2e", border: "1px solid #1c3248", boxShadow: "0 16px 48px #00000060" }}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#ef444420" }}>
+                <Trash2 size={18} style={{ color: "#ef4444" }} />
+              </div>
+              <div>
+                <p className="font-semibold text-sm" style={{ color: "#cce4ff" }}>Delete comment?</p>
+                <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>This cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDeleteCommentId(null)}
+                className="flex-1 py-2 rounded-lg text-sm font-medium"
+                style={{ background: "#1c3248", color: "#cce4ff" }}>Cancel</button>
+              <button onClick={() => handleDeleteComment(confirmDeleteCommentId)}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: "#ef4444", color: "#fff" }}>Delete</button>
+            </div>
           </div>
         </div>
       )}
