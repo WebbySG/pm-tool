@@ -117,11 +117,28 @@ export async function revokeStaff(data: { staffId: string; userId: string | null
 
     // Delete from auth.users (revokes access permanently)
     if (authUserId) {
-      await admin.auth.admin.deleteUser(authUserId);
+      const { error: authDelErr } = await admin.auth.admin.deleteUser(authUserId);
+      // "User not found" is fine — they may already be gone from auth. Anything
+      // else is a real error worth surfacing instead of silently moving on.
+      if (authDelErr && !/not found/i.test(authDelErr.message)) {
+        return { success: false, error: `Auth delete failed: ${authDelErr.message}` };
+      }
     }
 
-    // Delete from staff_members
-    await admin.from("staff_members").delete().eq("id", data.staffId);
+    // Delete from staff_members — check error explicitly. supabase-js does NOT
+    // throw on PostgREST errors; it returns { error }. Without this check, a
+    // failed delete (RLS, missing service_role, etc.) silently reports success
+    // and the row stays in the table forever.
+    const { error: staffDelErr, count } = await admin
+      .from("staff_members")
+      .delete({ count: "exact" })
+      .eq("id", data.staffId);
+    if (staffDelErr) {
+      return { success: false, error: `Staff delete failed: ${staffDelErr.message}` };
+    }
+    if (count === 0) {
+      return { success: false, error: "Staff record not found or could not be deleted (check RLS / service role)." };
+    }
 
     return { success: true };
   } catch (err: unknown) {

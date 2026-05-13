@@ -140,12 +140,14 @@ function TeamContent() {
     if (!confirm(`Remove ${label} from the team? This will revoke their access immediately.`)) return;
     const result = await revokeStaff({ staffId: s.id, userId: s.user_id, email: s.email });
     if (result.success) {
-      setStaff((prev) => prev.filter((m) => m.id !== s.id));
+      // Re-fetch from DB instead of trusting a local filter — verifies the row
+      // actually went away rather than just hiding it client-side.
+      await loadStaff();
       setToast(`${label} has been removed.`);
       setTimeout(() => setToast(""), 3000);
     } else {
       setToast(`Error: ${result.error}`);
-      setTimeout(() => setToast(""), 4000);
+      setTimeout(() => setToast(""), 6000);
     }
   }
 
