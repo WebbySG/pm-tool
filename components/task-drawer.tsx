@@ -331,6 +331,7 @@ function TaskPanel({
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
+    moveTaskToProject, projects,
   } = useStore();
   const { user } = useAuth();
 
@@ -347,6 +348,9 @@ function TaskPanel({
   const [showPriorityMenu, setShowPriorityMenu] = useState(false);
   const [localPrio, setLocalPrio] = useState<number | null>(null);
   const [showAssigneeMenu, setShowAssigneeMenu] = useState(false);
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
   const [descEditing, setDescEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -803,6 +807,64 @@ function TaskPanel({
             </select>
           </div>
         </div>
+
+        {/* Move to another project (admin, top-level task only) */}
+        {isAdmin && !task.parentId && (
+          <div className="relative">
+            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Project</p>
+            <button
+              onClick={() => { setShowMoveMenu(!showMoveMenu); setShowStatusMenu(false); setShowPriorityMenu(false); setShowAssigneeMenu(false); }}
+              disabled={moving}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm"
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff", opacity: moving ? 0.6 : 1 }}
+            >
+              <span className="truncate flex-1 text-left">
+                {projects.find((p) => p.id === projectId)?.name ?? "Unknown project"}
+              </span>
+              <span className="text-xs shrink-0" style={{ color: "#4a7090" }}>Move task</span>
+              {moving
+                ? <Loader2 size={13} className="animate-spin shrink-0" style={{ color: "#4a7090" }} />
+                : <ChevronDown size={13} className="shrink-0" style={{ color: "#4a7090" }} />}
+            </button>
+            {showMoveMenu && (
+              <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg max-h-72 overflow-y-auto"
+                style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+                {projects.filter((p) => p.id !== projectId).length === 0 && (
+                  <p className="px-3 py-2.5 text-xs" style={{ color: "#4a7090" }}>No other projects available.</p>
+                )}
+                {projects.filter((p) => p.id !== projectId).map((p) => (
+                  <button key={p.id}
+                    className="w-full px-3 py-2.5 text-sm text-left hover:opacity-80"
+                    style={{ color: "#cce4ff" }}
+                    onClick={async () => {
+                      setShowMoveMenu(false);
+                      setMoveError(null);
+                      setMoving(true);
+                      try {
+                        await moveTaskToProject(projectId, task.id, p.id);
+                        onClose();
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        setMoveError(msg || "Failed to move task.");
+                      } finally {
+                        setMoving(false);
+                      }
+                    }}>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {moveError && (
+              <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {moveError}</p>
+            )}
+            {task.subtasks.length > 0 && (
+              <p className="text-xs mt-1.5 px-1" style={{ color: "#4a7090" }}>
+                Subtasks ({task.subtasks.length}) will move with this task.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Description */}
         <div>

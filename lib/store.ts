@@ -18,7 +18,7 @@ import {
   type Article, type ArticleStatus,
 } from "./mock-data";
 import * as db from "./db";
-import { uploadAttachment } from "./supabase";
+import { uploadAttachment, supabase } from "./supabase";
 
 interface Store {
   projects: Project[];
@@ -76,6 +76,7 @@ interface Store {
   updateSubtask: (projectId: string, taskId: string, subtaskId: string, data: Partial<Task>) => Promise<void>;
   updateSubtaskStatus: (projectId: string, taskId: string, subtaskId: string, status: TaskStatus) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
+  moveTaskToProject: (fromProjectId: string, taskId: string, toProjectId: string) => Promise<void>;
   uploadTaskAttachment: (projectId: string, taskId: string, file: File, uploadedBy: string) => Promise<void>;
   deleteAttachment: (projectId: string, taskId: string, attachmentId: string) => Promise<void>;
 
@@ -558,6 +559,48 @@ export const useStore = create<Store>()(
   deleteTask: async (projectId, taskId) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: removeTaskFromTree(p.tasks, taskId) })) }));
     await db.dbDeleteTask(taskId);
+  },
+
+  moveTaskToProject: async (fromProjectId, taskId, toProjectId) => {
+    if (fromProjectId === toProjectId) return;
+    const fromProject = get().projects.find((p) => p.id === fromProjectId);
+    if (!fromProject) return;
+    const task = findTaskInTree(fromProject.tasks, taskId);
+    if (!task) return;
+    // Only top-level tasks may be moved (subtasks travel with their parent)
+    if (task.parentId) return;
+
+    function collectIds(t: Task): string[] {
+      return [t.id, ...t.subtasks.flatMap(collectIds)];
+    }
+    function rewriteProjectId(t: Task, pid: string): Task {
+      return { ...t, projectId: pid, subtasks: t.subtasks.map((s) => rewriteProjectId(s, pid)) };
+    }
+    const allIds = collectIds(task);
+    const moved = rewriteProjectId(task, toProjectId);
+
+    // Optimistic move in local state
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id === fromProjectId) return { ...p, tasks: removeTaskFromTree(p.tasks, taskId) };
+        if (p.id === toProjectId) return { ...p, tasks: [...p.tasks, moved] };
+        return p;
+      }),
+    }));
+
+    try {
+      await supabase.from("pm_tasks").update({ project_id: toProjectId }).in("id", allIds);
+    } catch (err) {
+      // Roll back on failure
+      set((s) => ({
+        projects: s.projects.map((p) => {
+          if (p.id === toProjectId) return { ...p, tasks: removeTaskFromTree(p.tasks, taskId) };
+          if (p.id === fromProjectId) return { ...p, tasks: [...p.tasks, task] };
+          return p;
+        }),
+      }));
+      throw err;
+    }
   },
 
   uploadTaskAttachment: async (projectId, taskId, file, uploadedBy) => {
