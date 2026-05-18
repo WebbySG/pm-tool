@@ -168,6 +168,7 @@ export default function TasksPage() {
   const [filterMember, setFilterMember] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "revision_required">("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
   const allTasks: TaskWithProject[] = projects.flatMap((p) =>
@@ -182,6 +183,7 @@ export default function TasksPage() {
   const filtered = activeTasks.filter((t) => {
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
+    if (filterStatus !== "all" && t.status !== filterStatus) return false;
     if (filterPriority !== "all") {
       const p = typeof t.priority === "number" ? t.priority : 5;
       const fp = Number(filterPriority);
@@ -192,6 +194,13 @@ export default function TasksPage() {
     }
     return true;
   });
+
+  const statusCounts = {
+    todo: activeTasks.filter((t) => t.status === "todo").length,
+    in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
+    pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
+    revision_required: activeTasks.filter((t) => t.status === "revision_required").length,
+  };
 
   const now = new Date();
   const todayStr = now.toDateString();
@@ -289,6 +298,18 @@ export default function TasksPage() {
                 <option value="3">P3-4 (High)</option>
                 <option value="5">P5-6 (Medium)</option>
                 <option value="7">P7-10 (Low)</option>
+              </select>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}
+              >
+                <option value="all">All Statuses</option>
+                <option value="todo">To Do ({statusCounts.todo})</option>
+                <option value="in_progress">In Progress ({statusCounts.in_progress})</option>
+                <option value="pending_review">Pending Review ({statusCounts.pending_review})</option>
+                <option value="revision_required">Revision Required ({statusCounts.revision_required})</option>
               </select>
               <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
 
