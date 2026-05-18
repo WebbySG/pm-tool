@@ -155,7 +155,7 @@ export default function TasksPage() {
   const [creating, setCreating] = useState(false);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const [activeTab, setActiveTab] = useState<"tasks" | "content">("tasks");
+  const [activeTab, setActiveTab] = useState<"tasks" | "content" | "review" | "revision">("tasks");
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -265,6 +265,32 @@ export default function TasksPage() {
             Project Tasks
           </button>
           <button
+            onClick={() => setActiveTab("review")}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "review" ? "#1c3248" : "transparent",
+              color: activeTab === "review" ? "#a855f7" : "#4a7090",
+            }}
+          >
+            Review
+            {statusCounts.pending_review > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#a855f720", color: "#a855f7" }}>{statusCounts.pending_review}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("revision")}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "revision" ? "#1c3248" : "transparent",
+              color: activeTab === "revision" ? "#f59e0b" : "#4a7090",
+            }}
+          >
+            Revision
+            {statusCounts.revision_required > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{statusCounts.revision_required}</span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab("content")}
             className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
             style={{
@@ -354,6 +380,57 @@ export default function TasksPage() {
             )}
           </>
         )}
+
+        {/* REVIEW TAB — tasks awaiting approval */}
+        {(activeTab === "review" || activeTab === "revision") && (() => {
+          const statusFilter = activeTab === "review" ? "pending_review" : "revision_required";
+          const accent = activeTab === "review" ? "#a855f7" : "#f59e0b";
+          const title = activeTab === "review" ? "Pending Review" : "Revision Required";
+          const empty = activeTab === "review"
+            ? "Nothing pending review right now."
+            : "No tasks need revision right now.";
+          const matched = activeTasks
+            .filter((t) => t.status === statusFilter)
+            .filter((t) => filterMember === "all" || t.assigneeId === filterMember)
+            .filter((t) => filterType === "all" || t.type === filterType);
+
+          const matchedNow = new Date();
+          const matchedToday = matchedNow.toDateString();
+          const matchedGroups = {
+            overdue:  matched.filter((t) => t.dueDate && new Date(t.dueDate) < matchedNow && new Date(t.dueDate).toDateString() !== matchedToday),
+            today:    matched.filter((t) => t.dueDate && new Date(t.dueDate).toDateString() === matchedToday),
+            upcoming: matched.filter((t) => t.dueDate && new Date(t.dueDate) > matchedNow),
+            noDate:   matched.filter((t) => !t.dueDate),
+          };
+
+          return (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                  <option value="all">All Members</option>
+                  {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
+                </select>
+                <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                  <option value="all">All Types</option>
+                  <option value="webdev">Web Dev</option>
+                  <option value="seo">SEO</option>
+                </select>
+                <span className="text-sm" style={{ color: "#4a7090" }}>{matched.length} task{matched.length !== 1 ? "s" : ""} in {title.toLowerCase()}</span>
+              </div>
+
+              <TaskGroup title="Overdue" tasks={matchedGroups.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              <TaskGroup title="Due Today" tasks={matchedGroups.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              <TaskGroup title="Upcoming" tasks={matchedGroups.upcoming} accent={accent} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              <TaskGroup title="No Due Date" tasks={matchedGroups.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+
+              {matched.length === 0 && (
+                <div className="text-center py-16">
+                  <p className="text-sm" style={{ color: "#4a7090" }}>{empty}</p>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* CONTENT APPROVAL TAB */}
         {activeTab === "content" && (

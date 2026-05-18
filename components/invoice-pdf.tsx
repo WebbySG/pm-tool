@@ -307,7 +307,6 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
   const derived = computeDerivedStatus(invoice);
   const watermark = (() => {
     if (derived === "paid") return { label: "PAID", color: C.green };
-    if (derived === "draft") return { label: "DRAFT", color: C.ink };
     if (derived === "overdue") return { label: "OVERDUE", color: C.red };
     if (invoice.status === "void") return { label: "VOID", color: C.textMuted };
     return null;
@@ -377,7 +376,6 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         <View style={styles.billToBlock}>
           <Text style={styles.sectionLabel}>BILL TO</Text>
           <Text style={styles.billToName}>{invoice.billToName || "—"}</Text>
-          {invoice.billToEmail ? <Text style={styles.billToDetail}>{invoice.billToEmail}</Text> : null}
           {invoice.billToAddress ? <Text style={styles.billToDetail}>{invoice.billToAddress}</Text> : null}
         </View>
 
