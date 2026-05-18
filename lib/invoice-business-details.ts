@@ -4,8 +4,11 @@
 export const BUSINESS_DETAILS = {
   name: "Webby SG",
   tagline: "Bringing business online",
+  contactPerson: "Leon",
+  contactPhone: "80805608",
   uen: "202444139M",
-  contact: "8080 5608 (Leon)",
+  // kept for backwards compat — derived from contactPerson + contactPhone
+  contact: "80805608 (Leon)",
   addressLines: [
     "60 Paya Lebar Road",
     "#07-54 Paya Lebar Square",

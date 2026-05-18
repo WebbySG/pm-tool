@@ -1,14 +1,18 @@
 "use client";
 import {
   Document, Page, Text, View, StyleSheet, Image,
+  Svg, Circle, Path, G,
+  Text as SvgText,
 } from "@react-pdf/renderer";
 import type { Invoice } from "@/lib/invoice-types";
+import { computeDerivedStatus } from "@/lib/invoice-types";
 import { BUSINESS_DETAILS } from "@/lib/invoice-business-details";
 
-// Brand palette — single red accent + deep ink, generous neutrals
+// Brand palette
 const C = {
   red: "#DC2626",
   redDark: "#991B1B",
+  redSoft: "#FEE2E2",
   ink: "#111827",
   text: "#1F2937",
   textMuted: "#6B7280",
@@ -17,96 +21,116 @@ const C = {
   divider: "#D1D5DB",
   rowAlt: "#F9FAFB",
   panel: "#FAFAF9",
+  green: "#16A34A",
+  greenSoft: "#DCFCE7",
+  amber: "#D97706",
   white: "#FFFFFF",
 };
+
+// A4 dimensions in points (used for absolute positioning)
+const PAGE_W = 595.28;
+const PAGE_H = 841.89;
 
 const styles = StyleSheet.create({
   page: {
     paddingTop: 0,
-    paddingBottom: 60,
+    paddingBottom: 140, // reserve space for signatures + footer at the bottom
     paddingHorizontal: 0,
+    paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
     color: C.text,
     fontFamily: "Helvetica",
   },
 
-  // Top accent band
-  accentBar: { height: 6, backgroundColor: C.red },
+  // ─── Background / decorations ───────────────────────────────────────────
+  leftAccent: {
+    position: "absolute", left: 0, top: 0, bottom: 0,
+    width: 8, backgroundColor: C.red,
+  },
+  topRightDecor: {
+    position: "absolute", top: 0, right: 0, width: 130, height: 130,
+  },
+  bottomRightDecor: {
+    position: "absolute", bottom: 50, right: 30, width: 120, height: 90,
+  },
+  cornerDots: {
+    position: "absolute", top: 12, right: 150, width: 60, height: 60,
+  },
+  watermark: {
+    position: "absolute", top: 280, left: 0, right: 0, height: 200,
+  },
 
-  // Header — logo left, INVOICE title right
+  // ─── Header ─────────────────────────────────────────────────────────────
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 48,
-    paddingTop: 28,
+    paddingHorizontal: 40,
+    paddingTop: 36,
     paddingBottom: 22,
   },
   logo: { width: 130, height: 50, objectFit: "contain" },
   brandFallback: { flexDirection: "column" },
   brandFallbackName: { fontSize: 22, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: -0.5 },
   brandFallbackTag: { fontSize: 9, color: C.textMuted, marginTop: 2, fontStyle: "italic" },
+
+  titleBlock: { alignItems: "flex-end" },
   invoiceTitle: {
-    fontSize: 30, fontFamily: "Helvetica-Bold", color: C.red, letterSpacing: 4,
+    fontSize: 32, fontFamily: "Helvetica-Bold", color: C.red, letterSpacing: 4,
+    marginBottom: 4,
   },
   invoiceTitleUnder: {
-    fontSize: 9, color: C.textMuted, textAlign: "right", marginTop: 2, letterSpacing: 2,
+    fontSize: 10, color: C.ink, letterSpacing: 2,
+    fontFamily: "Helvetica-Bold",
   },
 
-  thinDivider: { height: 1, backgroundColor: C.border, marginHorizontal: 48 },
+  thinDivider: { height: 1, backgroundColor: C.border, marginHorizontal: 40 },
 
-  // From + meta strip
+  // ─── FROM + meta ────────────────────────────────────────────────────────
   fromMetaRow: {
     flexDirection: "row",
-    paddingHorizontal: 48,
-    paddingTop: 22,
-    paddingBottom: 8,
+    paddingHorizontal: 40, paddingTop: 22, paddingBottom: 4,
     gap: 32,
   },
   fromBlock: { flex: 1 },
   metaBlock: { width: 220 },
 
   sectionLabel: {
-    fontSize: 8, color: C.textFaint, letterSpacing: 1.5,
-    fontFamily: "Helvetica-Bold", marginBottom: 6,
+    fontSize: 8, color: C.red, letterSpacing: 1.8,
+    fontFamily: "Helvetica-Bold", marginBottom: 8,
   },
 
-  // FROM
-  fromName: { fontSize: 12, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 3 },
-  fromLine: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
-  fromMeta: { fontSize: 9, color: C.textMuted, lineHeight: 1.5, marginTop: 3 },
+  fromContactName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 2 },
+  fromContactSub: { fontSize: 10, color: C.text, lineHeight: 1.5, marginBottom: 2 },
+  fromAddrTop: { fontSize: 9.5, color: C.text, lineHeight: 1.5, marginTop: 6 },
 
-  // META (issue / due / number)
   metaRowLine: {
     flexDirection: "row", justifyContent: "space-between",
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderBottomWidth: 0.5, borderBottomColor: C.border, borderBottomStyle: "solid",
   },
   metaRowLineLast: {
-    flexDirection: "row", justifyContent: "space-between", paddingVertical: 4,
+    flexDirection: "row", justifyContent: "space-between", paddingVertical: 5,
   },
   metaLabel: { fontSize: 8.5, color: C.textMuted, letterSpacing: 0.8 },
   metaValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: C.ink },
-  metaValueAccent: { fontSize: 10, fontFamily: "Helvetica-Bold", color: C.red },
+  metaValueAccent: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: C.red },
 
-  // BILL TO
+  // ─── BILL TO ────────────────────────────────────────────────────────────
   billToBlock: {
-    paddingHorizontal: 48, paddingTop: 16, paddingBottom: 20,
+    paddingHorizontal: 40, paddingTop: 18, paddingBottom: 16,
   },
   billToName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginTop: 4 },
   billToDetail: { fontSize: 9.5, color: C.textMuted, marginTop: 2 },
 
-  // Table
-  tableWrap: { paddingHorizontal: 48 },
+  // ─── Table ──────────────────────────────────────────────────────────────
+  tableWrap: { paddingHorizontal: 40, marginTop: 4 },
   tableHeader: {
     flexDirection: "row",
     borderBottomWidth: 1.5, borderBottomColor: C.ink, borderBottomStyle: "solid",
     paddingBottom: 6, marginBottom: 2,
   },
-  th: {
-    fontSize: 9, fontFamily: "Helvetica-Bold", color: C.ink,
-    letterSpacing: 0.5, textTransform: "uppercase",
-  },
+  th: { fontSize: 9, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: 0.5 },
   thDesc: { flex: 1, textAlign: "left" },
   thQty: { width: 40, textAlign: "center" },
   thPrice: { width: 80, textAlign: "right" },
@@ -117,38 +141,34 @@ const styles = StyleSheet.create({
     flexDirection: "row", paddingVertical: 10, alignItems: "flex-start",
     backgroundColor: C.rowAlt,
   },
-  tdDesc: { flex: 1, paddingLeft: 4, paddingRight: 8 },
-  tdQty: { width: 40, textAlign: "center", fontSize: 10 },
-  tdPrice: { width: 80, textAlign: "right", fontSize: 10, paddingRight: 4 },
-  tdAmount: { width: 90, textAlign: "right", fontSize: 10, paddingRight: 4 },
+  tdDesc: { flex: 1, paddingLeft: 6, paddingRight: 8 },
+  tdQty: { width: 40, textAlign: "center", fontSize: 10, paddingTop: 1 },
+  tdPrice: { width: 80, textAlign: "right", fontSize: 10, paddingRight: 6, paddingTop: 1 },
+  tdAmount: { width: 90, textAlign: "right", fontSize: 10, paddingRight: 6, paddingTop: 1 },
 
   itemHeading: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 3 },
   itemBody: { fontSize: 9, color: C.text, lineHeight: 1.5 },
 
-  // Totals
+  // ─── Totals ─────────────────────────────────────────────────────────────
   totalsBlock: {
-    paddingHorizontal: 48,
-    marginTop: 6,
-    flexDirection: "row",
-    justifyContent: "flex-end",
+    paddingHorizontal: 40, marginTop: 8,
+    flexDirection: "row", justifyContent: "flex-end",
   },
-  totalsTable: { width: 220 },
-  totalsRow: {
-    flexDirection: "row", justifyContent: "space-between", paddingVertical: 5,
-  },
+  totalsTable: { width: 230 },
+  totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
   totalsRowGrand: {
     flexDirection: "row", justifyContent: "space-between",
-    paddingTop: 8, paddingBottom: 4, marginTop: 4,
-    borderTopWidth: 1.5, borderTopColor: C.ink, borderTopStyle: "solid",
+    paddingTop: 10, paddingBottom: 6, marginTop: 4,
+    borderTopWidth: 1.5, borderTopColor: C.red, borderTopStyle: "solid",
   },
   totalsLabel: { fontSize: 10, color: C.textMuted, letterSpacing: 0.5 },
   totalsValue: { fontSize: 10, color: C.ink },
   totalsLabelGrand: { fontSize: 12, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: 0.5 },
-  totalsValueGrand: { fontSize: 14, fontFamily: "Helvetica-Bold", color: C.red },
+  totalsValueGrand: { fontSize: 16, fontFamily: "Helvetica-Bold", color: C.red },
 
-  // Notes / payment panel
+  // ─── Notes panel ────────────────────────────────────────────────────────
   notesPanel: {
-    marginHorizontal: 48, marginTop: 24, padding: 14,
+    marginHorizontal: 40, marginTop: 22, padding: 14,
     backgroundColor: C.panel,
     borderLeftWidth: 3, borderLeftColor: C.red, borderLeftStyle: "solid",
   },
@@ -157,26 +177,29 @@ const styles = StyleSheet.create({
   },
   notesPanelText: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
 
-  // Signatures
+  // ─── Signatures (absolutely pinned at bottom of last page) ──────────────
   signaturesBlock: {
-    marginTop: 50, marginHorizontal: 48,
+    position: "absolute",
+    bottom: 60, // sits above the footer
+    left: 60, right: 30,
     flexDirection: "row", justifyContent: "space-between",
   },
   signature: { width: 140 },
-  signatureLine: { borderBottomWidth: 0.75, borderBottomColor: C.ink, borderBottomStyle: "solid", marginBottom: 4 },
-  signatureLabel: { fontSize: 8, color: C.textMuted, letterSpacing: 1, textTransform: "uppercase" },
-
-  // Footer
-  footer: {
-    position: "absolute", bottom: 0, left: 0, right: 0,
+  signatureLine: {
+    borderBottomWidth: 0.75, borderBottomColor: C.ink, borderBottomStyle: "solid", marginBottom: 4,
   },
-  footerLine: { height: 2, backgroundColor: C.red },
+  signatureLabel: { fontSize: 8, color: C.textMuted, letterSpacing: 1 },
+
+  // ─── Footer ─────────────────────────────────────────────────────────────
+  footer: { position: "absolute", bottom: 0, left: 0, right: 0 },
+  footerLine: { height: 2, backgroundColor: C.red, marginLeft: 8 },
   footerContent: {
     flexDirection: "row", justifyContent: "space-between",
-    paddingHorizontal: 48, paddingTop: 10, paddingBottom: 12,
+    paddingHorizontal: 40, paddingTop: 10, paddingBottom: 14,
   },
-  footerBrand: { fontSize: 8.5, color: C.text, letterSpacing: 0.5 },
+  footerBrand: { fontSize: 8.5, color: C.text, letterSpacing: 0.5, fontFamily: "Helvetica-Bold" },
   footerNote: { fontSize: 8, color: C.textFaint, letterSpacing: 0.3 },
+  footerPageNum: { fontSize: 8, color: C.textFaint, letterSpacing: 0.5 },
 });
 
 interface Props {
@@ -192,11 +215,88 @@ function formatDateLong(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
 }
-
 function splitDescription(text: string): { heading: string; body: string } {
   const idx = text.indexOf("\n");
   if (idx === -1) return { heading: text, body: "" };
   return { heading: text.slice(0, idx).trim(), body: text.slice(idx + 1).replace(/^\n+/, "") };
+}
+
+// ─── Decorative SVG components ────────────────────────────────────────────
+
+// Top-right cluster: overlapping circles in brand colors
+function TopRightDecor() {
+  return (
+    <Svg style={styles.topRightDecor} viewBox="0 0 130 130">
+      <G>
+        <Circle cx="105" cy="25" r="55" fill={C.red} opacity="0.08" />
+        <Circle cx="115" cy="15" r="35" fill={C.red} opacity="0.14" />
+        <Circle cx="125" cy="5"  r="18" fill={C.red} opacity="0.6" />
+        <Circle cx="100" cy="40" r="6"  fill={C.ink} opacity="0.5" />
+      </G>
+    </Svg>
+  );
+}
+
+// Bottom-right corner: arcs + dots evoking a stylized wave or sun rays
+function BottomRightDecor() {
+  return (
+    <Svg style={styles.bottomRightDecor} viewBox="0 0 120 90">
+      <G>
+        {/* concentric arc rings (3D-ish ripple) */}
+        <Path d="M 30 90 A 50 50 0 0 1 130 90" stroke={C.red} strokeWidth="1.5" fill="none" opacity="0.35" />
+        <Path d="M 50 90 A 35 35 0 0 1 120 90" stroke={C.red} strokeWidth="1.2" fill="none" opacity="0.55" />
+        <Path d="M 65 90 A 22 22 0 0 1 109 90" stroke={C.red} strokeWidth="1" fill="none" opacity="0.8" />
+        {/* sun core */}
+        <Circle cx="87" cy="90" r="10" fill={C.red} opacity="0.85" />
+        <Circle cx="87" cy="90" r="5"  fill={C.white} />
+        {/* tiny accent dots */}
+        <Circle cx="40" cy="40" r="2" fill={C.ink} opacity="0.35" />
+        <Circle cx="55" cy="28" r="1.5" fill={C.red} opacity="0.5" />
+        <Circle cx="70" cy="18" r="1" fill={C.ink} opacity="0.35" />
+      </G>
+    </Svg>
+  );
+}
+
+// Scattered dot pattern (top header area accent)
+function CornerDots() {
+  const cols = 6, rows = 6, gap = 8;
+  return (
+    <Svg style={styles.cornerDots} viewBox={`0 0 ${cols * gap} ${rows * gap}`}>
+      <G>
+        {Array.from({ length: rows }).map((_, r) =>
+          Array.from({ length: cols }).map((_, c) => {
+            const dist = Math.abs(r - rows / 2) + Math.abs(c - cols / 2);
+            const opacity = Math.max(0.08, 0.4 - dist * 0.05);
+            return (
+              <Circle
+                key={`${r}-${c}`}
+                cx={c * gap + 2} cy={r * gap + 2} r={0.9}
+                fill={C.ink} opacity={String(opacity)}
+              />
+            );
+          }),
+        )}
+      </G>
+    </Svg>
+  );
+}
+
+// Big diagonal status watermark for DRAFT / PAID / VOID
+function StatusWatermark({ label, color }: { label: string; color: string }) {
+  return (
+    <Svg style={styles.watermark} viewBox={`0 0 ${PAGE_W} 200`}>
+      <SvgText
+        x={PAGE_W / 2} y="130"
+        style={{ fontSize: 120, fontFamily: "Helvetica-Bold" }}
+        fill={color} fillOpacity="0.06"
+        textAnchor="middle"
+        transform={`rotate(-18 ${PAGE_W / 2} 130)`}
+      >
+        {label}
+      </SvgText>
+    </Svg>
+  );
 }
 
 export function InvoiceDocument({ invoice, logoUrl }: Props) {
@@ -204,12 +304,23 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
   const hasLogo = typeof src === "string" && src.length > 0;
   const subtotal = invoice.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
 
+  const derived = computeDerivedStatus(invoice);
+  const watermark = (() => {
+    if (derived === "paid") return { label: "PAID", color: C.green };
+    if (derived === "draft") return { label: "DRAFT", color: C.ink };
+    if (derived === "overdue") return { label: "OVERDUE", color: C.red };
+    if (invoice.status === "void") return { label: "VOID", color: C.textMuted };
+    return null;
+  })();
+
   return (
     <Document title={`Invoice ${invoice.invoiceNumber}`} author={BUSINESS_DETAILS.name}>
       <Page size="A4" style={styles.page} wrap>
 
-        {/* Top accent */}
-        <View style={styles.accentBar} fixed />
+        {/* Background decorations — fixed = appear on every page */}
+        <View style={styles.leftAccent} fixed />
+        <TopRightDecor />
+        <CornerDots />
 
         {/* Header */}
         <View style={styles.header}>
@@ -222,7 +333,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
               <Text style={styles.brandFallbackTag}>{BUSINESS_DETAILS.tagline}</Text>
             </View>
           )}
-          <View>
+          <View style={styles.titleBlock}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
             <Text style={styles.invoiceTitleUnder}>{invoice.invoiceNumber}</Text>
           </View>
@@ -230,18 +341,19 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
 
         <View style={styles.thinDivider} />
 
-        {/* From + meta */}
+        {/* Watermark sits behind the body content */}
+        {watermark ? <StatusWatermark label={watermark.label} color={watermark.color} /> : null}
+
+        {/* FROM + meta */}
         <View style={styles.fromMetaRow}>
           <View style={styles.fromBlock}>
             <Text style={styles.sectionLabel}>FROM</Text>
-            <Text style={styles.fromName}>{BUSINESS_DETAILS.name}</Text>
+            <Text style={styles.fromContactName}>{BUSINESS_DETAILS.contactPerson}</Text>
+            <Text style={styles.fromContactSub}>{BUSINESS_DETAILS.contactPhone}</Text>
+            <Text style={styles.fromContactSub}>UEN: {BUSINESS_DETAILS.uen}</Text>
             {BUSINESS_DETAILS.addressLines.map((line, i) => (
-              <Text key={i} style={styles.fromLine}>{line}</Text>
+              <Text key={i} style={i === 0 ? styles.fromAddrTop : styles.fromContactSub}>{line}</Text>
             ))}
-            <Text style={styles.fromMeta}>
-              UEN {BUSINESS_DETAILS.uen}
-              {BUSINESS_DETAILS.contact ? `  ·  ${BUSINESS_DETAILS.contact}` : ""}
-            </Text>
           </View>
 
           <View style={styles.metaBlock}>
@@ -272,10 +384,10 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         {/* Items table */}
         <View style={styles.tableWrap}>
           <View style={styles.tableHeader} fixed>
-            <Text style={[styles.th, styles.thDesc]}>Description</Text>
-            <Text style={[styles.th, styles.thQty]}>Qty</Text>
-            <Text style={[styles.th, styles.thPrice]}>Price</Text>
-            <Text style={[styles.th, styles.thAmount]}>Amount</Text>
+            <Text style={[styles.th, styles.thDesc]}>DESCRIPTION</Text>
+            <Text style={[styles.th, styles.thQty]}>QTY</Text>
+            <Text style={[styles.th, styles.thPrice]}>PRICE</Text>
+            <Text style={[styles.th, styles.thAmount]}>AMOUNT</Text>
           </View>
 
           {invoice.lineItems.length === 0 && (
@@ -305,7 +417,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         </View>
 
         {/* Totals */}
-        <View style={styles.totalsBlock}>
+        <View style={styles.totalsBlock} wrap={false}>
           <View style={styles.totalsTable}>
             <View style={styles.totalsRow}>
               <Text style={styles.totalsLabel}>SUBTOTAL</Text>
@@ -341,26 +453,44 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           </View>
         ) : null}
 
-        {/* Signatures */}
-        <View style={styles.signaturesBlock} wrap={false}>
-          {["Name / Title", "Customer Signature", "Date"].map((label) => (
-            <View key={label} style={styles.signature}>
-              <View style={styles.signatureLine} />
-              <Text style={styles.signatureLabel}>{label}</Text>
-            </View>
-          ))}
-        </View>
+        {/* Decorative bottom-right (above footer) — fixed, on every page */}
+        <BottomRightDecor />
 
-        {/* Footer (fixed bottom) */}
+        {/* Signatures — absolutely pinned above footer; render() limits to LAST page */}
+        <View
+          style={styles.signaturesBlock}
+          render={(args: unknown) => {
+            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
+            if (pageNumber !== totalPages) return null;
+            return (
+              <>
+                {["Name / Title", "Customer Signature", "Date"].map((label) => (
+                  <View key={label} style={styles.signature}>
+                    <View style={styles.signatureLine} />
+                    <Text style={styles.signatureLabel}>{label}</Text>
+                  </View>
+                ))}
+              </>
+            );
+          }}
+        />
+
+        {/* Footer */}
         <View style={styles.footer} fixed>
           <View style={styles.footerLine} />
           <View style={styles.footerContent}>
             <Text style={styles.footerBrand}>
               {BUSINESS_DETAILS.name} · {BUSINESS_DETAILS.tagline}
             </Text>
-            <Text style={styles.footerNote}>
-              Invoice {invoice.invoiceNumber}
-            </Text>
+            <Text style={styles.footerNote}>{invoice.invoiceNumber}</Text>
+            <Text
+              style={styles.footerPageNum}
+              render={(args: unknown) => {
+                const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
+                return totalPages > 1 ? `Page ${pageNumber} of ${totalPages}` : "";
+              }}
+              fixed
+            />
           </View>
         </View>
       </Page>
