@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -14,6 +14,7 @@ const ALL_NAV = [
   { href: "/tasks",       label: "All Tasks",     icon: CheckSquare,     color: "#34d399", adminOnly: false },
   { href: "/content",     label: "Content",       icon: FileEdit,        color: "#10b981", adminOnly: false },
   { href: "/archive",     label: "Archive",       icon: Archive,         color: "#6b7280", adminOnly: false },
+  { href: "/invoices",    label: "Invoices",      icon: Receipt,         color: "#fbbf24", adminOnly: true  },
   { href: "/templates",   label: "Templates",     icon: ListChecks,      color: "#a78bfa", adminOnly: true  },
   { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: true  },
   { href: "/team",        label: "Team",          icon: Users,           color: "#22d3ee", adminOnly: true  },
