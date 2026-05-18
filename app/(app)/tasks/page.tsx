@@ -498,7 +498,7 @@ export default function TasksPage() {
                       {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
                     </span>
                     <input type="file" multiple className="hidden"
-                      accept="image/*,video/*,.pdf,.doc,.docx"
+                      accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
                       onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
                   </label>
                   {newTaskFiles.length > 0 && (

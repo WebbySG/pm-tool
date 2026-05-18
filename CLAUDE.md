@@ -360,7 +360,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 
 ### Admin Must Always Be Able To Edit
 
-**Tasks:** title, status, priority, assignee, due date (must save to DB), description, tags, recurring, subtasks, delete
+**Tasks:** title, status, priority, assignee, due date (must save to DB), description, tags, recurring, subtasks, delete, move to another project (top-level tasks only — subtasks travel with their parent; `moveTaskToProject` in `lib/store.ts`)
 
 **Projects:** name, description, type, phase, due date, start date, client, channel, assigned staff, delete
 

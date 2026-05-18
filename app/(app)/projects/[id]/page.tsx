@@ -522,7 +522,7 @@ export default function ProjectDetailPage() {
                   <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>Upload files</p>
                   <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>Images, videos, documents</p>
                 </div>
-                <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,video/*,.pdf,.doc,.docx" onChange={handleFileUpload} />
+                <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf" onChange={handleFileUpload} />
               </label>
 
               {project.media.length > 0 && (
@@ -994,7 +994,7 @@ export default function ProjectDetailPage() {
                       {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
                     </span>
                     <input type="file" multiple className="hidden"
-                      accept="image/*,video/*,.pdf,.doc,.docx"
+                      accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
                       onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
                   </label>
                   {newTaskFiles.length > 0 && (

@@ -182,7 +182,7 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
               {uploadingFile ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
             </button>
             <input ref={fileInputRef} type="file" className="hidden"
-              accept="image/*,video/*,.pdf,.doc,.docx"
+              accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
               onChange={handleEditorFile} />
           </>
         )}
@@ -1171,7 +1171,7 @@ function TaskPanel({
                 <Paperclip size={12} />
                 Attach file
                 <input ref={commentFileRef} type="file" className="hidden"
-                  accept="image/*,video/*,.pdf,.doc,.docx"
+                  accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
                   onChange={(e) => setCommentFile(e.target.files?.[0] ?? null)} />
               </label>
               <div className="flex-1" />
@@ -1203,10 +1203,10 @@ function TaskPanel({
             }
             <div>
               <p className="text-sm" style={{ color: "#4a7090" }}>{uploading ? "Uploading..." : "Click to attach files"}</p>
-              <p className="text-xs" style={{ color: "#8b90a750" }}>Images, videos, PDFs, Word docs · max 50 MB</p>
+              <p className="text-xs" style={{ color: "#8b90a750" }}>Images, videos, PDFs, Word docs, text files · max 50 MB</p>
             </div>
             <input ref={fileRef} type="file" className="hidden" multiple
-              accept="image/*,video/*,.pdf,.doc,.docx"
+              accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
               onChange={handleFileChange}
               disabled={uploading} />
           </label>
