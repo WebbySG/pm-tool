@@ -81,8 +81,7 @@ function rowToTemplate(r: Row, items: InvoiceTemplateLineItem[] = []): InvoiceTe
 // ─── Numbering ────────────────────────────────────────────────────────────────
 
 export async function nextInvoiceNumber(): Promise<string> {
-  const year = new Date().getFullYear();
-  const { data, error } = await supabase.rpc("next_invoice_number", { p_year: year });
+  const { data, error } = await supabase.rpc("next_invoice_number");
   if (error) throw error;
   return data as string;
 }

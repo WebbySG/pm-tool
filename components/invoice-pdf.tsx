@@ -1,298 +1,349 @@
 "use client";
 import {
-  Document, Page, Text, View, StyleSheet, Image, Svg, Polygon,
+  Document, Page, Text, View, StyleSheet, Image,
 } from "@react-pdf/renderer";
 import type { Invoice } from "@/lib/invoice-types";
 import { BUSINESS_DETAILS } from "@/lib/invoice-business-details";
 
+// Brand palette — single red accent + deep ink, generous neutrals
 const C = {
   red: "#DC2626",
-  navy: "#1E3A8A",
-  navyDark: "#0F1F4F",
-  blue: "#3B82F6",
-  blueLight: "#93C5FD",
-  blueFaint: "#DBEAFE",
-  lavender: "#E5E9F8",
+  redDark: "#991B1B",
+  ink: "#111827",
   text: "#1F2937",
   textMuted: "#6B7280",
-  border: "#D1D5DB",
+  textFaint: "#9CA3AF",
+  border: "#E5E7EB",
+  divider: "#D1D5DB",
+  rowAlt: "#F9FAFB",
+  panel: "#FAFAF9",
   white: "#FFFFFF",
 };
 
 const styles = StyleSheet.create({
   page: {
-    paddingTop: 50,
-    paddingBottom: 70,
-    paddingHorizontal: 48,
+    paddingTop: 0,
+    paddingBottom: 60,
+    paddingHorizontal: 0,
     fontSize: 10,
     color: C.text,
     fontFamily: "Helvetica",
-    position: "relative",
   },
-  // Decorative corner stripes
-  cornerTopRight: { position: "absolute", top: 0, right: 0, width: 230, height: 50 },
-  cornerBottomLeft: { position: "absolute", bottom: 0, left: 0, width: 230, height: 50 },
 
-  // Header
-  headerRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 24 },
-  brandBlock: { flex: 1, flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  logo: { width: 110, height: 44, objectFit: "contain" },
-  brandText: { flexDirection: "column" },
-  brandName: { fontSize: 16, fontFamily: "Helvetica-Bold", color: C.red, marginBottom: 2 },
-  brandTagline: { fontSize: 8, color: C.textMuted, fontStyle: "italic", marginBottom: 6 },
-  brandLine: { fontSize: 9, color: C.text, lineHeight: 1.4 },
-  invoiceTitle: { fontSize: 28, fontFamily: "Helvetica-Bold", color: C.navy, letterSpacing: 1 },
+  // Top accent band
+  accentBar: { height: 6, backgroundColor: C.red },
 
-  // Address block
-  addressBlock: { marginTop: 10, marginBottom: 22 },
-  addressLine: { fontSize: 9, color: C.text, lineHeight: 1.5 },
+  // Header — logo left, INVOICE title right
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 48,
+    paddingTop: 28,
+    paddingBottom: 22,
+  },
+  logo: { width: 130, height: 50, objectFit: "contain" },
+  brandFallback: { flexDirection: "column" },
+  brandFallbackName: { fontSize: 22, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: -0.5 },
+  brandFallbackTag: { fontSize: 9, color: C.textMuted, marginTop: 2, fontStyle: "italic" },
+  invoiceTitle: {
+    fontSize: 30, fontFamily: "Helvetica-Bold", color: C.red, letterSpacing: 4,
+  },
+  invoiceTitleUnder: {
+    fontSize: 9, color: C.textMuted, textAlign: "right", marginTop: 2, letterSpacing: 2,
+  },
 
-  // Bill-to + meta row
-  metaRow: { flexDirection: "row", marginBottom: 14 },
-  billTo: { flex: 1 },
-  billToLabel: { fontSize: 9, color: C.text, fontFamily: "Helvetica-Oblique" },
-  billToName: { fontSize: 10, color: C.text, fontFamily: "Helvetica-Oblique" },
-  billToDetail: { fontSize: 9, color: C.textMuted, marginTop: 2 },
-  metaRight: { width: 200, flexDirection: "column", alignItems: "flex-end" },
-  metaRowLine: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginBottom: 2 },
-  metaLabel: { fontSize: 9, color: C.text },
-  metaValue: { fontSize: 10, fontFamily: "Helvetica-BoldOblique", color: C.text },
+  thinDivider: { height: 1, backgroundColor: C.border, marginHorizontal: 48 },
+
+  // From + meta strip
+  fromMetaRow: {
+    flexDirection: "row",
+    paddingHorizontal: 48,
+    paddingTop: 22,
+    paddingBottom: 8,
+    gap: 32,
+  },
+  fromBlock: { flex: 1 },
+  metaBlock: { width: 220 },
+
+  sectionLabel: {
+    fontSize: 8, color: C.textFaint, letterSpacing: 1.5,
+    fontFamily: "Helvetica-Bold", marginBottom: 6,
+  },
+
+  // FROM
+  fromName: { fontSize: 12, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 3 },
+  fromLine: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
+  fromMeta: { fontSize: 9, color: C.textMuted, lineHeight: 1.5, marginTop: 3 },
+
+  // META (issue / due / number)
+  metaRowLine: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingVertical: 4,
+    borderBottomWidth: 0.5, borderBottomColor: C.border, borderBottomStyle: "solid",
+  },
+  metaRowLineLast: {
+    flexDirection: "row", justifyContent: "space-between", paddingVertical: 4,
+  },
+  metaLabel: { fontSize: 8.5, color: C.textMuted, letterSpacing: 0.8 },
+  metaValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: C.ink },
+  metaValueAccent: { fontSize: 10, fontFamily: "Helvetica-Bold", color: C.red },
+
+  // BILL TO
+  billToBlock: {
+    paddingHorizontal: 48, paddingTop: 16, paddingBottom: 20,
+  },
+  billToName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginTop: 4 },
+  billToDetail: { fontSize: 9.5, color: C.textMuted, marginTop: 2 },
 
   // Table
-  tableWrap: { borderWidth: 1, borderColor: C.navy, borderStyle: "solid" },
+  tableWrap: { paddingHorizontal: 48 },
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: C.navy,
-    color: C.white,
+    borderBottomWidth: 1.5, borderBottomColor: C.ink, borderBottomStyle: "solid",
+    paddingBottom: 6, marginBottom: 2,
   },
   th: {
-    fontSize: 10, fontFamily: "Helvetica-Bold", color: C.white,
-    paddingVertical: 8, paddingHorizontal: 8,
+    fontSize: 9, fontFamily: "Helvetica-Bold", color: C.ink,
+    letterSpacing: 0.5, textTransform: "uppercase",
   },
-  thItem: { flex: 1, textAlign: "left" },
-  thQty: { width: 50, textAlign: "center", borderLeftWidth: 1, borderLeftColor: C.white, borderLeftStyle: "solid" },
-  thPrice: { width: 80, textAlign: "right", borderLeftWidth: 1, borderLeftColor: C.white, borderLeftStyle: "solid" },
-  thTotal: { width: 80, textAlign: "right", borderLeftWidth: 1, borderLeftColor: C.white, borderLeftStyle: "solid" },
+  thDesc: { flex: 1, textAlign: "left" },
+  thQty: { width: 40, textAlign: "center" },
+  thPrice: { width: 80, textAlign: "right" },
+  thAmount: { width: 90, textAlign: "right" },
 
-  tr: {
-    flexDirection: "row",
-    borderTopWidth: 1, borderTopColor: C.border, borderTopStyle: "solid",
+  tr: { flexDirection: "row", paddingVertical: 10, alignItems: "flex-start" },
+  trAlt: {
+    flexDirection: "row", paddingVertical: 10, alignItems: "flex-start",
+    backgroundColor: C.rowAlt,
   },
-  tdItem: { flex: 1, paddingVertical: 10, paddingHorizontal: 8 },
-  tdQty: {
-    width: 50, paddingVertical: 10, paddingHorizontal: 6, textAlign: "center",
-    borderLeftWidth: 1, borderLeftColor: C.border, borderLeftStyle: "solid",
-    fontSize: 10,
-  },
-  tdPrice: {
-    width: 80, paddingVertical: 10, paddingHorizontal: 8, textAlign: "right",
-    borderLeftWidth: 1, borderLeftColor: C.border, borderLeftStyle: "solid",
-    fontSize: 10,
-  },
-  tdTotal: {
-    width: 80, paddingVertical: 10, paddingHorizontal: 8, textAlign: "right",
-    borderLeftWidth: 1, borderLeftColor: C.border, borderLeftStyle: "solid",
-    fontSize: 10,
-  },
-  itemHeading: { fontSize: 11, fontFamily: "Helvetica-Bold", color: C.text, marginBottom: 4 },
+  tdDesc: { flex: 1, paddingLeft: 4, paddingRight: 8 },
+  tdQty: { width: 40, textAlign: "center", fontSize: 10 },
+  tdPrice: { width: 80, textAlign: "right", fontSize: 10, paddingRight: 4 },
+  tdAmount: { width: 90, textAlign: "right", fontSize: 10, paddingRight: 4 },
+
+  itemHeading: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 3 },
   itemBody: { fontSize: 9, color: C.text, lineHeight: 1.5 },
 
-  // Total row
-  totalRow: {
+  // Totals
+  totalsBlock: {
+    paddingHorizontal: 48,
+    marginTop: 6,
     flexDirection: "row",
-    backgroundColor: C.lavender,
-    borderTopWidth: 1, borderTopColor: C.navy, borderTopStyle: "solid",
+    justifyContent: "flex-end",
   },
-  totalLabelCell: { flex: 1, paddingVertical: 10, paddingHorizontal: 8, alignItems: "flex-end" },
-  totalLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: C.text },
-  totalAmountCell: {
-    width: 80, paddingVertical: 10, paddingHorizontal: 8, textAlign: "right",
-    borderLeftWidth: 1, borderLeftColor: C.navy, borderLeftStyle: "solid",
+  totalsTable: { width: 220 },
+  totalsRow: {
+    flexDirection: "row", justifyContent: "space-between", paddingVertical: 5,
   },
-  totalAmount: { fontSize: 11, fontFamily: "Helvetica-Bold", color: C.text },
+  totalsRowGrand: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingTop: 8, paddingBottom: 4, marginTop: 4,
+    borderTopWidth: 1.5, borderTopColor: C.ink, borderTopStyle: "solid",
+  },
+  totalsLabel: { fontSize: 10, color: C.textMuted, letterSpacing: 0.5 },
+  totalsValue: { fontSize: 10, color: C.ink },
+  totalsLabelGrand: { fontSize: 12, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: 0.5 },
+  totalsValueGrand: { fontSize: 14, fontFamily: "Helvetica-Bold", color: C.red },
 
-  // Notes + footer
-  notesBlock: { marginTop: 18 },
-  notesLine: { fontSize: 9, color: C.text, lineHeight: 1.5 },
+  // Notes / payment panel
+  notesPanel: {
+    marginHorizontal: 48, marginTop: 24, padding: 14,
+    backgroundColor: C.panel,
+    borderLeftWidth: 3, borderLeftColor: C.red, borderLeftStyle: "solid",
+  },
+  notesPanelLabel: {
+    fontSize: 8, color: C.red, letterSpacing: 1.5, fontFamily: "Helvetica-Bold", marginBottom: 6,
+  },
+  notesPanelText: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
 
+  // Signatures
   signaturesBlock: {
-    marginTop: 60,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
+    marginTop: 50, marginHorizontal: 48,
+    flexDirection: "row", justifyContent: "space-between",
   },
-  signature: { width: 150 },
-  signatureLine: { borderBottomWidth: 1, borderBottomColor: C.blueLight, borderBottomStyle: "solid", marginBottom: 4 },
-  signatureLabel: { fontSize: 8, color: C.textMuted, letterSpacing: 0.5 },
+  signature: { width: 140 },
+  signatureLine: { borderBottomWidth: 0.75, borderBottomColor: C.ink, borderBottomStyle: "solid", marginBottom: 4 },
+  signatureLabel: { fontSize: 8, color: C.textMuted, letterSpacing: 1, textTransform: "uppercase" },
+
+  // Footer
+  footer: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+  },
+  footerLine: { height: 2, backgroundColor: C.red },
+  footerContent: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingHorizontal: 48, paddingTop: 10, paddingBottom: 12,
+  },
+  footerBrand: { fontSize: 8.5, color: C.text, letterSpacing: 0.5 },
+  footerNote: { fontSize: 8, color: C.textFaint, letterSpacing: 0.3 },
 });
 
 interface Props {
   invoice: Invoice;
-  // Optional override of logo URL (e.g. signed URL or external host)
   logoUrl?: string;
 }
 
 function formatMoney(amount: number) {
   return `$${amount.toLocaleString("en-SG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
-function formatDate(iso: string) {
+function formatDateLong(iso: string) {
   if (!iso) return "—";
   const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  return d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// Splits a description into a heading (first line) + body (rest)
 function splitDescription(text: string): { heading: string; body: string } {
   const idx = text.indexOf("\n");
   if (idx === -1) return { heading: text, body: "" };
   return { heading: text.slice(0, idx).trim(), body: text.slice(idx + 1).replace(/^\n+/, "") };
 }
 
-// Top-right and bottom-left decorative chevrons (matches existing brand)
-function CornerStripeTopRight() {
-  return (
-    <Svg style={styles.cornerTopRight} viewBox="0 0 230 50">
-      <Polygon points="230,0 230,50 100,0" fill={C.navyDark} />
-      <Polygon points="230,12 230,46 130,12" fill={C.blue} />
-      <Polygon points="230,28 230,46 165,28" fill={C.blueLight} />
-    </Svg>
-  );
-}
-function CornerStripeBottomLeft() {
-  return (
-    <Svg style={styles.cornerBottomLeft} viewBox="0 0 230 50">
-      <Polygon points="0,50 0,0 130,50" fill={C.navyDark} />
-      <Polygon points="0,38 0,4 100,38" fill={C.blue} />
-      <Polygon points="0,22 0,4 65,22" fill={C.blueLight} />
-    </Svg>
-  );
-}
-
 export function InvoiceDocument({ invoice, logoUrl }: Props) {
   const src = logoUrl ?? BUSINESS_DETAILS.logoPath;
-  const subtotal = invoice.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
   const hasLogo = typeof src === "string" && src.length > 0;
+  const subtotal = invoice.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
 
   return (
     <Document title={`Invoice ${invoice.invoiceNumber}`} author={BUSINESS_DETAILS.name}>
       <Page size="A4" style={styles.page} wrap>
 
-        <CornerStripeTopRight />
+        {/* Top accent */}
+        <View style={styles.accentBar} fixed />
 
-        {/* Header: logo + brand on left, INVOICE on right */}
-        <View style={styles.headerRow}>
-          <View style={styles.brandBlock}>
-            {hasLogo ? (
-              // eslint-disable-next-line jsx-a11y/alt-text
-              <Image src={src as string} style={styles.logo} />
-            ) : null}
-            <View style={styles.brandText}>
-              {!hasLogo && <Text style={styles.brandName}>{BUSINESS_DETAILS.name}</Text>}
-              {!hasLogo && <Text style={styles.brandTagline}>{BUSINESS_DETAILS.tagline}</Text>}
-              {BUSINESS_DETAILS.contact && (
-                <Text style={styles.brandLine}>Contact: {BUSINESS_DETAILS.contact}</Text>
-              )}
-              <Text style={styles.brandLine}>UEN: {BUSINESS_DETAILS.uen}</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          {hasLogo ? (
+            // eslint-disable-next-line jsx-a11y/alt-text
+            <Image src={src as string} style={styles.logo} />
+          ) : (
+            <View style={styles.brandFallback}>
+              <Text style={styles.brandFallbackName}>{BUSINESS_DETAILS.name}</Text>
+              <Text style={styles.brandFallbackTag}>{BUSINESS_DETAILS.tagline}</Text>
             </View>
+          )}
+          <View>
+            <Text style={styles.invoiceTitle}>INVOICE</Text>
+            <Text style={styles.invoiceTitleUnder}>{invoice.invoiceNumber}</Text>
           </View>
-          <Text style={styles.invoiceTitle}>INVOICE</Text>
         </View>
 
-        {/* Address block */}
-        <View style={styles.addressBlock}>
-          {BUSINESS_DETAILS.addressLines.map((line, i) => (
-            <Text key={i} style={styles.addressLine}>{line}</Text>
-          ))}
-        </View>
+        <View style={styles.thinDivider} />
 
-        {/* Bill-to + invoice meta */}
-        <View style={styles.metaRow}>
-          <View style={styles.billTo}>
-            <Text style={styles.billToLabel}>
-              BILL TO: <Text style={styles.billToName}>{invoice.billToName || "—"}</Text>
+        {/* From + meta */}
+        <View style={styles.fromMetaRow}>
+          <View style={styles.fromBlock}>
+            <Text style={styles.sectionLabel}>FROM</Text>
+            <Text style={styles.fromName}>{BUSINESS_DETAILS.name}</Text>
+            {BUSINESS_DETAILS.addressLines.map((line, i) => (
+              <Text key={i} style={styles.fromLine}>{line}</Text>
+            ))}
+            <Text style={styles.fromMeta}>
+              UEN {BUSINESS_DETAILS.uen}
+              {BUSINESS_DETAILS.contact ? `  ·  ${BUSINESS_DETAILS.contact}` : ""}
             </Text>
-            {invoice.billToAddress ? (
-              <Text style={styles.billToDetail}>{invoice.billToAddress}</Text>
-            ) : null}
-            {invoice.billToEmail ? (
-              <Text style={styles.billToDetail}>{invoice.billToEmail}</Text>
-            ) : null}
           </View>
-          <View style={styles.metaRight}>
+
+          <View style={styles.metaBlock}>
+            <Text style={styles.sectionLabel}>INVOICE DETAILS</Text>
             <View style={styles.metaRowLine}>
-              <Text style={styles.metaLabel}>Date:</Text>
-              <Text style={styles.metaValue}>{formatDate(invoice.issueDate)}</Text>
+              <Text style={styles.metaLabel}>NUMBER</Text>
+              <Text style={styles.metaValueAccent}>{invoice.invoiceNumber}</Text>
             </View>
             <View style={styles.metaRowLine}>
-              <Text style={styles.metaLabel}>Invoice #:</Text>
-              <Text style={styles.metaValue}>{invoice.invoiceNumber}</Text>
+              <Text style={styles.metaLabel}>ISSUE DATE</Text>
+              <Text style={styles.metaValue}>{formatDateLong(invoice.issueDate)}</Text>
             </View>
-            <View style={styles.metaRowLine}>
-              <Text style={styles.metaLabel}>Due:</Text>
-              <Text style={styles.metaValue}>{formatDate(invoice.dueDate)}</Text>
+            <View style={styles.metaRowLineLast}>
+              <Text style={styles.metaLabel}>DUE DATE</Text>
+              <Text style={styles.metaValue}>{formatDateLong(invoice.dueDate)}</Text>
             </View>
           </View>
+        </View>
+
+        {/* Bill to */}
+        <View style={styles.billToBlock}>
+          <Text style={styles.sectionLabel}>BILL TO</Text>
+          <Text style={styles.billToName}>{invoice.billToName || "—"}</Text>
+          {invoice.billToEmail ? <Text style={styles.billToDetail}>{invoice.billToEmail}</Text> : null}
+          {invoice.billToAddress ? <Text style={styles.billToDetail}>{invoice.billToAddress}</Text> : null}
         </View>
 
         {/* Items table */}
         <View style={styles.tableWrap}>
           <View style={styles.tableHeader} fixed>
-            <Text style={[styles.th, styles.thItem]}>ITEM</Text>
-            <Text style={[styles.th, styles.thQty]}>QTY</Text>
-            <Text style={[styles.th, styles.thPrice]}>PRICE ($)</Text>
-            <Text style={[styles.th, styles.thTotal]}>TOTAL ($)</Text>
+            <Text style={[styles.th, styles.thDesc]}>Description</Text>
+            <Text style={[styles.th, styles.thQty]}>Qty</Text>
+            <Text style={[styles.th, styles.thPrice]}>Price</Text>
+            <Text style={[styles.th, styles.thAmount]}>Amount</Text>
           </View>
 
           {invoice.lineItems.length === 0 && (
             <View style={styles.tr}>
-              <Text style={[styles.tdItem, { color: C.textMuted, fontStyle: "italic" }]}>No line items</Text>
+              <Text style={[styles.tdDesc, { color: C.textMuted, fontStyle: "italic" }]}>No line items</Text>
               <Text style={styles.tdQty}>—</Text>
               <Text style={styles.tdPrice}>—</Text>
-              <Text style={styles.tdTotal}>—</Text>
+              <Text style={styles.tdAmount}>—</Text>
             </View>
           )}
 
-          {invoice.lineItems.map((li) => {
+          {invoice.lineItems.map((li, i) => {
             const { heading, body } = splitDescription(li.description || "");
+            const rowStyle = i % 2 === 1 ? styles.trAlt : styles.tr;
             return (
-              <View key={li.id} style={styles.tr} wrap={false}>
-                <View style={styles.tdItem}>
+              <View key={li.id} style={rowStyle} wrap={false}>
+                <View style={styles.tdDesc}>
                   {heading ? <Text style={styles.itemHeading}>{heading}</Text> : null}
                   {body ? <Text style={styles.itemBody}>{body}</Text> : null}
                 </View>
                 <Text style={styles.tdQty}>{li.qty}</Text>
                 <Text style={styles.tdPrice}>{formatMoney(li.unitPrice)}</Text>
-                <Text style={styles.tdTotal}>{formatMoney(li.lineTotal || li.qty * li.unitPrice)}</Text>
+                <Text style={styles.tdAmount}>{formatMoney(li.lineTotal || li.qty * li.unitPrice)}</Text>
               </View>
             );
           })}
+        </View>
 
-          {/* TOTAL */}
-          <View style={styles.totalRow}>
-            <View style={styles.totalLabelCell}><Text style={styles.totalLabel}>TOTAL</Text></View>
-            <Text style={[styles.totalAmountCell, styles.totalAmount]}>{formatMoney(subtotal)}</Text>
+        {/* Totals */}
+        <View style={styles.totalsBlock}>
+          <View style={styles.totalsTable}>
+            <View style={styles.totalsRow}>
+              <Text style={styles.totalsLabel}>SUBTOTAL</Text>
+              <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
+            </View>
+            <View style={styles.totalsRowGrand}>
+              <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
+              <Text style={styles.totalsValueGrand}>{formatMoney(subtotal)}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Notes + payment instructions */}
+        {/* Notes / payment panel */}
         {(invoice.notes || invoice.paymentInstructions) ? (
-          <View style={styles.notesBlock}>
-            {invoice.notes ? (
-              invoice.notes.split("\n").map((line, i) => (
-                <Text key={`n${i}`} style={styles.notesLine}>{line}</Text>
-              ))
-            ) : null}
+          <View style={styles.notesPanel} wrap={false}>
             {invoice.paymentInstructions ? (
-              invoice.paymentInstructions.split("\n").map((line, i) => (
-                <Text key={`p${i}`} style={styles.notesLine}>{line}</Text>
-              ))
+              <>
+                <Text style={styles.notesPanelLabel}>PAYMENT</Text>
+                {invoice.paymentInstructions.split("\n").map((line, i) => (
+                  <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
+                ))}
+              </>
+            ) : null}
+            {invoice.notes ? (
+              <>
+                {invoice.paymentInstructions ? <Text style={{ marginTop: 8 }} /> : null}
+                <Text style={styles.notesPanelLabel}>NOTES</Text>
+                {invoice.notes.split("\n").map((line, i) => (
+                  <Text key={`n${i}`} style={styles.notesPanelText}>{line}</Text>
+                ))}
+              </>
             ) : null}
           </View>
         ) : null}
 
         {/* Signatures */}
         <View style={styles.signaturesBlock} wrap={false}>
-          {["NAME/TITLE", "CUSTOMER SIGNATURE", "DATE"].map((label) => (
+          {["Name / Title", "Customer Signature", "Date"].map((label) => (
             <View key={label} style={styles.signature}>
               <View style={styles.signatureLine} />
               <Text style={styles.signatureLabel}>{label}</Text>
@@ -300,7 +351,18 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           ))}
         </View>
 
-        <CornerStripeBottomLeft />
+        {/* Footer (fixed bottom) */}
+        <View style={styles.footer} fixed>
+          <View style={styles.footerLine} />
+          <View style={styles.footerContent}>
+            <Text style={styles.footerBrand}>
+              {BUSINESS_DETAILS.name} · {BUSINESS_DETAILS.tagline}
+            </Text>
+            <Text style={styles.footerNote}>
+              Invoice {invoice.invoiceNumber}
+            </Text>
+          </View>
+        </View>
       </Page>
     </Document>
   );
