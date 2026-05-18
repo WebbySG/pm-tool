@@ -14,8 +14,9 @@ import {
 import type { Invoice, InvoiceLog } from "@/lib/invoice-types";
 import { computeDerivedStatus } from "@/lib/invoice-types";
 import {
-  Loader2, Save, Trash2, Copy, CheckCircle2, RotateCcw, Send, Download, Mail,
+  Loader2, Save, Trash2, Copy, CheckCircle2, RotateCcw, Send, Mail,
 } from "lucide-react";
+import { InvoicePdfActions } from "@/components/invoice-pdf-actions";
 
 const STATUS_COLOR: Record<string, string> = {
   draft: "#9ca3af", sent: "#38b6e8", paid: "#22c55e", overdue: "#ef4444", void: "#6b7280",
@@ -245,12 +246,14 @@ export default function InvoiceDetailPage() {
           </button>
         </div>
 
-        {/* Phase 2/3 placeholders */}
-        <div className="rounded-xl p-3 flex items-center gap-3 text-xs"
-          style={{ background: "var(--bg-surface)", border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
-          <div className="flex items-center gap-1.5 opacity-60"><Download size={12} /> Download PDF — coming in Phase 2</div>
-          <span style={{ color: "var(--text-muted)" }}>·</span>
-          <div className="flex items-center gap-1.5 opacity-60"><Mail size={12} /> Email to client — coming in Phase 3</div>
+        {/* PDF actions + Phase 3 placeholder */}
+        <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap"
+          style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+          <InvoicePdfActions invoice={inv} />
+          <div className="w-px h-5" style={{ background: "var(--border)" }} />
+          <div className="flex items-center gap-1.5 text-xs opacity-60" style={{ color: "var(--text-muted)" }}>
+            <Mail size={12} /> Email to client — coming in Phase 3
+          </div>
         </div>
 
         {/* Form */}

@@ -430,8 +430,11 @@ lib/auth-context.tsx          — PmUser, role resolution, canAccessContent
 lib/mock-data.ts              — Types only. USERS array is dead — do not use in UI
 lib/invoice-types.ts          — Invoice / InvoiceTemplate / InvoiceLog types + computeDerivedStatus
 lib/invoice-db.ts             — Invoice CRUD, templates, logs, client billing helpers (NOT in main store — pages call directly)
-components/invoice-line-items-editor.tsx — Shared line items grid editor
+components/invoice-line-items-editor.tsx — Shared line items grid editor (multi-line textarea for description)
 components/invoice-template-form.tsx     — Shared create/edit template form
+components/invoice-pdf.tsx               — React-PDF Document (branded WebbySG design)
+components/invoice-pdf-actions.tsx       — Client-only Preview + Download PDF buttons (dynamic import, ssr: false)
+lib/invoice-business-details.ts          — Source of truth for "From" details + logo path
 app/(app)/invoices/page.tsx              — Invoice list w/ status filter (admin only)
 app/(app)/invoices/new/page.tsx          — Create from template / past invoice / blank
 app/(app)/invoices/[id]/page.tsx         — View/edit, mark sent/paid, duplicate, delete, activity log
@@ -449,8 +452,11 @@ app/(app)/invoices/templates/[id]/page.tsx — Edit template
 - **Line totals:** `pm_invoice_line_items.line_total` is a generated column (`qty * unit_price stored`). Don't insert it manually.
 - **Currency:** SGD-only for now. UI shows `S$` prefix.
 - **No tax.** Subtotal = total. If GST is added later, add a `tax_rate` and `tax_total` column.
-- **Phase 1 only (Done):** CRUD, templates, duplicate, mark sent/paid, activity log. "Mark as sent" only flips status — no actual email.
-- **Phase 2 (TODO):** React-PDF template, preview/download buttons (placeholders already in UI).
-- **Phase 3 (TODO):** Edge Function `send-invoice-email` using Gmail/Workspace SMTP + Nodemailer. Will require Google app password in Edge Function secrets.
+- **Phase 1 (Done):** CRUD, templates, duplicate, mark sent/paid, activity log. "Mark as sent" only flips status — no actual email.
+- **Phase 2 (Done):** React-PDF branded template. Client-side generation via `@react-pdf/renderer`. Preview opens blob in new tab; Download triggers `<filename>.pdf` download. Component is `<InvoiceDocument>` in `components/invoice-pdf.tsx`. Must be dynamically imported with `{ ssr: false }` because @react-pdf/renderer is not SSR-safe.
+- **Phase 3 (TODO):** Edge Function `send-invoice-email` using Gmail/Workspace SMTP + Nodemailer. Will need to render the PDF server-side (call `pdf(<InvoiceDocument …/>).toBuffer()`) and upload to `pm-invoices` bucket before attaching to the email. Requires Google app password in Edge Function secrets.
 - **Phase 4 (TODO):** `pg_cron` daily job that reads `pm_invoices.reminder_cadence_days` per-invoice and triggers reminder emails until paid.
-- **Storage bucket:** `pm-invoices` (private). Will hold generated PDFs once Phase 2 lands.
+- **Storage bucket:** `pm-invoices` (private). Will hold generated PDFs once Phase 3 starts attaching to emails.
+- **Logo asset:** `public/webby-sg-logo.png` — path is hardcoded in `lib/invoice-business-details.ts → logoPath`. Drop the WebbySG logo there as a PNG (transparent background, ~600px). If the file is missing, React-PDF will throw at generation time — there's no fallback in the current code.
+- **Business details:** Webby SG / UEN 202444139M / 60 Paya Lebar Road #07-54 Paya Lebar Square / Singapore 409051 / Contact 8080 5608 (Leon). Edit `lib/invoice-business-details.ts` to change.
+- **Seeded templates:** "Monthly SEO Project" (SEO Starter $2400 + Google Ads $300/mo) and "Premium Website Development" ($899 one-time). Live in `pm_invoice_templates`.

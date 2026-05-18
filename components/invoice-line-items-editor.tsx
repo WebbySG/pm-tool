@@ -42,14 +42,15 @@ export function LineItemsEditor({ items, onChange, currency = "SGD" }: Props) {
         </div>
       )}
       {items.map((li, i) => (
-        <div key={i} className="grid grid-cols-[1fr_90px_120px_120px_36px] gap-2 px-4 py-2 items-center"
+        <div key={i} className="grid grid-cols-[1fr_90px_120px_120px_36px] gap-2 px-4 py-2 items-start"
           style={{ background: "var(--bg-base)", borderBottom: "1px solid var(--border)" }}>
-          <input
+          <textarea
             value={li.description}
             onChange={(e) => update(i, { description: e.target.value })}
-            placeholder="Line description"
-            className="bg-transparent text-sm outline-none px-2 py-1.5 rounded"
-            style={{ color: "var(--text)", border: "1px solid var(--border)" }}
+            placeholder="Line description — supports multiple lines and bullets (• or -)"
+            rows={Math.max(2, li.description.split("\n").length)}
+            className="bg-transparent text-sm outline-none px-2 py-1.5 rounded resize-y font-mono"
+            style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 60 }}
           />
           <input
             type="number" step="0.01" min="0"
