@@ -401,6 +401,8 @@ export const useStore = create<Store>()(
   },
 
   approveTaskCompletion: async (projectId, taskId, taskTitle) => {
+    const proj = get().projects.find((p) => p.id === projectId);
+    const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
     await get().addNotification({
@@ -409,10 +411,14 @@ export const useStore = create<Store>()(
       type: "task_assigned",
       projectId,
       taskId,
+      userId: assigneeId,
+      link: `/projects/${projectId}?task=${taskId}`,
     });
   },
 
   rejectTask: async (projectId, taskId, taskTitle) => {
+    const proj = get().projects.find((p) => p.id === projectId);
+    const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "revision_required" }) })) }));
     await db.dbUpdateTask(taskId, { status: "revision_required" });
     await get().addNotification({
@@ -421,6 +427,8 @@ export const useStore = create<Store>()(
       type: "task_assigned",
       projectId,
       taskId,
+      userId: assigneeId,
+      link: `/projects/${projectId}?task=${taskId}`,
     });
   },
 

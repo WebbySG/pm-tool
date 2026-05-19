@@ -526,6 +526,8 @@ function TaskPanel({
           type: "mention",
           projectId,
           taskId: task.id,
+          userId: m.id,
+          link: `/projects/${projectId}?task=${task.id}`,
         });
       }
     } catch (err: unknown) {

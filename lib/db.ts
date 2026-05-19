@@ -442,6 +442,8 @@ export async function dbAddNotification(id: string, data: Omit<Notification, "id
     id, title: data.title, body: data.body, type: data.type,
     project_id: data.projectId ?? null,
     task_id: data.taskId ?? null,
+    user_id: data.userId ?? null,
+    link: data.link ?? null,
   });
   if (error) console.error("dbAddNotification", error);
 }

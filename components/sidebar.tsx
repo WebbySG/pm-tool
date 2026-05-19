@@ -27,10 +27,16 @@ export function Sidebar() {
   const path = usePathname();
   const { notifications } = useStore();
   const { user, signOut } = useAuth();
-  const unreadCount = notifications.filter((n) => !n.read).length;
   const chatUnread = useChatUnread(user?.id);
 
   const isAdmin = user?.pmRole === "admin";
+  // Mirror the notifications-page filter so badge count matches what the user actually sees.
+  // Admin tray shows only approval requests; staff see workspace-global + their own targeted.
+  const unreadCount = notifications.filter((n) => {
+    if (n.read) return false;
+    if (isAdmin) return n.type === "approval_request";
+    return !n.userId || n.userId === user?.id;
+  }).length;
   const NAV = ALL_NAV.filter((item) => {
     if (item.adminOnly && !isAdmin) return false;
     if (item.href === "/content" && !isAdmin && !user?.canAccessContent) return false;
