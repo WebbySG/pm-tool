@@ -14,7 +14,7 @@ import {
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
-import Link from "next/link";
+import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, Plus, Send, Paperclip, Search,
   X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
@@ -87,6 +87,10 @@ export default function ChatPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
+  // Resolve the open task drawer (live from store)
+  const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
 
   // Load staff + conversations
   useEffect(() => {
@@ -140,6 +144,31 @@ export default function ChatPage() {
     return <MessageSquare size={14} style={{ color: "#34d399" }} />;
   }
 
+  // Count of active (not done) tasks relevant to this conversation
+  function getConvTaskCount(c: ConversationWithUnread): number {
+    if (c.kind === "project") {
+      const p = projects.find((pp) => pp.id === c.projectId);
+      if (!p) return 0;
+      let n = 0;
+      for (const t of p.tasks) {
+        if (t.status !== "done") n++;
+        for (const s of t.subtasks) if (s.status !== "done") n++;
+      }
+      return n;
+    }
+    const memberIds = new Set(c.members.map((m) => m.userId));
+    let n = 0;
+    for (const p of projects) {
+      for (const t of p.tasks) {
+        if (t.status !== "done" && memberIds.has(t.assigneeId)) n++;
+        for (const s of t.subtasks) {
+          if (s.status !== "done" && memberIds.has(s.assigneeId)) n++;
+        }
+      }
+    }
+    return n;
+  }
+
   const filteredConvs = useMemo(() => {
     if (!convSearch.trim()) return convs;
     const q = convSearch.toLowerCase();
@@ -181,18 +210,27 @@ export default function ChatPage() {
               </div>
             ) : filteredConvs.map((c) => {
               const active = c.id === selectedId;
+              const taskCount = getConvTaskCount(c);
               return (
                 <button key={c.id} onClick={() => setSelectedId(c.id)}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-opacity hover:opacity-90 mb-0.5"
                   style={{ background: active ? "var(--bg-surface)" : "transparent" }}>
                   <div className="shrink-0">{getConvIcon(c)}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold truncate" style={{ color: active ? "var(--text)" : "var(--text-muted)" }}>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-semibold truncate flex-1" style={{ color: active ? "var(--text)" : "var(--text-muted)" }}>
                         {getConvDisplayName(c)}
                       </p>
+                      {taskCount > 0 && (
+                        <span title={`${taskCount} active task${taskCount !== 1 ? "s" : ""}`}
+                          className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0"
+                          style={{ background: "var(--accent)15", color: "var(--accent)", border: "1px solid var(--accent)40" }}>
+                          <ListTodo size={9} /> {taskCount}
+                        </span>
+                      )}
                       {c.unreadCount > 0 && (
-                        <span className="text-xs px-1.5 rounded-full font-bold ml-auto shrink-0"
+                        <span title={`${c.unreadCount} unread`}
+                          className="text-xs px-1.5 py-0.5 rounded-full font-bold shrink-0"
                           style={{ background: "#ef4444", color: "#fff" }}>{c.unreadCount}</span>
                       )}
                     </div>
@@ -222,6 +260,7 @@ export default function ChatPage() {
               isAdmin={user?.pmRole === "admin"}
               onAfterChange={reloadConvs}
               onDeleted={() => { setSelectedId(null); reloadConvs(); }}
+              onOpenTask={(taskId) => setOpenTaskId(taskId)}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center">
@@ -230,6 +269,15 @@ export default function ChatPage() {
           )}
         </main>
       </div>
+
+      {/* Task drawer popup — opened inline from message refs or Tasks panel */}
+      {openTaskRef && (
+        <TaskDrawer
+          task={openTaskRef.task}
+          projectId={openTaskRef.projectId}
+          onClose={() => setOpenTaskId(null)}
+        />
+      )}
 
       {/* New conversation dialog */}
       {showNew && (
@@ -255,7 +303,7 @@ export default function ChatPage() {
 // ────────────────────────────────────────────────────────────────────────────
 
 function MessageView({
-  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, onAfterChange, onDeleted,
+  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, onAfterChange, onDeleted, onOpenTask,
 }: {
   conversation: ConversationWithUnread;
   displayName: string;
@@ -266,6 +314,7 @@ function MessageView({
   isAdmin: boolean;
   onAfterChange: () => void;
   onDeleted: () => void;
+  onOpenTask: (taskId: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -391,6 +440,7 @@ function MessageView({
                     projects={projects}
                     isOwn={msg.authorId === currentUserId}
                     onSaved={() => { /* realtime will update */ }}
+                    onOpenTask={onOpenTask}
                   />
                 </div>
               );
@@ -419,6 +469,7 @@ function MessageView({
           projects={projects}
           liveStaff={liveStaff}
           onPick={(taskId) => setPendingTaskInsert(taskId)}
+          onOpenTask={onOpenTask}
           onClose={() => setShowTasks(false)}
         />
       )}
@@ -444,7 +495,7 @@ function MessageView({
 // ────────────────────────────────────────────────────────────────────────────
 
 function MessageItem({
-  msg, grouped, liveStaff, projects, isOwn, onSaved,
+  msg, grouped, liveStaff, projects, isOwn, onSaved, onOpenTask,
 }: {
   msg: ChatMessage;
   grouped: boolean;
@@ -452,6 +503,7 @@ function MessageItem({
   projects: Project[];
   isOwn: boolean;
   onSaved: () => void;
+  onOpenTask: (taskId: string) => void;
 }) {
   const author = liveStaff.find((s) => staffAuthId(s) === msg.authorId);
   const color = avatarColor(author, liveStaff);
@@ -525,7 +577,7 @@ function MessageItem({
           <div>
             {msg.body && (
               <div className="text-sm whitespace-pre-wrap break-words" style={{ color: "var(--text)" }}>
-                <RenderBody body={msg.body} liveStaff={liveStaff} projects={projects} />
+                <RenderBody body={msg.body} liveStaff={liveStaff} projects={projects} onOpenTask={onOpenTask} />
               </div>
             )}
             {msg.attachmentUrl && (
@@ -560,7 +612,7 @@ function MessageItem({
   );
 }
 
-function RenderBody({ body, liveStaff, projects }: { body: string; liveStaff: LiveStaff[]; projects: Project[] }) {
+function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; liveStaff: LiveStaff[]; projects: Project[]; onOpenTask: (taskId: string) => void }) {
   // Combined regex: @mentions OR [task:UUID]
   const combined = /(@[a-zA-Z][a-zA-Z0-9_-]{1,30})|(\[task:[0-9a-fA-F-]{36}\])/g;
   const firstNames = new Set(liveStaff.filter((s) => s.first_name).map((s) => s.first_name!.toLowerCase()));
@@ -585,16 +637,17 @@ function RenderBody({ body, liveStaff, projects }: { body: string; liveStaff: Li
       const ref = findTaskById(projects, taskId);
       if (ref) {
         const color = taskStatusColor[ref.task.status] ?? "#64748b";
+        const tid = ref.task.id;
         parts.push(
-          <Link key={`task${key++}`} href={`/projects/${ref.projectId}?task=${ref.task.id}`}
-            className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-0.5 rounded-md border align-baseline hover:opacity-80"
+          <button key={`task${key++}`} type="button" onClick={() => onOpenTask(tid)}
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-0.5 rounded-md border align-baseline hover:opacity-80 cursor-pointer"
             style={{ background: "var(--bg-surface)", borderColor: "var(--border)", color: "var(--text)" }}>
             <CheckSquare size={11} style={{ color }} />
             <span className="text-xs font-medium">{ref.task.title}</span>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>· {ref.projectName}</span>
             <span className="text-xs font-semibold px-1 rounded"
               style={{ background: `${color}25`, color }}>{taskStatusLabel[ref.task.status]}</span>
-          </Link>,
+          </button>,
         );
       } else {
         parts.push(<span key={`t${key++}`} className="text-xs italic" style={{ color: "var(--text-muted)" }}>[task unavailable]</span>);
@@ -1246,12 +1299,13 @@ function MembersDialog({
 // ────────────────────────────────────────────────────────────────────────────
 
 function TasksPanel({
-  conversation, projects, liveStaff, onPick, onClose,
+  conversation, projects, liveStaff, onPick, onOpenTask, onClose,
 }: {
   conversation: ConversationWithUnread;
   projects: Project[];
   liveStaff: LiveStaff[];
   onPick: (taskId: string) => void;
+  onOpenTask: (taskId: string) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -1370,11 +1424,11 @@ function TasksPanel({
                         style={{ background: "var(--accent)20", color: "var(--accent)" }}>
                         <CheckSquare size={10} /> Reference in chat
                       </button>
-                      <Link href={`/projects/${t.projectId}?task=${t.id}`}
+                      <button onClick={() => onOpenTask(t.id)}
                         className="text-xs px-2 py-1 rounded hover:opacity-80"
                         style={{ color: "var(--text-muted)" }}>
                         Open →
-                      </Link>
+                      </button>
                     </div>
                   </div>
                 );

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import { ChatToastContainer } from "@/components/chat-toast-container";
 import { useAuth } from "@/lib/auth-context";
 import { useStore } from "@/lib/store";
 import { Zap } from "lucide-react";
@@ -75,6 +76,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+      <ChatToastContainer />
     </div>
   );
 }
