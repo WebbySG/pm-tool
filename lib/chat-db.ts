@@ -1,0 +1,406 @@
+import { supabase } from "./supabase";
+import type {
+  ChatConversation, ChatMessage, ChatMember,
+  ConversationKind, ChatAttachmentType, ConversationWithUnread,
+} from "./chat-types";
+
+type Row = Record<string, unknown>;
+
+const CHAT_BUCKET = "pm-attachments";
+
+function rowToConversation(r: Row, members: ChatMember[] = []): ChatConversation {
+  return {
+    id: r.id as string,
+    kind: r.kind as ConversationKind,
+    name: (r.name as string | null) ?? null,
+    projectId: (r.project_id as string | null) ?? null,
+    createdBy: (r.created_by as string | null) ?? null,
+    createdAt: r.created_at as string,
+    lastMessageAt: r.last_message_at as string,
+    members,
+  };
+}
+
+function rowToMember(r: Row): ChatMember {
+  return {
+    userId: r.user_id as string,
+    joinedAt: r.joined_at as string,
+    lastReadAt: r.last_read_at as string,
+  };
+}
+
+function rowToMessage(r: Row, mentions: string[] = []): ChatMessage {
+  return {
+    id: r.id as string,
+    conversationId: r.conversation_id as string,
+    authorId: r.author_id as string,
+    body: (r.body as string) ?? "",
+    attachmentUrl: (r.attachment_url as string | null) ?? null,
+    attachmentName: (r.attachment_name as string | null) ?? null,
+    attachmentType: (r.attachment_type as ChatAttachmentType | null) ?? null,
+    editedAt: (r.edited_at as string | null) ?? null,
+    deletedAt: (r.deleted_at as string | null) ?? null,
+    createdAt: r.created_at as string,
+    mentionedUserIds: mentions,
+  };
+}
+
+// ─── Conversations ─────────────────────────────────────────────────────────────
+
+export async function loadConversationsForUser(userId: string): Promise<ConversationWithUnread[]> {
+  // 1) Get all conversation IDs the user is a member of
+  const { data: memberRows, error: mErr } = await supabase
+    .from("pm_chat_members")
+    .select("conversation_id, last_read_at")
+    .eq("user_id", userId);
+  if (mErr) throw mErr;
+  const lastReadByConv = new Map<string, string>();
+  for (const r of memberRows ?? []) {
+    const row = r as Row;
+    lastReadByConv.set(row.conversation_id as string, row.last_read_at as string);
+  }
+  const convIds = Array.from(lastReadByConv.keys());
+  if (convIds.length === 0) return [];
+
+  // 2) Conversations + all members + last message (in 3 queries)
+  const [{ data: convRows, error: cErr }, { data: allMembersRows, error: amErr }, { data: lastMsgRows, error: lmErr }] = await Promise.all([
+    supabase.from("pm_chat_conversations").select("*").in("id", convIds).order("last_message_at", { ascending: false }),
+    supabase.from("pm_chat_members").select("*").in("conversation_id", convIds),
+    // Latest non-deleted message per conversation (we fetch many then group client-side; OK for small N)
+    supabase.from("pm_chat_messages")
+      .select("conversation_id, author_id, body, attachment_name, created_at, deleted_at")
+      .in("conversation_id", convIds)
+      .order("created_at", { ascending: false })
+      .limit(200),
+  ]);
+  if (cErr) throw cErr;
+  if (amErr) throw amErr;
+  if (lmErr) throw lmErr;
+
+  const membersByConv = new Map<string, ChatMember[]>();
+  for (const r of allMembersRows ?? []) {
+    const m = rowToMember(r as Row);
+    const arr = membersByConv.get((r as Row).conversation_id as string) ?? [];
+    arr.push(m);
+    membersByConv.set((r as Row).conversation_id as string, arr);
+  }
+
+  const previewByConv = new Map<string, { preview: string; authorId: string }>();
+  for (const r of lastMsgRows ?? []) {
+    const row = r as Row;
+    if (row.deleted_at) continue;
+    const cid = row.conversation_id as string;
+    if (previewByConv.has(cid)) continue; // first non-deleted is latest (already ordered desc)
+    const body = (row.body as string) ?? "";
+    const attachment = (row.attachment_name as string | null) ?? null;
+    const preview = body || (attachment ? `📎 ${attachment}` : "");
+    previewByConv.set(cid, { preview, authorId: row.author_id as string });
+  }
+
+  // 3) Unread counts: for each conv, count non-deleted messages from others created after last_read_at
+  const unreadByConv = new Map<string, number>();
+  if (convIds.length > 0) {
+    // We do one query per conv to keep SQL simple; for ~50 convs this is fine
+    await Promise.all(convIds.map(async (cid) => {
+      const lastRead = lastReadByConv.get(cid) ?? new Date(0).toISOString();
+      const { count } = await supabase
+        .from("pm_chat_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", cid)
+        .gt("created_at", lastRead)
+        .neq("author_id", userId)
+        .is("deleted_at", null);
+      unreadByConv.set(cid, count ?? 0);
+    }));
+  }
+
+  return (convRows ?? []).map((r) => {
+    const c = rowToConversation(r as Row, membersByConv.get((r as Row).id as string) ?? []);
+    const preview = previewByConv.get(c.id);
+    const withUnread: ConversationWithUnread = {
+      ...c,
+      unreadCount: unreadByConv.get(c.id) ?? 0,
+      lastMessagePreview: preview?.preview ?? null,
+      lastMessageAuthorId: preview?.authorId ?? null,
+    };
+    return withUnread;
+  });
+}
+
+// ─── Conversation creation ─────────────────────────────────────────────────────
+
+export async function findOrCreateDM(userA: string, userB: string): Promise<string> {
+  // Find existing DM with exactly these two members
+  const [a, b] = [userA, userB].sort();
+  // Get all DM conversations where userA is a member
+  const { data: aConvs, error: e1 } = await supabase
+    .from("pm_chat_members")
+    .select("conversation_id")
+    .eq("user_id", a);
+  if (e1) throw e1;
+  const aIds = (aConvs ?? []).map((r) => (r as Row).conversation_id as string);
+  if (aIds.length > 0) {
+    const { data: candidates, error: e2 } = await supabase
+      .from("pm_chat_conversations")
+      .select("id, kind")
+      .in("id", aIds)
+      .eq("kind", "dm");
+    if (e2) throw e2;
+    const dmIds = (candidates ?? []).map((r) => (r as Row).id as string);
+    if (dmIds.length > 0) {
+      const { data: bIn, error: e3 } = await supabase
+        .from("pm_chat_members")
+        .select("conversation_id")
+        .eq("user_id", b)
+        .in("conversation_id", dmIds);
+      if (e3) throw e3;
+      const match = (bIn ?? [])[0];
+      if (match) return (match as Row).conversation_id as string;
+    }
+  }
+
+  // Otherwise create
+  const { data: conv, error: cErr } = await supabase.from("pm_chat_conversations")
+    .insert({ kind: "dm", created_by: userA })
+    .select("id").single();
+  if (cErr) throw cErr;
+  const convId = (conv as { id: string }).id;
+  await supabase.from("pm_chat_members").insert([
+    { conversation_id: convId, user_id: a },
+    { conversation_id: convId, user_id: b },
+  ]);
+  return convId;
+}
+
+export async function createGroup(name: string, memberIds: string[], createdBy: string): Promise<string> {
+  const { data: conv, error: cErr } = await supabase.from("pm_chat_conversations")
+    .insert({ kind: "group", name, created_by: createdBy })
+    .select("id").single();
+  if (cErr) throw cErr;
+  const convId = (conv as { id: string }).id;
+  const allMembers = Array.from(new Set([...memberIds, createdBy]));
+  await supabase.from("pm_chat_members").insert(
+    allMembers.map((uid) => ({ conversation_id: convId, user_id: uid })),
+  );
+  return convId;
+}
+
+export async function ensureProjectChannel(projectId: string, defaultMemberIds: string[], createdBy: string): Promise<string> {
+  const { data: existing } = await supabase.from("pm_chat_conversations")
+    .select("id").eq("project_id", projectId).eq("kind", "project").maybeSingle();
+  if (existing) {
+    // Make sure current user is a member (idempotent)
+    await supabase.from("pm_chat_members").upsert(
+      { conversation_id: (existing as { id: string }).id, user_id: createdBy },
+      { onConflict: "conversation_id,user_id", ignoreDuplicates: true },
+    );
+    return (existing as { id: string }).id;
+  }
+  const { data: conv, error: cErr } = await supabase.from("pm_chat_conversations")
+    .insert({ kind: "project", project_id: projectId, created_by: createdBy })
+    .select("id").single();
+  if (cErr) throw cErr;
+  const convId = (conv as { id: string }).id;
+  const allMembers = Array.from(new Set([...defaultMemberIds, createdBy]));
+  await supabase.from("pm_chat_members").insert(
+    allMembers.map((uid) => ({ conversation_id: convId, user_id: uid })),
+  );
+  return convId;
+}
+
+export async function syncProjectChannelMembers(conversationId: string, memberIds: string[]): Promise<void> {
+  // Replace member set (additions only - never remove the channel creator)
+  const { data: existing } = await supabase.from("pm_chat_members")
+    .select("user_id").eq("conversation_id", conversationId);
+  const existingIds = new Set((existing ?? []).map((r) => (r as Row).user_id as string));
+  const toAdd = memberIds.filter((id) => !existingIds.has(id));
+  if (toAdd.length > 0) {
+    await supabase.from("pm_chat_members").insert(
+      toAdd.map((uid) => ({ conversation_id: conversationId, user_id: uid })),
+    );
+  }
+}
+
+// ─── Messages ──────────────────────────────────────────────────────────────────
+
+export async function loadMessages(conversationId: string, limit = 200): Promise<ChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("*").eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  const msgs = (rows ?? []).map((r) => rowToMessage(r as Row)).reverse();
+
+  if (msgs.length === 0) return msgs;
+  const ids = msgs.map((m) => m.id);
+  const { data: mentionRows } = await supabase.from("pm_chat_mentions")
+    .select("message_id, mentioned_user_id").in("message_id", ids);
+  const mentionsByMsg = new Map<string, string[]>();
+  for (const r of mentionRows ?? []) {
+    const row = r as Row;
+    const arr = mentionsByMsg.get(row.message_id as string) ?? [];
+    arr.push(row.mentioned_user_id as string);
+    mentionsByMsg.set(row.message_id as string, arr);
+  }
+  for (const m of msgs) m.mentionedUserIds = mentionsByMsg.get(m.id) ?? [];
+  return msgs;
+}
+
+export type SendMessageInput = {
+  conversationId: string;
+  authorId: string;
+  body: string;
+  attachment?: { url: string; name: string; type: ChatAttachmentType } | null;
+  mentionedUserIds?: string[];
+};
+
+export async function sendMessage(input: SendMessageInput): Promise<ChatMessage> {
+  const { data: row, error } = await supabase.from("pm_chat_messages").insert({
+    conversation_id: input.conversationId,
+    author_id: input.authorId,
+    body: input.body,
+    attachment_url: input.attachment?.url ?? null,
+    attachment_name: input.attachment?.name ?? null,
+    attachment_type: input.attachment?.type ?? null,
+  }).select("*").single();
+  if (error) throw error;
+  const msg = rowToMessage(row as Row);
+
+  // Persist mentions
+  const mentions = Array.from(new Set(input.mentionedUserIds ?? []));
+  if (mentions.length > 0) {
+    await supabase.from("pm_chat_mentions").insert(
+      mentions.map((uid) => ({ message_id: msg.id, mentioned_user_id: uid })),
+    );
+    msg.mentionedUserIds = mentions;
+  }
+
+  return msg;
+}
+
+export async function editMessage(messageId: string, body: string, mentionedUserIds: string[] = []): Promise<void> {
+  const { error } = await supabase.from("pm_chat_messages")
+    .update({ body, edited_at: new Date().toISOString() })
+    .eq("id", messageId);
+  if (error) throw error;
+  // Replace mentions
+  await supabase.from("pm_chat_mentions").delete().eq("message_id", messageId);
+  if (mentionedUserIds.length > 0) {
+    await supabase.from("pm_chat_mentions").insert(
+      mentionedUserIds.map((uid) => ({ message_id: messageId, mentioned_user_id: uid })),
+    );
+  }
+}
+
+export async function deleteMessage(messageId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_messages")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", messageId);
+  if (error) throw error;
+}
+
+export async function markRead(conversationId: string, userId: string): Promise<void> {
+  await supabase.from("pm_chat_members")
+    .update({ last_read_at: new Date().toISOString() })
+    .eq("conversation_id", conversationId)
+    .eq("user_id", userId);
+}
+
+// ─── Attachments ───────────────────────────────────────────────────────────────
+
+export async function uploadChatAttachment(file: File, conversationId: string): Promise<{ url: string; name: string; type: ChatAttachmentType }> {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `chat/${conversationId}/${Date.now()}_${safeName}`;
+  const contentType = file.type || "application/octet-stream";
+  const { error } = await supabase.storage.from(CHAT_BUCKET).upload(path, file, { contentType });
+  if (error) throw error;
+  const { data } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
+  const type: ChatAttachmentType = file.type.startsWith("image/") ? "image"
+    : file.type.startsWith("video/") ? "video" : "document";
+  return { url: data.publicUrl, name: file.name, type };
+}
+
+// ─── Unread totals ────────────────────────────────────────────────────────────
+
+export async function getTotalUnreadForUser(userId: string): Promise<number> {
+  const { data: memberRows, error: mErr } = await supabase
+    .from("pm_chat_members")
+    .select("conversation_id, last_read_at")
+    .eq("user_id", userId);
+  if (mErr) return 0;
+  if (!memberRows || memberRows.length === 0) return 0;
+  let total = 0;
+  await Promise.all((memberRows as Row[]).map(async (r) => {
+    const cid = r.conversation_id as string;
+    const lastRead = (r.last_read_at as string) ?? new Date(0).toISOString();
+    const { count } = await supabase
+      .from("pm_chat_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", cid)
+      .gt("created_at", lastRead)
+      .neq("author_id", userId)
+      .is("deleted_at", null);
+    total += count ?? 0;
+  }));
+  return total;
+}
+
+// ─── Realtime subscriptions ────────────────────────────────────────────────────
+
+export function subscribeToConversation(
+  conversationId: string,
+  handlers: {
+    onInsert?: (msg: ChatMessage) => void;
+    onUpdate?: (msg: ChatMessage) => void;
+  },
+) {
+  const channel = supabase.channel(`chat-conv-${conversationId}`)
+    .on("postgres_changes", {
+      event: "INSERT", schema: "public", table: "pm_chat_messages",
+      filter: `conversation_id=eq.${conversationId}`,
+    }, (payload) => {
+      const m = rowToMessage(payload.new as Row);
+      handlers.onInsert?.(m);
+    })
+    .on("postgres_changes", {
+      event: "UPDATE", schema: "public", table: "pm_chat_messages",
+      filter: `conversation_id=eq.${conversationId}`,
+    }, (payload) => {
+      const m = rowToMessage(payload.new as Row);
+      handlers.onUpdate?.(m);
+    })
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
+export function subscribeToInboxForUser(
+  _userId: string,
+  onAnyChange: () => void,
+) {
+  const channel = supabase.channel(`chat-inbox`)
+    .on("postgres_changes", {
+      event: "*", schema: "public", table: "pm_chat_messages",
+    }, () => onAnyChange())
+    .on("postgres_changes", {
+      event: "*", schema: "public", table: "pm_chat_conversations",
+    }, () => onAnyChange())
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
+// ─── @-mention parsing ────────────────────────────────────────────────────────
+
+// Match @firstname (alphanumeric + dash + underscore). Returns lowercased first names.
+export function parseMentionTokens(body: string): string[] {
+  const matches = body.match(/@([a-zA-Z][a-zA-Z0-9_-]{1,30})/g) ?? [];
+  return Array.from(new Set(matches.map((m) => m.slice(1).toLowerCase())));
+}
+
+export function resolveMentions(body: string, staff: Array<{ id: string; firstName: string | null }>): string[] {
+  const tokens = parseMentionTokens(body);
+  if (tokens.length === 0) return [];
+  const byName = new Map<string, string>();
+  for (const s of staff) {
+    if (s.firstName) byName.set(s.firstName.toLowerCase(), s.id);
+  }
+  return tokens.map((t) => byName.get(t)).filter((id): id is string => !!id);
+}

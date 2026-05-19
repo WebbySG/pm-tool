@@ -43,7 +43,7 @@ export default function NotificationsPage() {
   // revisions, mentions).
   const visible = isAdmin
     ? notifications.filter((n) => n.type === "approval_request")
-    : notifications;
+    : notifications.filter((n) => !n.userId || n.userId === user?.id);
   const unread = visible.filter((n) => !n.read);
   const read = visible.filter((n) => n.read);
 

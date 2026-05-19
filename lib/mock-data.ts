@@ -173,6 +173,8 @@ export interface Notification {
   type: string;
   projectId: string | null;
   taskId?: string | null;
+  userId?: string | null;
+  link?: string | null;
   read: boolean;
   createdAt: string;
 }

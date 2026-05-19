@@ -378,8 +378,12 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_clients` | `id`, `name`, `website`, `industry` |
 | `pm_credentials` | credentials with `allowed_staff` array |
 | `pm_project_templates`, `pm_task_templates` | templates |
-| `pm_notifications` | notifications |
+| `pm_notifications` | `id`, `title`, `body`, `type`, `project_id`, `task_id`, `read`, `created_at`, `user_id` (nullable — NULL = workspace-global; set = targeted), `link` (optional href) |
 | `pm_task_attachments` | file attachments |
+| `pm_chat_conversations` | `id`, `kind` (project/dm/group), `name`, `project_id`, `created_by`, `last_message_at` |
+| `pm_chat_members` | `(conversation_id, user_id)` PK + `joined_at`, `last_read_at` |
+| `pm_chat_messages` | `id`, `conversation_id`, `author_id`, `body`, `attachment_url`, `attachment_name`, `attachment_type`, `edited_at`, `deleted_at`, `created_at` |
+| `pm_chat_mentions` | `(message_id, mentioned_user_id)` — for routing @-mention notifications |
 | `pm_invoices` | `id`, `invoice_number`, `client_id`, `status` (draft/sent/paid/void), `currency`, `issue_date`, `due_date`, snapshot `bill_to_*` fields, `subtotal`, `total`, `reminder_cadence_days`, `sent_at`, `paid_at`, `paid_by`, `pdf_path` |
 | `pm_invoice_line_items` | `id`, `invoice_id`, `description`, `qty`, `unit_price`, `line_total` (generated) |
 | `pm_invoice_templates` | `id`, `name`, `description`, `default_notes`, `default_payment_instructions`, `default_due_days` |
@@ -460,3 +464,22 @@ app/(app)/invoices/templates/[id]/page.tsx — Edit template
 - **Logo asset:** `public/webby-sg-logo.png` — path is hardcoded in `lib/invoice-business-details.ts → logoPath`. Drop the WebbySG logo there as a PNG (transparent background, ~600px). If the file is missing, React-PDF will throw at generation time — there's no fallback in the current code.
 - **Business details:** Webby SG / UEN 202444139M / 60 Paya Lebar Road #07-54 Paya Lebar Square / Singapore 409051 / Contact 8080 5608 (Leon). Edit `lib/invoice-business-details.ts` to change.
 - **Seeded templates:** "Monthly SEO Project" (SEO Starter $2400 + Google Ads $300/mo) and "Premium Website Development" ($899 one-time). Live in `pm_invoice_templates`.
+
+### Chat Module
+
+- **All authenticated users** (admin + staff). New `Chat` sidebar entry with realtime unread badge.
+- **Three conversation kinds:**
+  - `project` — one channel per project, members default to `assigned_staff` + creator. Unique per project (DB-enforced via partial unique index). Created lazily via `ensureProjectChannel`.
+  - `dm` — 1-on-1 between any two users. `findOrCreateDM` ensures only one exists per pair.
+  - `group` — ad-hoc named group chat, any 3+ users picked at creation.
+- **Realtime:** Supabase realtime subscriptions on `pm_chat_messages` (per-conversation for live streaming) + a separate inbox subscription for the sidebar unread badge. Trigger `pm_chat_messages_bump_last` auto-updates `pm_chat_conversations.last_message_at` on every insert.
+- **Unread:** counted as messages in conversation where `created_at > member.last_read_at AND author_id != self AND deleted_at IS NULL`. `markRead` updates `last_read_at` on every conversation open.
+- **@-mentions:** parsed from message body via `@firstname` regex (case-insensitive). Resolved against active `staff_members` first names. Persisted in `pm_chat_mentions` and trigger a targeted `pm_notifications` row (`type=mention`, `user_id=<recipient>`, `link=/chat`).
+- **Notification targeting:** `pm_notifications.user_id` is NULL for workspace-global notifications (legacy behavior) and set for targeted ones. Staff filter their tray to `userId IS NULL OR userId = self`; admin filter is unchanged (approval_request only).
+- **Attachments:** reuse `pm-attachments` bucket under `chat/{conversation_id}/{timestamp}_{name}` path. One attachment per message (v1).
+- **Edit / delete:** soft delete via `deleted_at` (preserves thread integrity + unread counts). Edit sets `edited_at`. Both gated to author only at UI layer.
+- **Key files:**
+  - `lib/chat-types.ts` — types
+  - `lib/chat-db.ts` — CRUD + realtime helpers + mention parsing
+  - `lib/use-chat-unread.ts` — hook for sidebar badge
+  - `app/(app)/chat/page.tsx` — single-page UI (list + view + composer + new-conversation dialog)

@@ -176,6 +176,8 @@ export async function loadAll() {
     body: (r.body as string) ?? "", type: (r.type as string) ?? "info",
     projectId: (r.project_id as string | null) ?? null,
     taskId: (r.task_id as string | null) ?? null,
+    userId: (r.user_id as string | null) ?? null,
+    link: (r.link as string | null) ?? null,
     read: r.read as boolean, createdAt: r.created_at as string,
   }));
 

@@ -3,15 +3,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { useChatUnread } from "@/lib/use-chat-unread";
 
 const ALL_NAV = [
   { href: "/dashboard",   label: "Dashboard",     icon: LayoutDashboard, color: "#818cf8", adminOnly: false },
   { href: "/projects",    label: "Projects",      icon: FolderKanban,    color: "#60a5fa", adminOnly: false },
   { href: "/tasks",       label: "All Tasks",     icon: CheckSquare,     color: "#34d399", adminOnly: false },
+  { href: "/chat",        label: "Chat",          icon: MessageSquare,   color: "#f472b6", adminOnly: false, chatBadge: true },
   { href: "/content",     label: "Content",       icon: FileEdit,        color: "#10b981", adminOnly: false },
   { href: "/archive",     label: "Archive",       icon: Archive,         color: "#6b7280", adminOnly: false },
   { href: "/invoices",    label: "Invoices",      icon: Receipt,         color: "#fbbf24", adminOnly: true  },
@@ -26,6 +28,7 @@ export function Sidebar() {
   const { notifications } = useStore();
   const { user, signOut } = useAuth();
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const chatUnread = useChatUnread(user?.id);
 
   const isAdmin = user?.pmRole === "admin";
   const NAV = ALL_NAV.filter((item) => {
@@ -58,8 +61,9 @@ export function Sidebar() {
         {NAV.map((item, i) => {
           const { href, label, icon: Icon, color } = item;
           const badge = "badge" in item ? item.badge : false;
+          const chatBadge = "chatBadge" in item ? item.chatBadge : false;
           const active = path === href || path.startsWith(href + "/");
-          const count = badge ? unreadCount : 0;
+          const count = badge ? unreadCount : chatBadge ? chatUnread : 0;
 
           return (
             <Link

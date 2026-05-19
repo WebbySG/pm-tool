@@ -18,7 +18,8 @@ export function Topbar({ title, back, action }: TopbarProps) {
   const unreadCount = notifications.filter((n) => {
     if (n.read) return false;
     if (isAdmin) return n.type === "approval_request";
-    return true;
+    // Staff: see their targeted notifications + workspace-global (userId IS NULL) ones
+    return !n.userId || n.userId === user?.id;
   }).length;
 
   return (
