@@ -205,11 +205,19 @@ export default function TasksPage() {
   const now = new Date();
   const todayStr = now.toDateString();
 
+  // Tasks in review/revision states get their own dedicated groups,
+  // so they don't get buried in date-based groups.
+  const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review");
+  const revisionTasks       = filtered.filter((t) => t.status === "revision_required");
+  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "revision_required");
+
   const grouped = {
-    overdue:  filtered.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
-    today:    filtered.filter((t) => t.dueDate && new Date(t.dueDate).toDateString() === todayStr),
-    upcoming: filtered.filter((t) => t.dueDate && new Date(t.dueDate) > now),
-    noDate:   filtered.filter((t) => !t.dueDate),
+    overdue:         dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
+    today:           dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate).toDateString() === todayStr),
+    upcoming:        dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) > now),
+    noDate:          dateGroupable.filter((t) => !t.dueDate),
+    pendingReview:   pendingReviewTasks,
+    revision:        revisionTasks,
   };
 
   async function handleComplete(task: TaskWithProject) {
@@ -365,6 +373,8 @@ export default function TasksPage() {
             <TaskGroup title="Due Today" tasks={grouped.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Pending Review" tasks={grouped.pendingReview} accent="#a855f7" icon={<Clock size={14} style={{ color: "#a855f7" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Revision Required" tasks={grouped.revision} accent="#f59e0b" icon={<XCircle size={14} style={{ color: "#f59e0b" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
 
             {filtered.length === 0 && (
               <div className="text-center py-16 flex flex-col items-center gap-3">

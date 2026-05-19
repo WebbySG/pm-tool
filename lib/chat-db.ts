@@ -208,6 +208,40 @@ export async function ensureProjectChannel(projectId: string, defaultMemberIds: 
   return convId;
 }
 
+export async function renameConversation(conversationId: string, name: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_conversations").update({ name }).eq("id", conversationId);
+  if (error) throw error;
+}
+
+// Hard-deletes a conversation; cascades to messages/members/mentions via FK.
+// For project channels: deletion is allowed (you can recreate by deleting+restoring the project,
+// or by app-layer ensureProjectChannel call). UI should restrict this to admins.
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_conversations").delete().eq("id", conversationId);
+  if (error) throw error;
+}
+
+// "Leave" — remove yourself from a conversation without deleting it for others.
+export async function leaveConversation(conversationId: string, userId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_members").delete()
+    .eq("conversation_id", conversationId).eq("user_id", userId);
+  if (error) throw error;
+}
+
+export async function addConversationMember(conversationId: string, userId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_members").upsert(
+    { conversation_id: conversationId, user_id: userId },
+    { onConflict: "conversation_id,user_id", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
+export async function removeConversationMember(conversationId: string, userId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_members").delete()
+    .eq("conversation_id", conversationId).eq("user_id", userId);
+  if (error) throw error;
+}
+
 export async function syncProjectChannelMembers(conversationId: string, memberIds: string[]): Promise<void> {
   // Replace member set (additions only - never remove the channel creator)
   const { data: existing } = await supabase.from("pm_chat_members")
