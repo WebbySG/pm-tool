@@ -7,6 +7,14 @@ export type ChatMember = {
   lastReadAt: string;
 };
 
+// Per-user chat folder. Categories are personal — each user manages their own.
+export type ChatCategory = {
+  id: string;
+  userId: string;
+  name: string;
+  sortOrder: number;
+};
+
 export type ChatConversation = {
   id: string;
   kind: ConversationKind;
@@ -36,4 +44,7 @@ export type ConversationWithUnread = ChatConversation & {
   unreadCount: number;
   lastMessagePreview: string | null;
   lastMessageAuthorId: string | null;
+  // Current user's personal view state (from their pm_chat_members row)
+  pinned: boolean;
+  categoryId: string | null;
 };

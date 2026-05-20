@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 import type {
   ChatConversation, ChatMessage, ChatMember,
-  ConversationKind, ChatAttachmentType, ConversationWithUnread,
+  ConversationKind, ChatAttachmentType, ConversationWithUnread, ChatCategory,
 } from "./chat-types";
 
 type Row = Record<string, unknown>;
@@ -48,16 +48,20 @@ function rowToMessage(r: Row, mentions: string[] = []): ChatMessage {
 // ─── Conversations ─────────────────────────────────────────────────────────────
 
 export async function loadConversationsForUser(userId: string): Promise<ConversationWithUnread[]> {
-  // 1) Get all conversation IDs the user is a member of
+  // 1) Get all conversation IDs the user is a member of (+ their personal view state)
   const { data: memberRows, error: mErr } = await supabase
     .from("pm_chat_members")
-    .select("conversation_id, last_read_at")
+    .select("conversation_id, last_read_at, pinned, category_id")
     .eq("user_id", userId);
   if (mErr) throw mErr;
   const lastReadByConv = new Map<string, string>();
+  const pinnedByConv = new Map<string, boolean>();
+  const categoryByConv = new Map<string, string | null>();
   for (const r of memberRows ?? []) {
     const row = r as Row;
     lastReadByConv.set(row.conversation_id as string, row.last_read_at as string);
+    pinnedByConv.set(row.conversation_id as string, Boolean(row.pinned));
+    categoryByConv.set(row.conversation_id as string, (row.category_id as string | null) ?? null);
   }
   const convIds = Array.from(lastReadByConv.keys());
   if (convIds.length === 0) return [];
@@ -122,6 +126,8 @@ export async function loadConversationsForUser(userId: string): Promise<Conversa
       unreadCount: unreadByConv.get(c.id) ?? 0,
       lastMessagePreview: preview?.preview ?? null,
       lastMessageAuthorId: preview?.authorId ?? null,
+      pinned: pinnedByConv.get(c.id) ?? false,
+      categoryId: categoryByConv.get(c.id) ?? null,
     };
     return withUnread;
   });
@@ -253,6 +259,62 @@ export async function syncProjectChannelMembers(conversationId: string, memberId
       toAdd.map((uid) => ({ conversation_id: conversationId, user_id: uid })),
     );
   }
+}
+
+// ─── Pin & Categories (per-user) ────────────────────────────────────────────────
+
+function rowToCategory(r: Row): ChatCategory {
+  return {
+    id: r.id as string,
+    userId: r.user_id as string,
+    name: r.name as string,
+    sortOrder: (r.sort_order as number) ?? 0,
+  };
+}
+
+export async function loadChatCategories(userId: string): Promise<ChatCategory[]> {
+  const { data, error } = await supabase.from("pm_chat_categories")
+    .select("*").eq("user_id", userId)
+    .order("sort_order", { ascending: true }).order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r) => rowToCategory(r as Row));
+}
+
+export async function createChatCategory(userId: string, name: string): Promise<ChatCategory> {
+  // Place new category at the end
+  const { data: maxRow } = await supabase.from("pm_chat_categories")
+    .select("sort_order").eq("user_id", userId)
+    .order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  const nextOrder = ((maxRow as Row | null)?.sort_order as number ?? -1) + 1;
+  const { data, error } = await supabase.from("pm_chat_categories")
+    .insert({ user_id: userId, name: name.trim(), sort_order: nextOrder })
+    .select("*").single();
+  if (error) throw error;
+  return rowToCategory(data as Row);
+}
+
+export async function renameChatCategory(categoryId: string, name: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_categories")
+    .update({ name: name.trim() }).eq("id", categoryId);
+  if (error) throw error;
+}
+
+// Deleting a category un-categorizes its conversations (FK ON DELETE SET NULL).
+export async function deleteChatCategory(categoryId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_categories").delete().eq("id", categoryId);
+  if (error) throw error;
+}
+
+export async function setConversationPinned(conversationId: string, userId: string, pinned: boolean): Promise<void> {
+  const { error } = await supabase.from("pm_chat_members")
+    .update({ pinned }).eq("conversation_id", conversationId).eq("user_id", userId);
+  if (error) throw error;
+}
+
+export async function setConversationCategory(conversationId: string, userId: string, categoryId: string | null): Promise<void> {
+  const { error } = await supabase.from("pm_chat_members")
+    .update({ category_id: categoryId }).eq("conversation_id", conversationId).eq("user_id", userId);
+  if (error) throw error;
 }
 
 // ─── Messages ──────────────────────────────────────────────────────────────────

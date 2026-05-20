@@ -11,14 +11,17 @@ import {
   editMessage, deleteMessage, parseMentionTokens,
   renameConversation, addConversationMember, removeConversationMember,
   deleteConversation, leaveConversation,
+  loadChatCategories, createChatCategory, renameChatCategory, deleteChatCategory,
+  setConversationPinned, setConversationCategory,
 } from "@/lib/chat-db";
-import type { ConversationWithUnread, ChatMessage } from "@/lib/chat-types";
+import type { ConversationWithUnread, ChatMessage, ChatCategory } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, Plus, Send, Paperclip, Search,
   X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
   Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut,
+  Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
 } from "lucide-react";
 
 // Walk projects to find a task by ID (top-level or subtask)
@@ -88,6 +91,10 @@ export default function ChatPage() {
   const [showNew, setShowNew] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [categories, setCategories] = useState<ChatCategory[]>([]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [newCatInput, setNewCatInput] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
 
   // Resolve the open task drawer (live from store)
   const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
@@ -112,6 +119,86 @@ export default function ChatPage() {
   };
 
   useEffect(() => { reloadConvs(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id]);
+
+  const reloadCategories = async () => {
+    if (!user?.id) { setCategories([]); return; }
+    setCategories(await loadChatCategories(user.id));
+  };
+  useEffect(() => { reloadCategories(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id]);
+
+  // Restore collapsed sections from localStorage (per user)
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      const raw = localStorage.getItem(`chat-collapsed-${user.id}`);
+      if (raw) setCollapsed(new Set(JSON.parse(raw) as string[]));
+    } catch { /* ignore */ }
+  }, [user?.id]);
+
+  function toggleCollapsed(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      if (user?.id) {
+        try { localStorage.setItem(`chat-collapsed-${user.id}`, JSON.stringify([...next])); } catch { /* ignore */ }
+      }
+      return next;
+    });
+  }
+
+  // ─── Pin / category mutations (optimistic local update + persist) ──────────
+  async function handleTogglePin(c: ConversationWithUnread) {
+    if (!user?.id) return;
+    const next = !c.pinned;
+    setConvs((prev) => prev.map((x) => (x.id === c.id ? { ...x, pinned: next } : x)));
+    try { await setConversationPinned(c.id, user.id, next); }
+    catch { reloadConvs(); }
+  }
+
+  async function handleMoveToCategory(c: ConversationWithUnread, categoryId: string | null) {
+    if (!user?.id) return;
+    setConvs((prev) => prev.map((x) => (x.id === c.id ? { ...x, categoryId } : x)));
+    try { await setConversationCategory(c.id, user.id, categoryId); }
+    catch { reloadConvs(); }
+  }
+
+  // Create a category and immediately move the conversation into it
+  async function handleCreateCategoryAndMove(c: ConversationWithUnread, name: string) {
+    if (!user?.id || !name.trim()) return;
+    try {
+      const cat = await createChatCategory(user.id, name);
+      setCategories((prev) => [...prev, cat]);
+      await handleMoveToCategory(c, cat.id);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not create category (name may already exist).");
+    }
+  }
+
+  async function handleRenameCategory(categoryId: string, name: string) {
+    if (!name.trim()) return;
+    setCategories((prev) => prev.map((cat) => (cat.id === categoryId ? { ...cat, name: name.trim() } : cat)));
+    try { await renameChatCategory(categoryId, name); }
+    catch { reloadCategories(); }
+  }
+
+  async function handleDeleteCategory(categoryId: string) {
+    setCategories((prev) => prev.filter((cat) => cat.id !== categoryId));
+    setConvs((prev) => prev.map((x) => (x.categoryId === categoryId ? { ...x, categoryId: null } : x)));
+    try { await deleteChatCategory(categoryId); }
+    catch { reloadCategories(); reloadConvs(); }
+  }
+
+  async function submitNewCategory() {
+    const name = newCatName.trim();
+    setNewCatInput(false); setNewCatName("");
+    if (!user?.id || !name) return;
+    try {
+      const cat = await createChatCategory(user.id, name);
+      setCategories((prev) => [...prev, cat]);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not create category (name may already exist).");
+    }
+  }
 
   // Re-load conversation list whenever a new message arrives anywhere (for sort + unread)
   useEffect(() => {
@@ -176,6 +263,47 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convs, convSearch, liveStaff, projects, user?.id]);
 
+  const searching = convSearch.trim().length > 0;
+
+  // Build sidebar sections: Pinned → each category → Uncategorized.
+  // When the user has no pins and no categories, we render a plain flat list (no headers).
+  const useSections = categories.length > 0 || filteredConvs.some((c) => c.pinned);
+  const sections = useMemo(() => {
+    const knownCatIds = new Set(categories.map((c) => c.id));
+    const pinned = filteredConvs.filter((c) => c.pinned);
+    const out: Array<{ key: string; label: string; categoryId: string | null; isPinned: boolean; items: ConversationWithUnread[] }> = [];
+    if (pinned.length > 0) out.push({ key: "pinned", label: "Pinned", categoryId: null, isPinned: true, items: pinned });
+    for (const cat of categories) {
+      out.push({
+        key: `cat-${cat.id}`, label: cat.name, categoryId: cat.id, isPinned: false,
+        items: filteredConvs.filter((c) => !c.pinned && c.categoryId === cat.id),
+      });
+    }
+    out.push({
+      key: "uncategorized", label: "Uncategorized", categoryId: null, isPinned: false,
+      items: filteredConvs.filter((c) => !c.pinned && (!c.categoryId || !knownCatIds.has(c.categoryId))),
+    });
+    // While searching, hide empty sections to cut noise.
+    return searching ? out.filter((s) => s.items.length > 0) : out;
+  }, [filteredConvs, categories, searching]);
+
+  // Shared row renderer (used in both flat and sectioned modes)
+  const renderRow = (c: ConversationWithUnread) => (
+    <ConversationRow
+      key={c.id}
+      c={c}
+      active={c.id === selectedId}
+      displayName={getConvDisplayName(c)}
+      icon={getConvIcon(c)}
+      taskCount={getConvTaskCount(c)}
+      categories={categories}
+      onSelect={() => setSelectedId(c.id)}
+      onTogglePin={() => handleTogglePin(c)}
+      onMoveToCategory={(catId) => handleMoveToCategory(c, catId)}
+      onCreateCategoryAndMove={(name) => handleCreateCategoryAndMove(c, name)}
+    />
+  );
+
   return (
     <>
       <Topbar title="Chat" />
@@ -199,6 +327,27 @@ export default function ChatPage() {
             </button>
           </div>
 
+          {/* New category affordance */}
+          <div className="px-4 pb-2">
+            {newCatInput ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+                <FolderPlus size={12} style={{ color: "var(--accent)" }} />
+                <input autoFocus value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitNewCategory(); if (e.key === "Escape") { setNewCatInput(false); setNewCatName(""); } }}
+                  onBlur={submitNewCategory}
+                  placeholder="Category name…" className="flex-1 bg-transparent outline-none text-xs"
+                  style={{ color: "var(--text)" }} />
+              </div>
+            ) : (
+              <button onClick={() => setNewCatInput(true)}
+                className="flex items-center gap-1.5 text-xs font-semibold w-full px-2.5 py-1.5 rounded-lg hover:opacity-80"
+                style={{ color: "var(--text-muted)", border: "1px dashed var(--border)" }}>
+                <FolderPlus size={12} /> New category
+              </button>
+            )}
+          </div>
+
           <div className="flex-1 overflow-y-auto px-2 pb-2">
             {loadingConvs ? (
               <div className="flex items-center gap-2 text-xs px-3 py-3" style={{ color: "var(--text-muted)" }}>
@@ -206,43 +355,35 @@ export default function ChatPage() {
               </div>
             ) : filteredConvs.length === 0 ? (
               <div className="text-xs text-center py-8 px-3" style={{ color: "var(--text-muted)" }}>
-                No conversations yet. Click + to start one.
+                {searching ? "No conversations match your search." : "No conversations yet. Click + to start one."}
               </div>
-            ) : filteredConvs.map((c) => {
-              const active = c.id === selectedId;
-              const taskCount = getConvTaskCount(c);
-              return (
-                <button key={c.id} onClick={() => setSelectedId(c.id)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-opacity hover:opacity-90 mb-0.5"
-                  style={{ background: active ? "var(--bg-surface)" : "transparent" }}>
-                  <div className="shrink-0">{getConvIcon(c)}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-semibold truncate flex-1" style={{ color: active ? "var(--text)" : "var(--text-muted)" }}>
-                        {getConvDisplayName(c)}
-                      </p>
-                      {taskCount > 0 && (
-                        <span title={`${taskCount} active task${taskCount !== 1 ? "s" : ""}`}
-                          className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0"
-                          style={{ background: "var(--accent)15", color: "var(--accent)", border: "1px solid var(--accent)40" }}>
-                          <ListTodo size={9} /> {taskCount}
-                        </span>
-                      )}
-                      {c.unreadCount > 0 && (
-                        <span title={`${c.unreadCount} unread`}
-                          className="text-xs px-1.5 py-0.5 rounded-full font-bold shrink-0"
-                          style={{ background: "#ef4444", color: "#fff" }}>{c.unreadCount}</span>
-                      )}
-                    </div>
-                    {c.lastMessagePreview && (
-                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {c.lastMessagePreview}
+            ) : !useSections ? (
+              filteredConvs.map(renderRow)
+            ) : (
+              sections.map((sec) => {
+                const isCollapsed = collapsed.has(sec.key);
+                return (
+                  <div key={sec.key} className="mb-1.5">
+                    <SectionHeader
+                      label={sec.label}
+                      count={sec.items.length}
+                      collapsed={isCollapsed}
+                      pinned={sec.isPinned}
+                      categoryId={sec.categoryId}
+                      onToggle={() => toggleCollapsed(sec.key)}
+                      onRename={(name) => sec.categoryId && handleRenameCategory(sec.categoryId, name)}
+                      onDelete={() => sec.categoryId && handleDeleteCategory(sec.categoryId)}
+                    />
+                    {!isCollapsed && sec.items.map(renderRow)}
+                    {!isCollapsed && sec.items.length === 0 && sec.categoryId && !searching && (
+                      <p className="text-xs px-3 py-1.5" style={{ color: "var(--text-muted)" }}>
+                        Empty — move a chat here from its ⋮ menu.
                       </p>
                     )}
                   </div>
-                </button>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </aside>
 
@@ -1438,5 +1579,213 @@ function TasksPanel({
         })}
       </div>
     </aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Conversation row — single conversation button + pin/category kebab menu
+// ────────────────────────────────────────────────────────────────────────────
+
+function ConversationRow({
+  c, active, displayName, icon, taskCount, categories,
+  onSelect, onTogglePin, onMoveToCategory, onCreateCategoryAndMove,
+}: {
+  c: ConversationWithUnread;
+  active: boolean;
+  displayName: string;
+  icon: React.ReactNode;
+  taskCount: number;
+  categories: ChatCategory[];
+  onSelect: () => void;
+  onTogglePin: () => void;
+  onMoveToCategory: (categoryId: string | null) => void;
+  onCreateCategoryAndMove: (name: string) => void;
+}) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+
+  function openMenu(e: React.MouseEvent) {
+    e.stopPropagation();
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenu({ x: Math.min(r.left - 200, window.innerWidth - 240), y: Math.min(r.bottom + 4, window.innerHeight - 320) });
+    setCreatingCat(false); setNewCatName("");
+  }
+  function closeMenu() { setMenu(null); setCreatingCat(false); setNewCatName(""); }
+
+  return (
+    <div className="relative group/row">
+      <button onClick={onSelect}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-opacity hover:opacity-90 mb-0.5"
+        style={{ background: active ? "var(--bg-surface)" : "transparent" }}>
+        <div className="shrink-0">{icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {c.pinned && <Pin size={10} style={{ color: "var(--accent)", transform: "rotate(45deg)" }} className="shrink-0" />}
+            <p className="text-sm font-semibold truncate flex-1" style={{ color: active ? "var(--text)" : "var(--text-muted)" }}>
+              {displayName}
+            </p>
+            {taskCount > 0 && (
+              <span title={`${taskCount} active task${taskCount !== 1 ? "s" : ""}`}
+                className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0 group-hover/row:hidden"
+                style={{ background: "var(--accent)15", color: "var(--accent)", border: "1px solid var(--accent)40" }}>
+                <ListTodo size={9} /> {taskCount}
+              </span>
+            )}
+            {c.unreadCount > 0 && (
+              <span title={`${c.unreadCount} unread`}
+                className="text-xs px-1.5 py-0.5 rounded-full font-bold shrink-0 group-hover/row:hidden"
+                style={{ background: "#ef4444", color: "#fff" }}>{c.unreadCount}</span>
+            )}
+          </div>
+          {c.lastMessagePreview && (
+            <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
+              {c.lastMessagePreview}
+            </p>
+          )}
+        </div>
+      </button>
+
+      {/* Kebab — appears on hover */}
+      <button ref={btnRef} onClick={openMenu}
+        className="absolute right-1.5 top-2.5 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover/row:opacity-100"
+        style={{ background: "var(--bg-base)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+        title="Pin or move to category">
+        <MoreVertical size={13} />
+      </button>
+
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={closeMenu} />
+          <div className="fixed z-50 rounded-lg py-1 text-sm overflow-hidden"
+            style={{ left: menu.x, top: menu.y, width: 224, background: "var(--bg-base)", border: "1px solid var(--border)", boxShadow: "0 8px 24px #00000040" }}>
+            <button onClick={() => { onTogglePin(); closeMenu(); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80" style={{ color: "var(--text)" }}>
+              {c.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+              {c.pinned ? "Unpin" : "Pin to top"}
+            </button>
+
+            <div className="my-1" style={{ borderTop: "1px solid var(--border)" }} />
+            <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Move to category</p>
+
+            <div className="max-h-44 overflow-y-auto">
+              {categories.map((cat) => (
+                <button key={cat.id} onClick={() => { onMoveToCategory(cat.id); closeMenu(); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80" style={{ color: "var(--text)" }}>
+                  <Folder size={13} style={{ color: "var(--text-muted)" }} />
+                  <span className="flex-1 truncate">{cat.name}</span>
+                  {c.categoryId === cat.id && <Check size={13} style={{ color: "var(--accent)" }} />}
+                </button>
+              ))}
+              {c.categoryId && (
+                <button onClick={() => { onMoveToCategory(null); closeMenu(); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80" style={{ color: "var(--text-muted)" }}>
+                  <X size={13} /> Remove from category
+                </button>
+              )}
+            </div>
+
+            {creatingCat ? (
+              <div className="px-2 py-1.5 flex gap-1" style={{ borderTop: "1px solid var(--border)" }}>
+                <input autoFocus value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newCatName.trim()) { onCreateCategoryAndMove(newCatName.trim()); closeMenu(); }
+                    if (e.key === "Escape") setCreatingCat(false);
+                  }}
+                  placeholder="New category…" className="flex-1 bg-transparent text-xs outline-none px-2 py-1 rounded"
+                  style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
+                <button onClick={() => { if (newCatName.trim()) { onCreateCategoryAndMove(newCatName.trim()); closeMenu(); } }}
+                  className="px-2 rounded text-white text-xs font-semibold" style={{ background: "var(--accent)" }}>Add</button>
+              </div>
+            ) : (
+              <button onClick={() => setCreatingCat(true)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80"
+                style={{ color: "var(--accent)", borderTop: "1px solid var(--border)" }}>
+                <FolderPlus size={13} /> New category…
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Section header — collapsible group header with optional rename/delete
+// ────────────────────────────────────────────────────────────────────────────
+
+function SectionHeader({
+  label, count, collapsed, pinned, categoryId, onToggle, onRename, onDelete,
+}: {
+  label: string;
+  count: number;
+  collapsed: boolean;
+  pinned: boolean;
+  categoryId: string | null;
+  onToggle: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(label);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const isCategory = categoryId !== null;
+
+  if (renaming) {
+    return (
+      <div className="flex items-center gap-1 px-2 py-1">
+        <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) { onRename(draft.trim()); setRenaming(false); }
+            if (e.key === "Escape") { setDraft(label); setRenaming(false); }
+          }}
+          onBlur={() => { if (draft.trim() && draft.trim() !== label) onRename(draft.trim()); setRenaming(false); }}
+          className="flex-1 bg-transparent text-xs outline-none px-2 py-1 rounded"
+          style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex items-center gap-1 px-2 py-1 group/sec">
+      <button onClick={onToggle}
+        className="flex items-center gap-1 flex-1 min-w-0 text-left hover:opacity-80"
+        style={{ color: "var(--text-muted)" }}>
+        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+        {pinned ? <Pin size={11} style={{ color: "var(--accent)", transform: "rotate(45deg)" }} />
+          : isCategory ? <Folder size={11} /> : null}
+        <span className="text-xs font-semibold uppercase tracking-wide truncate">{label}</span>
+        <span className="text-xs">· {count}</span>
+      </button>
+
+      {isCategory && (
+        <button onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); setConfirmDel(false); }}
+          className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover/sec:opacity-100"
+          style={{ color: "var(--text-muted)" }} title="Rename or delete category">
+          <MoreVertical size={12} />
+        </button>
+      )}
+
+      {menuOpen && isCategory && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => { setMenuOpen(false); setConfirmDel(false); }} />
+          <div className="absolute right-2 top-7 z-50 rounded-lg py-1 text-sm overflow-hidden w-40"
+            style={{ background: "var(--bg-base)", border: "1px solid var(--border)", boxShadow: "0 8px 24px #00000040" }}>
+            <button onClick={() => { setDraft(label); setRenaming(true); setMenuOpen(false); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80" style={{ color: "var(--text)" }}>
+              <Pencil size={12} /> Rename
+            </button>
+            <button onClick={() => { if (confirmDel) { onDelete(); setMenuOpen(false); } else { setConfirmDel(true); } }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:opacity-80"
+              style={{ color: "#ef4444" }}>
+              <Trash2 size={12} /> {confirmDel ? "Click to confirm" : "Delete category"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
