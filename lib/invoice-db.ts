@@ -1,8 +1,9 @@
 import { supabase } from "./supabase";
 import type {
   Invoice, InvoiceLineItem, InvoiceTemplate, InvoiceTemplateLineItem,
-  InvoiceStatus, InvoiceLog, InvoiceLogEvent,
+  InvoiceStatus, InvoiceLog, InvoiceLogEvent, DiscountType,
 } from "./invoice-types";
+import { computeInvoiceTotals } from "./invoice-types";
 
 type Row = Record<string, unknown>;
 
@@ -36,6 +37,8 @@ function rowToInvoice(r: Row, items: InvoiceLineItem[] = []): Invoice {
     notes: (r.notes as string) ?? "",
     paymentInstructions: (r.payment_instructions as string) ?? "",
     subtotal: num(r.subtotal),
+    discountType: ((r.discount_type as DiscountType) ?? "none"),
+    discountValue: num(r.discount_value),
     total: num(r.total),
     reminderCadenceDays: (r.reminder_cadence_days as number[]) ?? [],
     lastReminderSentAt: (r.last_reminder_sent_at as string | null) ?? null,
@@ -129,18 +132,19 @@ export type InvoiceDraft = {
   paymentInstructions: string;
   currency?: string;
   reminderCadenceDays?: number[];
+  discountType?: DiscountType;
+  discountValue?: number;
   lineItems: Array<{ description: string; qty: number; unitPrice: number; sortOrder?: number }>;
   createdBy: string | null;
 };
 
-function computeTotals(lineItems: InvoiceDraft["lineItems"]) {
-  const subtotal = lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
-  return { subtotal, total: subtotal };
-}
-
 export async function createInvoice(draft: InvoiceDraft): Promise<string> {
   const invoiceNumber = await nextInvoiceNumber();
-  const { subtotal, total } = computeTotals(draft.lineItems);
+  const discountType = draft.discountType ?? "none";
+  const discountValue = draft.discountValue ?? 0;
+  const { subtotal, total } = computeInvoiceTotals({
+    lineItems: draft.lineItems, discountType, discountValue,
+  });
   const { data, error } = await supabase.from("pm_invoices").insert({
     invoice_number: invoiceNumber,
     client_id: draft.clientId,
@@ -155,6 +159,8 @@ export async function createInvoice(draft: InvoiceDraft): Promise<string> {
     notes: draft.notes || null,
     payment_instructions: draft.paymentInstructions || null,
     subtotal,
+    discount_type: discountType,
+    discount_value: discountValue,
     total,
     reminder_cadence_days: draft.reminderCadenceDays ?? [],
     created_by: draft.createdBy,
@@ -194,9 +200,24 @@ export async function updateInvoice(
   if (patch.paymentInstructions !== undefined) updates.payment_instructions = patch.paymentInstructions || null;
   if (patch.currency !== undefined) updates.currency = patch.currency;
   if (patch.reminderCadenceDays !== undefined) updates.reminder_cadence_days = patch.reminderCadenceDays;
+  if (patch.discountType !== undefined) updates.discount_type = patch.discountType;
+  if (patch.discountValue !== undefined) updates.discount_value = patch.discountValue;
 
-  if (patch.lineItems) {
-    const { subtotal, total } = computeTotals(patch.lineItems);
+  // Recompute stored subtotal/total whenever line items OR the discount change.
+  // Any field not in the patch is read back from the current row so totals stay correct.
+  const needTotals =
+    patch.lineItems !== undefined || patch.discountType !== undefined || patch.discountValue !== undefined;
+  if (needTotals) {
+    let lineItems = patch.lineItems;
+    let discountType = patch.discountType;
+    let discountValue = patch.discountValue;
+    if (lineItems === undefined || discountType === undefined || discountValue === undefined) {
+      const current = await loadInvoice(id);
+      if (lineItems === undefined) lineItems = (current?.lineItems ?? []).map((li) => ({ description: li.description, qty: li.qty, unitPrice: li.unitPrice }));
+      if (discountType === undefined) discountType = current?.discountType ?? "none";
+      if (discountValue === undefined) discountValue = current?.discountValue ?? 0;
+    }
+    const { subtotal, total } = computeInvoiceTotals({ lineItems, discountType, discountValue });
     updates.subtotal = subtotal;
     updates.total = total;
   }
@@ -272,6 +293,8 @@ export async function duplicateInvoice(sourceId: string, opts: {
     paymentInstructions: src.paymentInstructions,
     currency: src.currency,
     reminderCadenceDays: src.reminderCadenceDays,
+    discountType: src.discountType,
+    discountValue: src.discountValue,
     lineItems: src.lineItems.map((li, i) => ({
       description: li.description, qty: li.qty, unitPrice: li.unitPrice, sortOrder: i,
     })),

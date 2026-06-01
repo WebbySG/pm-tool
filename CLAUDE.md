@@ -385,7 +385,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_chat_categories` | `id`, `user_id`, `name`, `sort_order`, `created_at` — per-user chat folders. Unique `(user_id, lower(name))`, RLS `pm_allow_all` |
 | `pm_chat_messages` | `id`, `conversation_id`, `author_id`, `body`, `attachment_url`, `attachment_name`, `attachment_type`, `edited_at`, `deleted_at`, `created_at` |
 | `pm_chat_mentions` | `(message_id, mentioned_user_id)` — for routing @-mention notifications |
-| `pm_invoices` | `id`, `invoice_number`, `client_id`, `status` (draft/sent/paid/void), `currency`, `issue_date`, `due_date`, snapshot `bill_to_*` fields, `subtotal`, `total`, `reminder_cadence_days`, `sent_at`, `paid_at`, `paid_by`, `pdf_path` |
+| `pm_invoices` | `id`, `invoice_number`, `client_id`, `status` (draft/sent/paid/void), `currency`, `issue_date`, `due_date`, snapshot `bill_to_*` fields, `subtotal`, `discount_type` (none/percent/fixed), `discount_value`, `total`, `reminder_cadence_days`, `sent_at`, `paid_at`, `paid_by`, `pdf_path` |
 | `pm_invoice_line_items` | `id`, `invoice_id`, `description`, `qty`, `unit_price`, `line_total` (generated) |
 | `pm_invoice_templates` | `id`, `name`, `description`, `default_notes`, `default_payment_instructions`, `default_due_days` |
 | `pm_invoice_template_line_items` | `id`, `template_id`, `description`, `qty`, `unit_price` |
@@ -420,7 +420,7 @@ app/(app)/dashboard/page.tsx  — Admin: full team; Staff: own tasks only
 app/(app)/projects/page.tsx   — Project list, channels, DnD, admin-only controls
 app/(app)/projects/new/page.tsx — Create project (admin only), live staff
 app/(app)/projects/[id]/page.tsx — Project detail, kanban, schedule, files, pinned
-app/(app)/tasks/page.tsx      — All tasks (role filtered)
+app/(app)/tasks/page.tsx      — All tasks (role filtered). New Task dialog: admin can quick-create a project inline ("New project" → name only; defaults type=webdev, phase=discovery, assignedStaff=[task assignee]). Uses store.addProject which now returns the new project id.
 app/(app)/team/page.tsx       — Team management, invites, content access toggle
 app/(app)/credentials/page.tsx — Credentials (admin only)
 app/(app)/templates/page.tsx  — Templates (admin only)
@@ -456,7 +456,8 @@ app/(app)/invoices/templates/[id]/page.tsx — Edit template
 - **Bill-to is a snapshot.** When creating an invoice, bill-to fields are copied from `pm_clients` (via `loadClientBilling`) and stored on the invoice row. Editing the client later does NOT change historical invoices — by design.
 - **Line totals:** `pm_invoice_line_items.line_total` is a generated column (`qty * unit_price stored`). Don't insert it manually.
 - **Currency:** SGD-only for now. UI shows `S$` prefix.
-- **No tax.** Subtotal = total. If GST is added later, add a `tax_rate` and `tax_total` column.
+- **Discount:** optional per-invoice discount. `discount_type` = `none` | `percent` | `fixed`; `discount_value` holds the % (e.g. `10` → 10%) or a flat amount. `total = subtotal − discountAmount`, clamped so it never goes negative. **All money math goes through `computeInvoiceTotals()` in [lib/invoice-types.ts](lib/invoice-types.ts)** — the DB layer, `LineItemsEditor`, the detail page, and the PDF all call it so they can't drift. Stored `subtotal`/`total` are recomputed on every create/update (`updateInvoice` reads back missing fields so a discount-only edit still recalculates). Discount lives at the **invoice** level, not on templates.
+- **No tax.** Subtotal = total **before discount**; total = subtotal − discount. If GST is added later, add a `tax_rate` and `tax_total` column (apply tax after discount).
 - **Phase 1 (Done):** CRUD, templates, duplicate, mark sent/paid, activity log. "Mark as sent" only flips status — no actual email.
 - **Phase 2 (Done):** React-PDF branded template. Client-side generation via `@react-pdf/renderer`. Preview opens blob in new tab; Download triggers `<filename>.pdf` download. Component is `<InvoiceDocument>` in `components/invoice-pdf.tsx`. Must be dynamically imported with `{ ssr: false }` because @react-pdf/renderer is not SSR-safe.
 - **Phase 3 (TODO):** Edge Function `send-invoice-email` using Gmail/Workspace SMTP + Nodemailer. Will need to render the PDF server-side (call `pdf(<InvoiceDocument …/>).toBuffer()`) and upload to `pm-invoices` bucket before attaching to the email. Requires Google app password in Edge Function secrets.

@@ -10,7 +10,7 @@ import {
   loadInvoices, loadInvoiceTemplates, loadInvoice, loadInvoiceTemplate, loadClientBilling,
   createInvoice,
 } from "@/lib/invoice-db";
-import type { Invoice, InvoiceTemplate } from "@/lib/invoice-types";
+import type { Invoice, InvoiceTemplate, DiscountType } from "@/lib/invoice-types";
 import { FileText, Receipt, Loader2, ArrowRight, Check } from "lucide-react";
 
 function addDays(iso: string, days: number) {
@@ -42,6 +42,8 @@ export default function NewInvoicePage() {
   const [notes, setNotes] = useState("");
   const [paymentInstructions, setPaymentInstructions] = useState("");
   const [lineItems, setLineItems] = useState<LineItemDraft[]>([]);
+  const [discountType, setDiscountType] = useState<DiscountType>("none");
+  const [discountValue, setDiscountValue] = useState(0);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +103,8 @@ export default function NewInvoicePage() {
     const dueDays = Math.max(1, Math.round((new Date(inv.dueDate).getTime() - new Date(inv.issueDate).getTime()) / 86400000));
     setDueDate(addDays(todayISO(), dueDays));
     setLineItems(inv.lineItems.map((li) => ({ description: li.description, qty: li.qty, unitPrice: li.unitPrice })));
+    setDiscountType(inv.discountType);
+    setDiscountValue(inv.discountValue);
     setShowForm(true);
   }
 
@@ -126,6 +130,8 @@ export default function NewInvoicePage() {
         notes,
         paymentInstructions,
         currency: "SGD",
+        discountType,
+        discountValue,
         lineItems,
         createdBy: user?.id ?? null,
       });
@@ -256,7 +262,9 @@ export default function NewInvoicePage() {
 
             <div>
               <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Line Items</p>
-              <LineItemsEditor items={lineItems} onChange={setLineItems} />
+              <LineItemsEditor items={lineItems} onChange={setLineItems}
+                discountType={discountType} discountValue={discountValue}
+                onDiscountChange={(t, v) => { setDiscountType(t); setDiscountValue(v); }} />
             </div>
 
             <Field label="Notes (shown on invoice)">

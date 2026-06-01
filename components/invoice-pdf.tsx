@@ -5,7 +5,7 @@ import {
   Text as SvgText,
 } from "@react-pdf/renderer";
 import type { Invoice } from "@/lib/invoice-types";
-import { computeDerivedStatus } from "@/lib/invoice-types";
+import { computeDerivedStatus, computeInvoiceTotals } from "@/lib/invoice-types";
 import { BUSINESS_DETAILS } from "@/lib/invoice-business-details";
 
 // Brand palette
@@ -302,7 +302,15 @@ function StatusWatermark({ label, color }: { label: string; color: string }) {
 export function InvoiceDocument({ invoice, logoUrl }: Props) {
   const src = logoUrl ?? BUSINESS_DETAILS.logoPath;
   const hasLogo = typeof src === "string" && src.length > 0;
-  const subtotal = invoice.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
+  const { subtotal, discountAmount, total } = computeInvoiceTotals({
+    lineItems: invoice.lineItems,
+    discountType: invoice.discountType,
+    discountValue: invoice.discountValue,
+  });
+  const hasDiscount = discountAmount > 0;
+  const discountLabel = invoice.discountType === "percent"
+    ? `DISCOUNT (${invoice.discountValue}%)`
+    : "DISCOUNT";
 
   const derived = computeDerivedStatus(invoice);
   const watermark = (() => {
@@ -421,9 +429,15 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
               <Text style={styles.totalsLabel}>SUBTOTAL</Text>
               <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
             </View>
+            {hasDiscount ? (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>{discountLabel}</Text>
+                <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
+              </View>
+            ) : null}
             <View style={styles.totalsRowGrand}>
               <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-              <Text style={styles.totalsValueGrand}>{formatMoney(subtotal)}</Text>
+              <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
             </View>
           </View>
         </View>

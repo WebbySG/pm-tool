@@ -11,8 +11,8 @@ import {
   loadInvoice, updateInvoice, deleteInvoice, markInvoicePaid, markInvoiceUnpaid,
   duplicateInvoice, logInvoiceEvent, loadInvoiceLogs,
 } from "@/lib/invoice-db";
-import type { Invoice, InvoiceLog } from "@/lib/invoice-types";
-import { computeDerivedStatus } from "@/lib/invoice-types";
+import type { Invoice, InvoiceLog, DiscountType } from "@/lib/invoice-types";
+import { computeDerivedStatus, computeInvoiceTotals } from "@/lib/invoice-types";
 import {
   Loader2, Save, Trash2, Copy, CheckCircle2, RotateCcw, Send, Mail,
 } from "lucide-react";
@@ -54,6 +54,8 @@ export default function InvoiceDetailPage() {
   const [notes, setNotes] = useState("");
   const [paymentInstructions, setPaymentInstructions] = useState("");
   const [lineItems, setLineItems] = useState<LineItemDraft[]>([]);
+  const [discountType, setDiscountType] = useState<DiscountType>("none");
+  const [discountValue, setDiscountValue] = useState(0);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +86,8 @@ export default function InvoiceDetailPage() {
     setNotes(i.notes);
     setPaymentInstructions(i.paymentInstructions);
     setLineItems(i.lineItems.map((li) => ({ description: li.description, qty: li.qty, unitPrice: li.unitPrice })));
+    setDiscountType(i.discountType);
+    setDiscountValue(i.discountValue);
     setDirty(false);
     setError(null);
   }
@@ -102,6 +106,7 @@ export default function InvoiceDetailPage() {
         billToEmail: billToEmail.trim(),
         billToAddress,
         notes, paymentInstructions,
+        discountType, discountValue,
         lineItems,
       }, user?.id ?? null);
       await reload();
@@ -160,7 +165,10 @@ export default function InvoiceDetailPage() {
     [inv],
   );
 
-  const subtotal = useMemo(() => lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0), [lineItems]);
+  const totals = useMemo(
+    () => computeInvoiceTotals({ lineItems, discountType, discountValue }),
+    [lineItems, discountType, discountValue],
+  );
 
   if (loading) {
     return (
@@ -308,7 +316,9 @@ export default function InvoiceDetailPage() {
 
           <div>
             <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Line Items</p>
-            <LineItemsEditor items={lineItems} onChange={markDirty(setLineItems)} currency={inv.currency} />
+            <LineItemsEditor items={lineItems} onChange={markDirty(setLineItems)} currency={inv.currency}
+              discountType={discountType} discountValue={discountValue}
+              onDiscountChange={(t, v) => { markDirty(setDiscountType)(t); setDiscountValue(v); setDirty(true); }} />
           </div>
 
           <Field label="Notes">
@@ -338,7 +348,10 @@ export default function InvoiceDetailPage() {
               {dirty ? "Save changes" : "Saved"}
             </button>
             <div className="text-sm ml-auto" style={{ color: "var(--text-muted)" }}>
-              Total <span className="font-bold ml-2" style={{ color: "var(--text)" }}>{formatMoney(subtotal, inv.currency)}</span>
+              {discountType !== "none" && totals.discountAmount > 0 && (
+                <span className="mr-3">After discount</span>
+              )}
+              Total <span className="font-bold ml-2" style={{ color: "var(--text)" }}>{formatMoney(totals.total, inv.currency)}</span>
             </div>
           </div>
         </div>
