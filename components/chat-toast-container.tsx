@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
+import { playNotificationSound } from "@/lib/notification-sound";
 import { MessageSquare, X } from "lucide-react";
 
 type Toast = {
@@ -79,6 +80,9 @@ export function ChatToastContainer() {
         const author = staffByIdRef.current.get(m.author_id);
         const body = (m.body && m.body.trim()) || (m.attachment_name ? `📎 ${m.attachment_name}` : "");
         if (!body) return;
+
+        // Audible chime for new messages while you're elsewhere in the app
+        playNotificationSound();
 
         const toast: Toast = {
           id: m.id,

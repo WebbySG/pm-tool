@@ -37,7 +37,26 @@ export type ChatMessage = {
   editedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  // Threading: NULL for top-level messages; set to the thread-root message id for replies.
+  parentId: string | null;
   mentionedUserIds: string[];
+};
+
+// Per-root reply summary, shown as a "💬 N replies" badge on the main timeline.
+export type ThreadMeta = {
+  count: number;
+  lastReplyAt: string;
+  participantIds: string[];
+};
+
+// A pinned message in a conversation (shared across all members, unlimited per chat).
+export type ChatPinnedMessage = {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  pinnedBy: string | null;
+  createdAt: string;
+  message: ChatMessage | null; // joined message (null if it was hard-deleted)
 };
 
 export type ConversationWithUnread = ChatConversation & {

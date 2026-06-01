@@ -13,15 +13,18 @@ import {
   deleteConversation, leaveConversation,
   loadChatCategories, createChatCategory, renameChatCategory, deleteChatCategory,
   setConversationPinned, setConversationCategory,
+  loadThreadReplies, loadThreadMeta, loadPinnedMessages, pinMessage, unpinMessage, subscribeToPinned,
 } from "@/lib/chat-db";
-import type { ConversationWithUnread, ChatMessage, ChatCategory } from "@/lib/chat-types";
+import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
+import { playNotificationSound, isChatSoundMuted, setChatSoundMuted } from "@/lib/notification-sound";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
-  Hash, Users as UsersIcon, MessageSquare, Plus, Send, Paperclip, Search,
+  Hash, Users as UsersIcon, MessageSquare, MessageCircle, Plus, Send, Paperclip, Search,
   X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
-  Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut,
+  Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut, CornerUpLeft,
   Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
+  Volume2, VolumeX,
 } from "lucide-react";
 
 // Walk projects to find a task by ID (top-level or subtask)
@@ -464,6 +467,51 @@ function MessageView({
   const [pendingTaskInsert, setPendingTaskInsert] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // Threading
+  const [threadMeta, setThreadMeta] = useState<Map<string, ThreadMeta>>(new Map());
+  const [threadRoot, setThreadRoot] = useState<ChatMessage | null>(null);
+  const [threadReplies, setThreadReplies] = useState<ChatMessage[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const threadRootRef = useRef<ChatMessage | null>(null);
+  useEffect(() => { threadRootRef.current = threadRoot; }, [threadRoot]);
+
+  // Pinned messages (shared per conversation)
+  const [pinned, setPinned] = useState<ChatPinnedMessage[]>([]);
+  const [showPinned, setShowPinned] = useState(false);
+  const pinnedIds = useMemo(() => new Set(pinned.map((p) => p.messageId)), [pinned]);
+
+  // Sound mute (per browser)
+  const [muted, setMuted] = useState(false);
+  useEffect(() => { setMuted(isChatSoundMuted()); }, []);
+
+  // Only one right-hand panel at a time
+  function openThread(root: ChatMessage) {
+    setShowTasks(false); setShowPinned(false);
+    setThreadRoot(root); setThreadLoading(true); setThreadReplies([]);
+    loadThreadReplies(root.id).then((r) => { setThreadReplies(r); setThreadLoading(false); });
+  }
+  function togglePinnedPanel() { setThreadRoot(null); setShowTasks(false); setShowPinned((v) => !v); }
+  function toggleTasksPanel() { setThreadRoot(null); setShowPinned(false); setShowTasks((v) => !v); }
+
+  function toggleMute() { const next = !muted; setMuted(next); setChatSoundMuted(next); }
+
+  async function reloadPinned() { setPinned(await loadPinnedMessages(conversation.id)); }
+
+  async function handleTogglePin(msg: ChatMessage) {
+    const already = pinnedIds.has(msg.id);
+    if (already) {
+      setPinned((prev) => prev.filter((p) => p.messageId !== msg.id));
+      try { await unpinMessage(conversation.id, msg.id); } catch { reloadPinned(); }
+    } else {
+      const optimistic: ChatPinnedMessage = {
+        id: `tmp-${msg.id}`, conversationId: conversation.id, messageId: msg.id,
+        pinnedBy: currentUserId, createdAt: new Date().toISOString(), message: msg,
+      };
+      setPinned((prev) => [optimistic, ...prev]);
+      try { await pinMessage(conversation.id, msg.id, currentUserId); reloadPinned(); } catch { reloadPinned(); }
+    }
+  }
+
   // Capture last_read_at when this conversation is first opened in this view.
   // Stays stable for the lifetime of this MessageView (until conv switch / unmount),
   // so the "X new messages" divider doesn't move while you're reading.
@@ -476,23 +524,54 @@ function MessageView({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    loadMessages(conversation.id).then((m) => {
+    setThreadRoot(null); setThreadReplies([]); setShowPinned(false); setShowTasks(false);
+    Promise.all([
+      loadMessages(conversation.id),
+      loadThreadMeta(conversation.id),
+      loadPinnedMessages(conversation.id),
+    ]).then(([m, meta, pins]) => {
       if (cancelled) return;
-      setMessages(m);
+      setMessages(m); setThreadMeta(meta); setPinned(pins);
       setLoading(false);
-      // mark read
       if (currentUserId) markRead(conversation.id, currentUserId).then(onAfterChange);
     });
     const unsub = subscribeToConversation(conversation.id, {
       onInsert: (msg) => {
-        setMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+        // Chime for messages from other people (covers the case where you're already on /chat)
+        if (msg.authorId !== currentUserId) playNotificationSound();
+        if (msg.parentId) {
+          // Thread reply — update the reply badge meta, and the open thread if it matches
+          setThreadMeta((prev) => {
+            const next = new Map(prev);
+            const ex = next.get(msg.parentId!);
+            next.set(msg.parentId!, ex
+              ? {
+                  count: ex.count + 1, lastReplyAt: msg.createdAt,
+                  participantIds: ex.participantIds.includes(msg.authorId) ? ex.participantIds : [...ex.participantIds, msg.authorId],
+                }
+              : { count: 1, lastReplyAt: msg.createdAt, participantIds: [msg.authorId] });
+            return next;
+          });
+          if (threadRootRef.current?.id === msg.parentId) {
+            setThreadReplies((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+          }
+        } else {
+          setMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+        }
         if (currentUserId) markRead(conversation.id, currentUserId).then(onAfterChange);
       },
       onUpdate: (msg) => {
         setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...msg, mentionedUserIds: m.mentionedUserIds } : m));
+        setThreadReplies((prev) => prev.map((m) => m.id === msg.id ? { ...msg, mentionedUserIds: m.mentionedUserIds } : m));
+        setThreadRoot((prev) => prev && prev.id === msg.id ? { ...msg, mentionedUserIds: prev.mentionedUserIds } : prev);
+        // A pinned message may have been edited/deleted — refresh the pinned list
+        if (pinnedIds.has(msg.id)) reloadPinned();
       },
     });
-    return () => { cancelled = true; unsub(); };
+    const unsubPin = subscribeToPinned(conversation.id, () => {
+      loadPinnedMessages(conversation.id).then((p) => { if (!cancelled) setPinned(p); });
+    });
+    return () => { cancelled = true; unsub(); unsubPin(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id, currentUserId]);
 
@@ -501,14 +580,16 @@ function MessageView({
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages.length]);
 
+  const latestPin = pinned[0];
+
   return (
     <div className="flex-1 flex min-h-0">
       <div className="flex-1 flex flex-col min-w-0">
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3 shrink-0"
+      <div className="flex items-center gap-2 px-5 py-3 shrink-0"
         style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-base)" }}>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-semibold" style={{ color: "var(--text)" }}>{displayName}</p>
+          <p className="text-base font-semibold truncate" style={{ color: "var(--text)" }}>{displayName}</p>
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
             {conversation.members.length} member{conversation.members.length !== 1 ? "s" : ""}
             {conversation.kind === "project" && " · Project channel"}
@@ -516,8 +597,23 @@ function MessageView({
             {conversation.kind === "dm" && " · Direct message"}
           </p>
         </div>
-        <button onClick={() => setShowTasks((v) => !v)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+        <button onClick={toggleMute}
+          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+          title={muted ? "Sound off — click to enable" : "Sound on — click to mute"}>
+          {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+        </button>
+        <button onClick={togglePinnedPanel}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+          style={{
+            background: showPinned ? "var(--accent)25" : "var(--bg-surface)",
+            color: showPinned ? "var(--accent)" : "var(--text-muted)",
+            border: `1px solid ${showPinned ? "var(--accent)" : "var(--border)"}`,
+          }}>
+          <Pin size={12} /> Pinned{pinned.length > 0 ? ` · ${pinned.length}` : ""}
+        </button>
+        <button onClick={toggleTasksPanel}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
           style={{
             background: showTasks ? "var(--accent)25" : "var(--bg-surface)",
             color: showTasks ? "var(--accent)" : "var(--text-muted)",
@@ -527,12 +623,29 @@ function MessageView({
         </button>
         {conversation.kind !== "dm" && (
           <button onClick={() => setShowMembers(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
             style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
             <Settings size={12} /> Members
           </button>
         )}
       </div>
+
+      {/* Pinned banner (latest pin) — quick access; click to open the full panel */}
+      {latestPin && latestPin.message && !showPinned && (
+        <button onClick={togglePinnedPanel}
+          className="flex items-center gap-2 px-5 py-2 shrink-0 text-left hover:opacity-90"
+          style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-surface)" }}>
+          <Pin size={12} style={{ color: "var(--accent)" }} className="shrink-0" />
+          <span className="text-xs truncate flex-1" style={{ color: "var(--text-muted)" }}>
+            {pinnedSnippet(latestPin.message)}
+          </span>
+          {pinned.length > 1 && (
+            <span className="text-xs font-semibold shrink-0" style={{ color: "var(--accent)" }}>
+              +{pinned.length - 1} more
+            </span>
+          )}
+        </button>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4">
@@ -580,6 +693,11 @@ function MessageView({
                     liveStaff={liveStaff}
                     projects={projects}
                     isOwn={msg.authorId === currentUserId}
+                    isPinned={pinnedIds.has(msg.id)}
+                    replyMeta={threadMeta.get(msg.id)}
+                    onReply={() => openThread(msg)}
+                    onOpenThread={() => openThread(msg)}
+                    onTogglePin={() => handleTogglePin(msg)}
                     onSaved={() => { /* realtime will update */ }}
                     onOpenTask={onOpenTask}
                   />
@@ -602,6 +720,33 @@ function MessageView({
         onSent={() => { /* realtime will update */ }}
       />
       </div>
+
+      {/* Right side panel: Thread */}
+      {threadRoot && (
+        <ThreadPanel
+          root={threadRoot}
+          replies={threadReplies}
+          loading={threadLoading}
+          liveStaff={liveStaff}
+          projects={projects}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+          onOpenTask={onOpenTask}
+          onClose={() => setThreadRoot(null)}
+        />
+      )}
+
+      {/* Right side panel: Pinned */}
+      {showPinned && (
+        <PinnedPanel
+          pinned={pinned}
+          liveStaff={liveStaff}
+          projects={projects}
+          onUnpin={(messageId) => { setPinned((prev) => prev.filter((p) => p.messageId !== messageId)); unpinMessage(conversation.id, messageId).catch(reloadPinned); }}
+          onOpenTask={onOpenTask}
+          onClose={() => setShowPinned(false)}
+        />
+      )}
 
       {/* Right side panel: Tasks */}
       {showTasks && (
@@ -631,18 +776,33 @@ function MessageView({
   );
 }
 
+// Short one-line preview of a (possibly attachment-only) message for the pinned bar.
+function pinnedSnippet(msg: ChatMessage): string {
+  const body = (msg.body || "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").trim();
+  if (body) return body;
+  if (msg.attachmentName) return `📎 ${msg.attachmentName}`;
+  return "Pinned message";
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Individual message
 // ────────────────────────────────────────────────────────────────────────────
 
 function MessageItem({
-  msg, grouped, liveStaff, projects, isOwn, onSaved, onOpenTask,
+  msg, grouped, liveStaff, projects, isOwn, isPinned, replyMeta, inThread,
+  onReply, onOpenThread, onTogglePin, onSaved, onOpenTask,
 }: {
   msg: ChatMessage;
   grouped: boolean;
   liveStaff: LiveStaff[];
   projects: Project[];
   isOwn: boolean;
+  isPinned?: boolean;
+  replyMeta?: ThreadMeta;
+  inThread?: boolean;
+  onReply?: () => void;
+  onOpenThread?: () => void;
+  onTogglePin?: () => void;
   onSaved: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -696,6 +856,7 @@ function MessageItem({
             </span>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>{formatTime(msg.createdAt)}</span>
             {msg.editedAt && <span className="text-xs italic" style={{ color: "var(--text-muted)" }}>(edited)</span>}
+            {isPinned && <span className="inline-flex items-center" title="Pinned"><Pin size={10} style={{ color: "var(--accent)" }} /></span>}
           </div>
         )}
 
@@ -729,24 +890,52 @@ function MessageItem({
                 {msg.attachmentName}
               </a>
             )}
+            {/* Thread reply badge */}
+            {!inThread && replyMeta && replyMeta.count > 0 && (
+              <button onClick={onOpenThread}
+                className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-md text-xs font-semibold hover:opacity-80"
+                style={{ color: "var(--accent)", background: "var(--accent)15", border: "1px solid var(--accent)30" }}>
+                <MessageCircle size={11} />
+                {replyMeta.count} {replyMeta.count === 1 ? "reply" : "replies"}
+                <span style={{ color: "var(--text-muted)" }}>· {formatTime(replyMeta.lastReplyAt)}</span>
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Hover actions on own messages */}
-      {isOwn && !editing && (
+      {/* Hover actions */}
+      {!editing && (
         <div className="opacity-0 group-hover:opacity-100 flex gap-1 shrink-0">
-          <button onClick={() => setEditing(true)}
-            className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
-            style={{ color: "var(--text-muted)" }} title="Edit">
-            <Pencil size={12} />
-          </button>
-          <button onClick={handleDelete}
-            className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
-            style={{ color: confirmDelete ? "#ef4444" : "var(--text-muted)" }}
-            title={confirmDelete ? "Click again to confirm" : "Delete"}>
-            <Trash2 size={12} />
-          </button>
+          {!inThread && onReply && (
+            <button onClick={onReply} title="Reply in thread"
+              className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+              style={{ color: "var(--text-muted)" }}>
+              <CornerUpLeft size={12} />
+            </button>
+          )}
+          {!inThread && onTogglePin && (
+            <button onClick={onTogglePin} title={isPinned ? "Unpin message" : "Pin message"}
+              className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+              style={{ color: isPinned ? "var(--accent)" : "var(--text-muted)" }}>
+              {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
+            </button>
+          )}
+          {isOwn && (
+            <>
+              <button onClick={() => setEditing(true)}
+                className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+                style={{ color: "var(--text-muted)" }} title="Edit">
+                <Pencil size={12} />
+              </button>
+              <button onClick={handleDelete}
+                className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+                style={{ color: confirmDelete ? "#ef4444" : "var(--text-muted)" }}
+                title={confirmDelete ? "Click again to confirm" : "Delete"}>
+                <Trash2 size={12} />
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -806,7 +995,7 @@ function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; l
 
 function Composer({
   conversationId, currentUserId, currentUserName, liveStaff, projects, onSent,
-  pendingTaskInsert, onTaskInsertConsumed,
+  pendingTaskInsert, onTaskInsertConsumed, parentId, placeholder, autoFocus,
 }: {
   conversationId: string;
   currentUserId: string;
@@ -816,6 +1005,9 @@ function Composer({
   onSent: () => void;
   pendingTaskInsert?: string | null;
   onTaskInsertConsumed?: () => void;
+  parentId?: string | null;
+  placeholder?: string;
+  autoFocus?: boolean;
 }) {
   const [text, setText] = useState("");
 
@@ -923,6 +1115,7 @@ function Composer({
         body: text.trim(),
         attachment,
         mentionedUserIds: mentions,
+        parentId: parentId ?? null,
       });
 
       // Fire targeted notifications for @-mentions (excluding self)
@@ -1025,7 +1218,8 @@ function Composer({
           </div>
         </label>
         <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={onKeyDown}
-          rows={1} placeholder="Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."
+          autoFocus={autoFocus}
+          rows={1} placeholder={placeholder ?? "Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."}
           className="flex-1 bg-transparent text-sm outline-none px-3 py-2 rounded-lg resize-none"
           style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 38, maxHeight: 160, background: "var(--bg-surface)" }} />
         <button onClick={handleSend} disabled={sending || (!text.trim() && !file)}
@@ -1039,6 +1233,166 @@ function Composer({
       </div>
       {error && <p className="text-xs mt-1.5" style={{ color: "#ef4444" }}>⚠ {error}</p>}
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Thread side panel (Slack-style)
+// ────────────────────────────────────────────────────────────────────────────
+
+function ThreadPanel({
+  root, replies, loading, liveStaff, projects, currentUserId, currentUserName, onOpenTask, onClose,
+}: {
+  root: ChatMessage;
+  replies: ChatMessage[];
+  loading: boolean;
+  liveStaff: LiveStaff[];
+  projects: Project[];
+  currentUserId: string;
+  currentUserName: string;
+  onOpenTask: (taskId: string) => void;
+  onClose: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [replies.length]);
+
+  return (
+    <aside className="flex flex-col shrink-0" style={{ width: 360, borderLeft: "1px solid var(--border)", background: "var(--bg-base)" }}>
+      <div className="flex items-center gap-2 px-4 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        <MessageCircle size={14} style={{ color: "var(--accent)" }} />
+        <p className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>Thread</p>
+        <button onClick={onClose} className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+          style={{ color: "var(--text-muted)" }}><X size={14} /></button>
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
+        {/* Root message */}
+        <MessageItem
+          msg={root} grouped={false} liveStaff={liveStaff} projects={projects}
+          isOwn={root.authorId === currentUserId} inThread
+          onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
+        />
+        <div className="flex items-center gap-3 my-2 px-2">
+          <span className="text-xs font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>
+            {replies.length} {replies.length === 1 ? "reply" : "replies"}
+          </span>
+          <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-xs px-2" style={{ color: "var(--text-muted)" }}>
+            <Loader2 size={12} className="animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {replies.map((r) => (
+              <MessageItem
+                key={r.id} msg={r} grouped={false} liveStaff={liveStaff} projects={projects}
+                isOwn={r.authorId === currentUserId} inThread
+                onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Composer
+        conversationId={root.conversationId}
+        currentUserId={currentUserId}
+        currentUserName={currentUserName}
+        liveStaff={liveStaff}
+        projects={projects}
+        parentId={root.id}
+        placeholder="Reply in thread…"
+        autoFocus
+        onSent={() => { /* realtime will update */ }}
+      />
+    </aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pinned messages side panel
+// ────────────────────────────────────────────────────────────────────────────
+
+function PinnedPanel({
+  pinned, liveStaff, projects, onUnpin, onOpenTask, onClose,
+}: {
+  pinned: ChatPinnedMessage[];
+  liveStaff: LiveStaff[];
+  projects: Project[];
+  onUnpin: (messageId: string) => void;
+  onOpenTask: (taskId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="flex flex-col shrink-0" style={{ width: 360, borderLeft: "1px solid var(--border)", background: "var(--bg-base)" }}>
+      <div className="flex items-center gap-2 px-4 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        <Pin size={14} style={{ color: "var(--accent)" }} />
+        <p className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>
+          Pinned{pinned.length > 0 ? ` · ${pinned.length}` : ""}
+        </p>
+        <button onClick={onClose} className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+          style={{ color: "var(--text-muted)" }}><X size={14} /></button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
+        {pinned.length === 0 ? (
+          <div className="text-center py-10 px-4">
+            <Pin size={20} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2 opacity-50" />
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              No pinned messages yet. Hover any message and click the pin icon to keep links, files or notes handy here.
+            </p>
+          </div>
+        ) : (
+          pinned.map((p) => {
+            const msg = p.message;
+            const author = msg ? liveStaff.find((s) => staffAuthId(s) === msg.authorId) : undefined;
+            return (
+              <div key={p.id} className="rounded-lg p-3 group"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                    style={{ background: avatarColor(author, liveStaff), color: "#fff" }}>
+                    {author ? staffInitials(author) : "?"}
+                  </div>
+                  <span className="text-xs font-semibold truncate" style={{ color: "var(--text)" }}>
+                    {author ? staffName(author) : "Unknown"}
+                  </span>
+                  {msg && <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{formatTime(msg.createdAt)}</span>}
+                  <button onClick={() => onUnpin(p.messageId)} title="Unpin"
+                    className="ml-auto w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:opacity-100 shrink-0"
+                    style={{ color: "var(--text-muted)" }}>
+                    <PinOff size={12} />
+                  </button>
+                </div>
+                {msg && !msg.deletedAt ? (
+                  <>
+                    {msg.body && (
+                      <div className="text-sm whitespace-pre-wrap break-words" style={{ color: "var(--text)" }}>
+                        <RenderBody body={msg.body} liveStaff={liveStaff} projects={projects} onOpenTask={onOpenTask} />
+                      </div>
+                    )}
+                    {msg.attachmentUrl && (
+                      <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 mt-1.5 px-2.5 py-1.5 rounded-lg text-xs hover:opacity-80"
+                        style={{ background: "var(--bg-base)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                        {msg.attachmentType === "image" ? <ImageIcon size={12} /> : <FileText size={12} />}
+                        {msg.attachmentName}
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs italic" style={{ color: "var(--text-muted)" }}>Message deleted</p>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </aside>
   );
 }
 

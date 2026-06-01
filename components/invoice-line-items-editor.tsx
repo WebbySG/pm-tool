@@ -133,8 +133,29 @@ export function LineItemsEditor({
             <div className="flex items-center justify-between pt-1.5 mt-0.5 text-sm"
               style={{ borderTop: "1px solid var(--border)" }}>
               <span className="font-semibold" style={{ color: "var(--text)" }}>Total</span>
-              <span className="font-bold font-mono" style={{ color: "var(--text)" }}>{formatMoney(total, currency)}</span>
+              {/* Editable total — typing a total back-calculates the discount as a fixed amount */}
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{moneyPrefix}</span>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={total}
+                  onChange={(e) => {
+                    const entered = parseFloat(e.target.value);
+                    if (isNaN(entered)) return;
+                    // Clamp the desired total to [0, subtotal]; the gap becomes a fixed discount.
+                    const clamped = Math.max(0, Math.min(entered, subtotal));
+                    const newDiscount = Math.round((subtotal - clamped) * 100) / 100;
+                    if (newDiscount <= 0) onDiscountChange!("none", 0);
+                    else onDiscountChange!("fixed", newDiscount);
+                  }}
+                  className="w-28 bg-transparent text-sm outline-none px-2 py-1 rounded text-right font-bold font-mono"
+                  style={{ color: "var(--text)", border: "1px solid var(--border)" }}
+                  title="Edit the total — the discount is recalculated automatically" />
+              </div>
             </div>
+            <p className="text-xs text-right" style={{ color: "var(--text-muted)" }}>
+              Editing the total sets the discount automatically.
+            </p>
           </div>
         ) : (
           <div className="text-sm" style={{ color: "var(--text-muted)" }}>

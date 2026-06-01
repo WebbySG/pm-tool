@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import type {
   ChatConversation, ChatMessage, ChatMember,
   ConversationKind, ChatAttachmentType, ConversationWithUnread, ChatCategory,
+  ThreadMeta, ChatPinnedMessage,
 } from "./chat-types";
 
 type Row = Record<string, unknown>;
@@ -41,6 +42,7 @@ function rowToMessage(r: Row, mentions: string[] = []): ChatMessage {
     editedAt: (r.edited_at as string | null) ?? null,
     deletedAt: (r.deleted_at as string | null) ?? null,
     createdAt: r.created_at as string,
+    parentId: (r.parent_id as string | null) ?? null,
     mentionedUserIds: mentions,
   };
 }
@@ -319,13 +321,8 @@ export async function setConversationCategory(conversationId: string, userId: st
 
 // ─── Messages ──────────────────────────────────────────────────────────────────
 
-export async function loadMessages(conversationId: string, limit = 200): Promise<ChatMessage[]> {
-  const { data: rows, error } = await supabase.from("pm_chat_messages")
-    .select("*").eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false }).limit(limit);
-  if (error) throw error;
-  const msgs = (rows ?? []).map((r) => rowToMessage(r as Row)).reverse();
-
+// Attach mentioned_user_ids to a batch of already-loaded messages (in place).
+async function attachMentions(msgs: ChatMessage[]): Promise<ChatMessage[]> {
   if (msgs.length === 0) return msgs;
   const ids = msgs.map((m) => m.id);
   const { data: mentionRows } = await supabase.from("pm_chat_mentions")
@@ -341,12 +338,60 @@ export async function loadMessages(conversationId: string, limit = 200): Promise
   return msgs;
 }
 
+// Top-level timeline: only messages with parent_id IS NULL (thread replies are
+// shown in the thread side-panel, not the main timeline).
+export async function loadMessages(conversationId: string, limit = 200): Promise<ChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("*").eq("conversation_id", conversationId).is("parent_id", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  const msgs = (rows ?? []).map((r) => rowToMessage(r as Row)).reverse();
+  return attachMentions(msgs);
+}
+
+// Load all replies for a thread root, oldest first.
+export async function loadThreadReplies(rootId: string): Promise<ChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("*").eq("parent_id", rootId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const msgs = (rows ?? []).map((r) => rowToMessage(r as Row));
+  return attachMentions(msgs);
+}
+
+// Reply summary per thread-root for the whole conversation (for the "N replies" badge).
+export async function loadThreadMeta(conversationId: string): Promise<Map<string, ThreadMeta>> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("parent_id, author_id, created_at, deleted_at")
+    .eq("conversation_id", conversationId)
+    .not("parent_id", "is", null)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const out = new Map<string, ThreadMeta>();
+  for (const r of rows ?? []) {
+    const row = r as Row;
+    if (row.deleted_at) continue;
+    const root = row.parent_id as string;
+    const existing = out.get(root);
+    if (existing) {
+      existing.count += 1;
+      existing.lastReplyAt = row.created_at as string;
+      if (!existing.participantIds.includes(row.author_id as string)) existing.participantIds.push(row.author_id as string);
+    } else {
+      out.set(root, { count: 1, lastReplyAt: row.created_at as string, participantIds: [row.author_id as string] });
+    }
+  }
+  return out;
+}
+
 export type SendMessageInput = {
   conversationId: string;
   authorId: string;
   body: string;
   attachment?: { url: string; name: string; type: ChatAttachmentType } | null;
   mentionedUserIds?: string[];
+  // When set, this message is a reply within the given thread-root's thread.
+  parentId?: string | null;
 };
 
 export async function sendMessage(input: SendMessageInput): Promise<ChatMessage> {
@@ -357,6 +402,7 @@ export async function sendMessage(input: SendMessageInput): Promise<ChatMessage>
     attachment_url: input.attachment?.url ?? null,
     attachment_name: input.attachment?.name ?? null,
     attachment_type: input.attachment?.type ?? null,
+    parent_id: input.parentId ?? null,
   }).select("*").single();
   if (error) throw error;
   const msg = rowToMessage(row as Row);
@@ -413,6 +459,62 @@ export async function uploadChatAttachment(file: File, conversationId: string): 
   const type: ChatAttachmentType = file.type.startsWith("image/") ? "image"
     : file.type.startsWith("video/") ? "video" : "document";
   return { url: data.publicUrl, name: file.name, type };
+}
+
+// ─── Pinned messages (per-conversation, shared, unlimited) ──────────────────────
+
+export async function loadPinnedMessages(conversationId: string): Promise<ChatPinnedMessage[]> {
+  const { data: pinRows, error } = await supabase.from("pm_chat_pinned_messages")
+    .select("*").eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const pins = pinRows ?? [];
+  if (pins.length === 0) return [];
+
+  const msgIds = pins.map((r) => (r as Row).message_id as string);
+  const { data: msgRows } = await supabase.from("pm_chat_messages").select("*").in("id", msgIds);
+  const msgById = new Map<string, ChatMessage>();
+  for (const r of msgRows ?? []) {
+    const m = rowToMessage(r as Row);
+    msgById.set(m.id, m);
+  }
+  await attachMentions(Array.from(msgById.values()));
+
+  return pins.map((r) => {
+    const row = r as Row;
+    return {
+      id: row.id as string,
+      conversationId: row.conversation_id as string,
+      messageId: row.message_id as string,
+      pinnedBy: (row.pinned_by as string | null) ?? null,
+      createdAt: row.created_at as string,
+      message: msgById.get(row.message_id as string) ?? null,
+    };
+  });
+}
+
+export async function pinMessage(conversationId: string, messageId: string, userId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_pinned_messages").upsert(
+    { conversation_id: conversationId, message_id: messageId, pinned_by: userId },
+    { onConflict: "conversation_id,message_id", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
+export async function unpinMessage(conversationId: string, messageId: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_pinned_messages").delete()
+    .eq("conversation_id", conversationId).eq("message_id", messageId);
+  if (error) throw error;
+}
+
+export function subscribeToPinned(conversationId: string, onChange: () => void) {
+  const channel = supabase.channel(`chat-pinned-${conversationId}`)
+    .on("postgres_changes", {
+      event: "*", schema: "public", table: "pm_chat_pinned_messages",
+      filter: `conversation_id=eq.${conversationId}`,
+    }, () => onChange())
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
 }
 
 // ─── Unread totals ────────────────────────────────────────────────────────────
