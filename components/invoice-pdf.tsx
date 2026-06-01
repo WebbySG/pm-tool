@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 0,
-    paddingBottom: 140, // reserve space for signatures + footer at the bottom
+    paddingBottom: 200, // reserve space for signatures + decoration + footer at the bottom
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
   // ─── Signatures (absolutely pinned at bottom of last page) ──────────────
   signaturesBlock: {
     position: "absolute",
-    bottom: 60, // sits above the footer
+    bottom: 155, // sits above the bottom-right decoration (which tops out at ~140)
     left: 60, right: 30,
     flexDirection: "row", justifyContent: "space-between",
   },
@@ -409,7 +409,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
             const { heading, body } = splitDescription(li.description || "");
             const rowStyle = i % 2 === 1 ? styles.trAlt : styles.tr;
             return (
-              <View key={li.id} style={rowStyle} wrap={false}>
+              <View key={li.id} style={rowStyle}>
                 <View style={styles.tdDesc}>
                   {heading ? <Text style={styles.itemHeading}>{heading}</Text> : null}
                   {body ? <Text style={styles.itemBody}>{body}</Text> : null}
