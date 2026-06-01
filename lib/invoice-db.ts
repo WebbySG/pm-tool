@@ -26,6 +26,7 @@ function rowToInvoice(r: Row, items: InvoiceLineItem[] = []): Invoice {
     id: r.id as string,
     invoiceNumber: r.invoice_number as string,
     clientId: (r.client_id as string | null) ?? null,
+    projectId: (r.project_id as string | null) ?? null,
     templateId: (r.template_id as string | null) ?? null,
     status: r.status as InvoiceStatus,
     currency: (r.currency as string) ?? "SGD",
@@ -122,6 +123,7 @@ export async function loadInvoice(id: string): Promise<Invoice | null> {
 
 export type InvoiceDraft = {
   clientId: string | null;
+  projectId: string | null;
   templateId: string | null;
   issueDate: string;
   dueDate: string;
@@ -148,6 +150,7 @@ export async function createInvoice(draft: InvoiceDraft): Promise<string> {
   const { data, error } = await supabase.from("pm_invoices").insert({
     invoice_number: invoiceNumber,
     client_id: draft.clientId,
+    project_id: draft.projectId,
     template_id: draft.templateId,
     status: "draft",
     currency: draft.currency ?? "SGD",
@@ -190,6 +193,7 @@ export async function updateInvoice(
 ): Promise<void> {
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.clientId !== undefined) updates.client_id = patch.clientId;
+  if (patch.projectId !== undefined) updates.project_id = patch.projectId;
   if (patch.templateId !== undefined) updates.template_id = patch.templateId;
   if (patch.issueDate !== undefined) updates.issue_date = patch.issueDate;
   if (patch.dueDate !== undefined) updates.due_date = patch.dueDate;
@@ -283,6 +287,7 @@ export async function duplicateInvoice(sourceId: string, opts: {
   if (!src) throw new Error("Source invoice not found");
   const newId = await createInvoice({
     clientId: src.clientId,
+    projectId: src.projectId,
     templateId: src.templateId,
     issueDate: opts.issueDate,
     dueDate: opts.dueDate,

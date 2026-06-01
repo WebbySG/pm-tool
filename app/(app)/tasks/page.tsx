@@ -144,7 +144,7 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask, uploadTaskAttachment } = useStore();
+  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask, addProject, uploadTaskAttachment } = useStore();
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskProject, setNewTaskProject] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -153,6 +153,11 @@ export default function TasksPage() {
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
   const [newTaskFiles, setNewTaskFiles] = useState<File[]>([]);
   const [creating, setCreating] = useState(false);
+  // Inline "create new project" from the New Task dialog (admin only)
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjName, setNewProjName] = useState("");
+  const [savingProject, setSavingProject] = useState(false);
+  const [projError, setProjError] = useState<string | null>(null);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const [activeTab, setActiveTab] = useState<"tasks" | "content" | "review" | "revision">("tasks");
@@ -227,6 +232,48 @@ export default function TasksPage() {
   async function handleRequestApproval(task: TaskWithProject) {
     const name = user?.name ?? "Staff";
     await requestTaskApproval(task.projectId, task.id, name, task.title);
+  }
+
+  // Quick-create a project inline from the New Task dialog, then select it.
+  // Admin-only — staff cannot create projects (CLAUDE.md role rules).
+  async function handleCreateProjectInline() {
+    const name = newProjName.trim();
+    if (!name) return;
+    if (projects.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) {
+      setProjError(`A project named "${name}" already exists.`);
+      return;
+    }
+    setSavingProject(true);
+    setProjError(null);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const newId = await addProject({
+        clientId: null,
+        channelId: null,
+        name,
+        type: "webdev",
+        phase: "discovery",
+        description: "",
+        startDate: today,
+        dueDate: "",
+        assignedStaff: newTaskAssignee ? [newTaskAssignee] : [],
+      });
+      setNewTaskProject(newId);
+      setCreatingProject(false);
+      setNewProjName("");
+    } catch (err) {
+      const e = err as { message?: string };
+      setProjError(e?.message || "Failed to create project.");
+    } finally {
+      setSavingProject(false);
+    }
+  }
+
+  function resetNewTaskForm() {
+    setShowNewTask(false);
+    setCreatingProject(false);
+    setNewProjName("");
+    setProjError(null);
   }
 
   // Keep selected task in sync with store updates
@@ -546,22 +593,75 @@ export default function TasksPage() {
 
       {showNewTask && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowNewTask(false)} />
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={resetNewTaskForm} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-md flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Task</h3>
-                <button onClick={() => setShowNewTask(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={resetNewTaskForm} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               <div>
-                <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Project *</p>
-                <select value={newTaskProject} onChange={(e) => setNewTaskProject(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
-                  <option value="">— Select project —</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-xs" style={{ color: "#4a7090" }}>Project *</p>
+                  {isAdmin && !creatingProject && (
+                    <button
+                      type="button"
+                      onClick={() => { setCreatingProject(true); setProjError(null); }}
+                      className="flex items-center gap-1 text-xs font-medium hover:opacity-80"
+                      style={{ color: "#38b6e8" }}
+                    >
+                      <Plus size={11} /> New project
+                    </button>
+                  )}
+                </div>
+                {creatingProject ? (
+                  <div className="flex flex-col gap-2 p-2.5 rounded-lg" style={{ background: "#0e1e30", border: "1px solid #38b6e840" }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="New project name"
+                      value={newProjName}
+                      onChange={(e) => setNewProjName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); handleCreateProjectInline(); }
+                        if (e.key === "Escape") { setCreatingProject(false); setNewProjName(""); setProjError(null); }
+                      }}
+                      className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                      style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={!newProjName.trim() || savingProject}
+                        onClick={handleCreateProjectInline}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                        style={{ background: "#38b6e8", color: "#fff" }}
+                      >
+                        {savingProject ? "Creating…" : "Create project"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setCreatingProject(false); setNewProjName(""); setProjError(null); }}
+                        className="px-3 py-1.5 rounded-lg text-xs"
+                        style={{ background: "#0f1d2e", color: "#4a7090", border: "1px solid #1c3248" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="text-xs" style={{ color: "#4a7090" }}>
+                      Creates a Web Dev project in the Discovery phase. Refine the details later on the project page.
+                    </p>
+                    {projError && <p className="text-xs" style={{ color: "#ef4444" }}>{projError}</p>}
+                  </div>
+                ) : (
+                  <select value={newTaskProject} onChange={(e) => setNewTaskProject(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                    <option value="">— Select project —</option>
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                )}
               </div>
 
               <input
@@ -623,9 +723,9 @@ export default function TasksPage() {
 
               <div className="flex gap-2 pt-1">
                 <button
-                  disabled={!newTaskProject || !newTaskTitle.trim() || creating}
+                  disabled={!newTaskProject || !newTaskTitle.trim() || creating || creatingProject}
                   onClick={async () => {
-                    if (!newTaskProject || !newTaskTitle.trim()) return;
+                    if (!newTaskProject || !newTaskTitle.trim() || creatingProject) return;
                     setCreating(true);
                     try {
                       const newTaskId = await addTask(newTaskProject, {
@@ -646,7 +746,7 @@ export default function TasksPage() {
                           await uploadTaskAttachment(newTaskProject, newTaskId, file, uploadedBy);
                         }
                       }
-                      setShowNewTask(false);
+                      resetNewTaskForm();
                       setNewTaskTitle("");
                       setNewTaskDueDate("");
                       setNewTaskPriority(5);
@@ -662,7 +762,7 @@ export default function TasksPage() {
                   style={{ background: "#38b6e8", color: "#fff" }}>
                   {creating ? "Creating…" : "Create Task"}
                 </button>
-                <button onClick={() => setShowNewTask(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                <button onClick={resetNewTaskForm} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
                   Cancel
                 </button>
               </div>

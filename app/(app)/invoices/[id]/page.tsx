@@ -38,14 +38,14 @@ export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const { user } = useAuth();
-  const { clients } = useStore();
+  const { projects } = useStore();
 
   const [inv, setInv] = useState<Invoice | null>(null);
   const [logs, setLogs] = useState<InvoiceLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Editable fields (mirror loaded invoice)
-  const [clientId, setClientId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [issueDate, setIssueDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [billToName, setBillToName] = useState("");
@@ -77,7 +77,7 @@ export default function InvoiceDetailPage() {
 
   function hydrate(i: Invoice) {
     setInv(i);
-    setClientId(i.clientId);
+    setProjectId(i.projectId);
     setIssueDate(i.issueDate);
     setDueDate(i.dueDate);
     setBillToName(i.billToName);
@@ -101,7 +101,7 @@ export default function InvoiceDetailPage() {
     setSaving(true); setError(null);
     try {
       await updateInvoice(inv.id, {
-        clientId, issueDate, dueDate,
+        projectId, issueDate, dueDate,
         billToName: billToName.trim(),
         billToEmail: billToEmail.trim(),
         billToAddress,
@@ -267,12 +267,12 @@ export default function InvoiceDetailPage() {
         {/* Form */}
         <div className="flex flex-col gap-5">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Client">
-              <select value={clientId ?? ""} onChange={(e) => markDirty(setClientId)(e.target.value || null)}
+            <Field label="Project">
+              <select value={projectId ?? ""} onChange={(e) => markDirty(setProjectId)(e.target.value || null)}
                 className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
                 style={{ color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
-                <option value="">— No client linked —</option>
-                {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="">— No project linked —</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </Field>
             <Field label="Currency">

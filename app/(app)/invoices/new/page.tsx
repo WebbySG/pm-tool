@@ -7,7 +7,7 @@ import { LineItemsEditor, type LineItemDraft } from "@/components/invoice-line-i
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import {
-  loadInvoices, loadInvoiceTemplates, loadInvoice, loadInvoiceTemplate, loadClientBilling,
+  loadInvoices, loadInvoiceTemplates, loadInvoice, loadInvoiceTemplate,
   createInvoice,
 } from "@/lib/invoice-db";
 import type { Invoice, InvoiceTemplate, DiscountType } from "@/lib/invoice-types";
@@ -24,13 +24,13 @@ export default function NewInvoicePage() {
   const router = useRouter();
   const sp = useSearchParams();
   const { user } = useAuth();
-  const { clients } = useStore();
+  const { projects } = useStore();
 
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
   const [pastInvoices, setPastInvoices] = useState<Invoice[]>([]);
   const [loadingPickers, setLoadingPickers] = useState(true);
 
-  const [clientId, setClientId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [sourceLabel, setSourceLabel] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
 
@@ -65,17 +65,14 @@ export default function NewInvoicePage() {
     });
   }, [sp]);
 
-  // Auto-prefill bill-to when client is picked
+  // Auto-prefill bill-to name from the linked project (only fill blanks — don't
+  // overwrite manual edits). Project name is a sensible default the user can override.
   useEffect(() => {
-    if (!clientId) return;
-    loadClientBilling(clientId).then((c) => {
-      if (!c) return;
-      // Only fill blanks — don't overwrite manual edits
-      setBillToName((prev) => prev || c.name);
-      setBillToEmail((prev) => prev || c.email);
-      setBillToAddress((prev) => prev || c.address);
-    });
-  }, [clientId]);
+    if (!projectId) return;
+    const p = projects.find((p) => p.id === projectId);
+    if (!p) return;
+    setBillToName((prev) => prev || p.name);
+  }, [projectId, projects]);
 
   async function applyTemplateAsSource(tpl: InvoiceTemplate) {
     const full = await loadInvoiceTemplate(tpl.id);
@@ -92,7 +89,7 @@ export default function NewInvoicePage() {
 
   function applyInvoiceAsSource(inv: Invoice) {
     setTemplateId(inv.templateId);
-    setClientId(inv.clientId);
+    setProjectId(inv.projectId);
     setSourceLabel(`Duplicated from ${inv.invoiceNumber}`);
     setBillToName(inv.billToName);
     setBillToEmail(inv.billToEmail);
@@ -120,7 +117,8 @@ export default function NewInvoicePage() {
     setSaving(true); setError(null);
     try {
       const id = await createInvoice({
-        clientId,
+        clientId: null,
+        projectId,
         templateId,
         issueDate,
         dueDate,
@@ -212,12 +210,12 @@ export default function NewInvoicePage() {
             )}
 
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Client (optional)">
-                <select value={clientId ?? ""} onChange={(e) => setClientId(e.target.value || null)}
+              <Field label="Project (optional)">
+                <select value={projectId ?? ""} onChange={(e) => setProjectId(e.target.value || null)}
                   className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
                   style={{ color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
-                  <option value="">— No client linked —</option>
-                  {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="">— No project linked —</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </Field>
               <Field label="Currency">

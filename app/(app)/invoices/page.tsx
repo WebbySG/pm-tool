@@ -21,7 +21,7 @@ function formatMoney(amount: number, currency: string) {
 }
 
 export default function InvoicesPage() {
-  const { clients } = useStore();
+  const { projects } = useStore();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "draft" | "sent" | "paid" | "overdue">("all");
@@ -124,7 +124,7 @@ export default function InvoicesPage() {
         ) : (
           <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
             {filtered.map((inv, i) => {
-              const clientName = inv.clientId ? clients.find((c) => c.id === inv.clientId)?.name : null;
+              const projectName = inv.projectId ? projects.find((p) => p.id === inv.projectId)?.name : null;
               const color = STATUS_COLOR[inv.derivedStatus];
               return (
                 <Link key={inv.id} href={`/invoices/${inv.id}`}
@@ -145,7 +145,7 @@ export default function InvoicesPage() {
                       </span>
                     </div>
                     <p className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
-                      {inv.billToName}{clientName && clientName !== inv.billToName ? ` · ${clientName}` : ""}
+                      {inv.billToName}{projectName && projectName !== inv.billToName ? ` · ${projectName}` : ""}
                     </p>
                   </div>
                   <div className="text-right shrink-0">

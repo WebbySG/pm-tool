@@ -16,6 +16,7 @@ export type Invoice = {
   id: string;
   invoiceNumber: string;
   clientId: string | null;
+  projectId: string | null;
   templateId: string | null;
   status: InvoiceStatus;
   currency: string;

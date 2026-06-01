@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
-  Bold, Italic, List, Heading, MessageSquare, Send,
+  Bold, Italic, List, Heading, MessageSquare, Send, Palette, Eraser,
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
@@ -62,6 +62,21 @@ function isHtml(s: string): boolean {
   return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span|img)\b/i.test(s);
 }
 
+// Font-colour swatches for the description editor. "Default" clears the colour so
+// text falls back to the editor's light theme colour (readable on the dark panel).
+const TEXT_COLORS: { label: string; value: string }[] = [
+  { label: "Default (theme)", value: "" },
+  { label: "White", value: "#ffffff" },
+  { label: "Light blue", value: "#cce4ff" },
+  { label: "Sky", value: "#38b6e8" },
+  { label: "Green", value: "#22c55e" },
+  { label: "Amber", value: "#f59e0b" },
+  { label: "Red", value: "#ef4444" },
+  { label: "Purple", value: "#a855f7" },
+  { label: "Slate", value: "#94a3b8" },
+  { label: "Black", value: "#0a0a0a" },
+];
+
 // WYSIWYG editor using contentEditable + document.execCommand. Real bolding,
 // not markdown wrapping. Stores HTML; sanitised on save and on display.
 function RichEditor({ initialHtml, onSave, onUploadFile }: {
@@ -72,6 +87,7 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
   const ref = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [showColors, setShowColors] = useState(false);
   useEffect(() => {
     if (ref.current) {
       ref.current.innerHTML = isHtml(initialHtml)
@@ -91,6 +107,37 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
   function exec(cmd: string, value?: string) {
     ref.current?.focus();
     document.execCommand(cmd, false, value);
+  }
+
+  // Apply a font colour to the current selection. styleWithCSS makes execCommand emit
+  // inline `style="color:…"` (kept by the sanitiser) and, in Chromium, strips conflicting
+  // colours from descendant nodes inside the range — so it overrides pasted dark text.
+  function applyColor(color: string) {
+    ref.current?.focus();
+    if (color === "") {
+      // "Default": drop the colour so text inherits the editor's light theme colour.
+      document.execCommand("styleWithCSS", false, "true");
+      document.execCommand("foreColor", false, "#cce4ff");
+    } else {
+      document.execCommand("styleWithCSS", false, "true");
+      document.execCommand("foreColor", false, color);
+    }
+    setShowColors(false);
+    if (ref.current) {
+      const html = sanitizeHtml(ref.current.innerHTML);
+      onSave(html === "<br>" ? "" : html);
+    }
+  }
+
+  // Strip bold/italic/colour/etc. from the selection — handy for cleaning up pasted
+  // website content that carries its own (often unreadable) inline colours.
+  function clearFormatting() {
+    ref.current?.focus();
+    document.execCommand("removeFormat");
+    if (ref.current) {
+      const html = sanitizeHtml(ref.current.innerHTML);
+      onSave(html === "<br>" ? "" : html);
+    }
   }
 
   function insertNodeAtCursor(node: Node) {
@@ -164,11 +211,70 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #38b6e8", background: "#0e1e30" }}>
-      <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderBottom: "1px solid #1c3248" }}>
+      <div className="flex items-center gap-1 px-2 py-1.5 relative" style={{ borderBottom: "1px solid #1c3248" }}>
         {btn(Bold, "bold", "Bold")}
         {btn(Italic, "italic", "Italic")}
         {btn(Heading, "formatBlock", "Heading", "<h3>")}
         {btn(List, "insertUnorderedList", "Bulleted list")}
+
+        {/* Font colour */}
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); setShowColors((v) => !v); }}
+          className="p-1.5 rounded hover:opacity-80 transition-opacity"
+          style={{ color: "#9dd8f5" }}
+          title="Font colour"
+        >
+          <Palette size={13} />
+        </button>
+        {showColors && (
+          <div
+            className="absolute z-10 top-full left-0 mt-1 p-2 rounded-lg shadow-xl"
+            style={{ background: "#0e1e30", border: "1px solid #1c3248", width: 168 }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <div className="grid grid-cols-5 gap-1.5">
+              {TEXT_COLORS.map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); applyColor(c.value); }}
+                  title={c.label}
+                  className="w-6 h-6 rounded transition-transform hover:scale-110"
+                  style={{
+                    background: c.value || "transparent",
+                    border: c.value ? "1px solid #ffffff30" : "1px dashed #4a7090",
+                  }}
+                >
+                  {!c.value && <span className="text-xs" style={{ color: "#9dd8f5" }}>A</span>}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 mt-2 pt-2 cursor-pointer"
+              style={{ borderTop: "1px solid #1c3248" }}>
+              <input
+                type="color"
+                defaultValue="#cce4ff"
+                onChange={(e) => applyColor(e.target.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="w-5 h-5 p-0 bg-transparent border-0 cursor-pointer"
+              />
+              <span className="text-xs" style={{ color: "#9dd8f5" }}>Custom…</span>
+            </label>
+          </div>
+        )}
+
+        {/* Clear formatting (removes pasted colours/styles from the selection) */}
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); clearFormatting(); }}
+          className="p-1.5 rounded hover:opacity-80 transition-opacity"
+          style={{ color: "#9dd8f5" }}
+          title="Clear formatting"
+        >
+          <Eraser size={13} />
+        </button>
+
         {onUploadFile && (
           <>
             <button

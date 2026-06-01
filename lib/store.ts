@@ -81,7 +81,7 @@ interface Store {
   deleteAttachment: (projectId: string, taskId: string, attachmentId: string) => Promise<void>;
 
   // Project actions
-  addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<void>;
+  addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<string>;
   updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   assignStaff: (projectId: string, userId: string) => Promise<void>;
@@ -651,6 +651,7 @@ export const useStore = create<Store>()(
     for (const t of seedTasks) {
       await db.dbAddTask(t.id, id, { ...t, parentId: null });
     }
+    return id;
   },
 
   updateProject: async (projectId, data) => {
