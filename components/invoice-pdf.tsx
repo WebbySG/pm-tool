@@ -33,7 +33,7 @@ const PAGE_H = 841.89;
 
 const styles = StyleSheet.create({
   page: {
-    paddingTop: 0,
+    paddingTop: 40, // top reserve so the running header (continuation pages) has room
     paddingBottom: 200, // reserve space for signatures + decoration + footer at the bottom
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
@@ -66,9 +66,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 40,
-    paddingTop: 36,
+    paddingTop: 4, // page already reserves 40pt at the top
     paddingBottom: 22,
   },
+
+  // ─── Running header (continuation pages only) ───────────────────────────
+  runningHeader: { position: "absolute", top: 0, left: 0, right: 0 },
+  runningHeaderContent: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingHorizontal: 40, paddingTop: 12, paddingBottom: 8,
+  },
+  runningHeaderBrand: { fontSize: 8.5, color: C.text, letterSpacing: 0.5, fontFamily: "Helvetica-Bold" },
+  runningHeaderNote: { fontSize: 8, color: C.textFaint, letterSpacing: 0.3 },
+  runningHeaderLine: { height: 2, backgroundColor: C.red, marginLeft: 8 },
   logo: { width: 130, height: 50, objectFit: "contain" },
   brandFallback: { flexDirection: "column" },
   brandFallbackName: { fontSize: 22, fontFamily: "Helvetica-Bold", color: C.ink, letterSpacing: -0.5 },
@@ -328,6 +338,27 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         <View style={styles.leftAccent} fixed />
         <TopRightDecor />
         <CornerDots />
+
+        {/* Running header — repeats on every continuation page (not page 1) */}
+        <View
+          style={styles.runningHeader}
+          fixed
+          render={(args: unknown) => {
+            const { pageNumber } = args as { pageNumber: number };
+            if (pageNumber === 1) return null;
+            return (
+              <>
+                <View style={styles.runningHeaderContent}>
+                  <Text style={styles.runningHeaderBrand}>
+                    {BUSINESS_DETAILS.name} · INVOICE {invoice.invoiceNumber}
+                  </Text>
+                  <Text style={styles.runningHeaderNote}>continued</Text>
+                </View>
+                <View style={styles.runningHeaderLine} />
+              </>
+            );
+          }}
+        />
 
         {/* Header */}
         <View style={styles.header}>
