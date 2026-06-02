@@ -129,15 +129,17 @@ export default function ChatPage() {
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
   }, []);
 
-  const reloadConvs = async () => {
+  // `silent` = background refresh (realtime, after sending): update the list in place
+  // WITHOUT flipping the loading spinner, so the sidebar doesn't flash on every message.
+  const reloadConvs = async (silent = false) => {
     if (!user?.id) return;
-    setLoadingConvs(true);
+    if (!silent) setLoadingConvs(true);
     try {
       const list = await loadConversationsForUser(user.id);
       setConvs(list);
       if (!selectedId && list.length > 0) setSelectedId(list[0].id);
     } finally {
-      setLoadingConvs(false);
+      if (!silent) setLoadingConvs(false);
     }
   };
 
@@ -227,8 +229,8 @@ export default function ChatPage() {
   useEffect(() => {
     if (!user?.id) return;
     const channel = supabase.channel("chat-inbox-page")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_messages" }, () => reloadConvs())
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_conversations" }, () => reloadConvs())
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_messages" }, () => reloadConvs(true))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_conversations" }, () => reloadConvs(true))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -422,8 +424,8 @@ export default function ChatPage() {
               currentUserId={user?.id ?? ""}
               currentUserName={user?.name ?? ""}
               isAdmin={user?.pmRole === "admin"}
-              onAfterChange={reloadConvs}
-              onDeleted={() => { setSelectedId(null); reloadConvs(); }}
+              onAfterChange={() => reloadConvs(true)}
+              onDeleted={() => { setSelectedId(null); reloadConvs(true); }}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
             />
           ) : (
