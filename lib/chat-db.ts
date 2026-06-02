@@ -612,11 +612,17 @@ export function subscribeToConversation(
   return () => { supabase.removeChannel(channel); };
 }
 
+// Each caller gets a UNIQUE channel topic. Multiple subscribers sharing one topic
+// (e.g. the sidebar unread badge + the unread-inbox popup) makes Supabase throw
+// "cannot add postgres_changes callbacks ... after subscribe()", which crashes the
+// whole authenticated app. The counter guarantees distinct topics per subscription.
+let inboxChannelSeq = 0;
 export function subscribeToInboxForUser(
-  _userId: string,
+  userId: string,
   onAnyChange: () => void,
 ) {
-  const channel = supabase.channel(`chat-inbox`)
+  const topic = `chat-inbox-${userId || "anon"}-${++inboxChannelSeq}`;
+  const channel = supabase.channel(topic)
     .on("postgres_changes", {
       event: "*", schema: "public", table: "pm_chat_messages",
     }, () => onAnyChange())

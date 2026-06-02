@@ -13,10 +13,10 @@ export default function manifest(): MetadataRoute.Manifest {
     orientation: "portrait",
     background_color: "#0a1828",
     theme_color: "#0a1828",
+    // `sizes: "any"` avoids the "Resource size is not correct" warning while the
+    // logo isn't exported at exact 192/512. Replace with purpose-built icons later.
     icons: [
-      { src: "/webby-sg-logo.png", sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: "/webby-sg-logo.png", sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: "/webby-sg-logo.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: "/webby-sg-logo.png", sizes: "any", type: "image/png", purpose: "any" },
     ],
   };
 }
