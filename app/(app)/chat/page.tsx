@@ -19,7 +19,7 @@ import {
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
-import { playNotificationSound, playSentSound, isChatSoundMuted, setChatSoundMuted } from "@/lib/notification-sound";
+import { playNotificationSound, playSentSound, isChatSoundMuted, setChatSoundMuted, getChatSoundVolume, setChatSoundVolume } from "@/lib/notification-sound";
 import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
@@ -502,9 +502,17 @@ function MessageView({
   const [showPinned, setShowPinned] = useState(false);
   const pinnedIds = useMemo(() => new Set(pinned.map((p) => p.messageId)), [pinned]);
 
-  // Sound mute (per browser)
+  // Sound mute + volume (per browser)
   const [muted, setMuted] = useState(false);
-  useEffect(() => { setMuted(isChatSoundMuted()); }, []);
+  const [volume, setVolume] = useState(1);
+  const [soundMenu, setSoundMenu] = useState(false);
+  useEffect(() => { setMuted(isChatSoundMuted()); setVolume(getChatSoundVolume()); }, []);
+  function changeVolume(v: number) {
+    setVolume(v);
+    setChatSoundVolume(v);
+    if (v > 0 && muted) { setMuted(false); setChatSoundMuted(false); }
+    if (v > 0) playNotificationSound(); // preview the new level
+  }
 
   // Desktop (OS) notification permission
   const [notifPerm, setNotifPerm] = useState<WebNotificationPermission>("default");
@@ -701,12 +709,46 @@ function MessageView({
             <BellRing size={12} /> {notifPerm === "denied" ? "Alerts blocked" : "Enable desktop alerts"}
           </button>
         )}
-        <button onClick={toggleMute}
-          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-          style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
-          title={muted ? "Sound off — click to enable" : "Sound on — click to mute"}>
-          {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
-        </button>
+        <div className="relative shrink-0">
+          <button onClick={() => setSoundMenu((v) => !v)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{
+              background: soundMenu ? "var(--accent)25" : "var(--bg-surface)",
+              color: soundMenu ? "var(--accent)" : "var(--text-muted)",
+              border: `1px solid ${soundMenu ? "var(--accent)" : "var(--border)"}`,
+            }}
+            title="Notification sound settings">
+            {muted || volume === 0 ? <VolumeX size={13} /> : <Volume2 size={13} />}
+          </button>
+          {soundMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setSoundMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-20 p-3 rounded-lg shadow-xl"
+                style={{ width: 210, background: "var(--bg-base)", border: "1px solid var(--border)", boxShadow: "0 12px 32px rgba(0,0,0,0.45)" }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold" style={{ color: "var(--text)" }}>Notification sound</span>
+                  <button onClick={toggleMute}
+                    className="text-xs font-semibold px-2 py-0.5 rounded"
+                    style={{ color: muted ? "#ef4444" : "var(--accent)", background: muted ? "#ef444420" : "var(--accent)15" }}>
+                    {muted ? "Muted" : "On"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <VolumeX size={12} style={{ color: "var(--text-muted)" }} />
+                  <input type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume}
+                    onChange={(e) => changeVolume(parseFloat(e.target.value))}
+                    className="flex-1" style={{ accentColor: "var(--accent)" }} />
+                  <Volume2 size={13} style={{ color: "var(--text-muted)" }} />
+                </div>
+                <button onClick={() => { if (muted) { setMuted(false); setChatSoundMuted(false); } playNotificationSound(); }}
+                  className="mt-2 w-full text-xs font-semibold px-2 py-1 rounded"
+                  style={{ color: "var(--accent)", background: "var(--accent)15" }}>
+                  Play test sound
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         <button onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearch(""); }}
           className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
           style={{

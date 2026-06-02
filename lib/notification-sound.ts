@@ -6,8 +6,31 @@
 // into the app, so playback is allowed.
 
 const MUTE_KEY = "chat-sound-muted";
+const VOLUME_KEY = "chat-sound-volume";
 
 let ctx: AudioContext | null = null;
+
+// 0..1 user volume (default loud). Stored per browser.
+export function getChatSoundVolume(): number {
+  if (typeof window === "undefined") return 1;
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    if (raw == null) return 1;
+    const v = parseFloat(raw);
+    return isNaN(v) ? 1 : Math.max(0, Math.min(1, v));
+  } catch {
+    return 1;
+  }
+}
+
+export function setChatSoundVolume(v: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(VOLUME_KEY, String(Math.max(0, Math.min(1, v))));
+  } catch {
+    /* ignore */
+  }
+}
 
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -87,26 +110,30 @@ export function playNotificationSound(): void {
   if (isChatSoundMuted()) return;
   const ac = getCtx();
   if (!ac) return;
+  const vol = getChatSoundVolume();
+  if (vol <= 0) return;
   try {
     const t = ac.currentTime + 0.01;
-    note(ac, 880, t, 0.18, 0.16);        // A5
-    note(ac, 1320, t + 0.09, 0.22, 0.12); // E6 — pleasant ascending two-note bell
+    note(ac, 880, t, 0.2, 0.6 * vol);         // A5
+    note(ac, 1320, t + 0.09, 0.26, 0.5 * vol); // E6 — pleasant ascending two-note bell
   } catch {
     /* ignore playback errors */
   }
 }
 
 /**
- * Short, soft "message sent" blip — played when YOU send a message. Deliberately
- * quieter/lower than the incoming chime so the two are distinguishable.
+ * Short "message sent" blip — played when YOU send a message. Lower note than the
+ * incoming chime so the two are distinguishable.
  */
 export function playSentSound(): void {
   if (isChatSoundMuted()) return;
   const ac = getCtx();
   if (!ac) return;
+  const vol = getChatSoundVolume();
+  if (vol <= 0) return;
   try {
     const t = ac.currentTime + 0.01;
-    note(ac, 620, t, 0.12, 0.08);        // single quick low note
+    note(ac, 620, t, 0.14, 0.45 * vol);        // single quick low note
   } catch {
     /* ignore playback errors */
   }
