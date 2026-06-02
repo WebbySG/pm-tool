@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { playNotificationSound } from "@/lib/notification-sound";
+import { showWebNotification } from "@/lib/web-notifications";
 import { MessageSquare, X } from "lucide-react";
 
 type Toast = {
@@ -83,6 +84,13 @@ export function ChatToastContainer() {
 
         // Audible chime for new messages while you're elsewhere in the app
         playNotificationSound();
+        // OS-level notification when the tab isn't focused
+        showWebNotification({
+          title: author?.name ?? "New message",
+          body: body.slice(0, 140),
+          url: "/chat",
+          tag: `chat-${m.conversation_id}`,
+        });
 
         const toast: Toast = {
           id: m.id,
@@ -108,7 +116,7 @@ export function ChatToastContainer() {
 
   return (
     <div className="fixed z-50 flex flex-col gap-2"
-      style={{ right: 20, bottom: 20, width: 320 }}>
+      style={{ right: 20, bottom: 90, width: 320 }}>
       {toasts.map((t, i) => {
         const color = AVATAR_COLORS[Math.abs(t.id.charCodeAt(0)) % AVATAR_COLORS.length];
         return (

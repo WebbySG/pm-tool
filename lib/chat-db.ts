@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import type {
   ChatConversation, ChatMessage, ChatMember,
   ConversationKind, ChatAttachmentType, ConversationWithUnread, ChatCategory,
-  ThreadMeta, ChatPinnedMessage,
+  ThreadMeta, ChatPinnedMessage, ChatReaction,
 } from "./chat-types";
 
 type Row = Record<string, unknown>;
@@ -511,6 +511,48 @@ export function subscribeToPinned(conversationId: string, onChange: () => void) 
   const channel = supabase.channel(`chat-pinned-${conversationId}`)
     .on("postgres_changes", {
       event: "*", schema: "public", table: "pm_chat_pinned_messages",
+      filter: `conversation_id=eq.${conversationId}`,
+    }, () => onChange())
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
+// ─── Emoji reactions ────────────────────────────────────────────────────────────
+
+export async function loadReactions(conversationId: string): Promise<ChatReaction[]> {
+  const { data, error } = await supabase.from("pm_chat_reactions")
+    .select("*").eq("conversation_id", conversationId);
+  if (error) throw error;
+  return (data ?? []).map((r) => {
+    const row = r as Row;
+    return {
+      id: row.id as string,
+      conversationId: row.conversation_id as string,
+      messageId: row.message_id as string,
+      userId: row.user_id as string,
+      emoji: row.emoji as string,
+    };
+  });
+}
+
+export async function addReaction(conversationId: string, messageId: string, userId: string, emoji: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_reactions").upsert(
+    { conversation_id: conversationId, message_id: messageId, user_id: userId, emoji },
+    { onConflict: "message_id,user_id,emoji", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
+export async function removeReaction(messageId: string, userId: string, emoji: string): Promise<void> {
+  const { error } = await supabase.from("pm_chat_reactions").delete()
+    .eq("message_id", messageId).eq("user_id", userId).eq("emoji", emoji);
+  if (error) throw error;
+}
+
+export function subscribeToReactions(conversationId: string, onChange: () => void) {
+  const channel = supabase.channel(`chat-reactions-${conversationId}`)
+    .on("postgres_changes", {
+      event: "*", schema: "public", table: "pm_chat_reactions",
       filter: `conversation_id=eq.${conversationId}`,
     }, () => onChange())
     .subscribe();

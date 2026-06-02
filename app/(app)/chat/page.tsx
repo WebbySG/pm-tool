@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useAuth } from "@/lib/auth-context";
 import { useStore } from "@/lib/store";
@@ -14,17 +15,22 @@ import {
   loadChatCategories, createChatCategory, renameChatCategory, deleteChatCategory,
   setConversationPinned, setConversationCategory,
   loadThreadReplies, loadThreadMeta, loadPinnedMessages, pinMessage, unpinMessage, subscribeToPinned,
+  loadReactions, addReaction, removeReaction, subscribeToReactions,
 } from "@/lib/chat-db";
-import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage } from "@/lib/chat-types";
+import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
 import { playNotificationSound, isChatSoundMuted, setChatSoundMuted } from "@/lib/notification-sound";
+import {
+  getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
+} from "@/lib/web-notifications";
+import { subscribeToPush, notifyPush } from "@/lib/push";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, MessageCircle, Plus, Send, Paperclip, Search,
   X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
   Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut, CornerUpLeft,
   Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
-  Volume2, VolumeX,
+  Volume2, VolumeX, BellRing, Smile,
 } from "lucide-react";
 
 // Walk projects to find a task by ID (top-level or subtask)
@@ -99,8 +105,22 @@ export default function ChatPage() {
   const [newCatInput, setNewCatInput] = useState(false);
   const [newCatName, setNewCatName] = useState("");
 
+  // Deep-link: /chat?c=<id> opens that conversation (e.g. from the unread popup).
+  const searchParams = useSearchParams();
+  const deepLinkRef = useRef<string | null>(null);
+  useEffect(() => { const c = searchParams.get("c"); if (c) deepLinkRef.current = c; }, [searchParams]);
+
   // Resolve the open task drawer (live from store)
   const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
+
+  // Apply the deep link once the target conversation is present in the list.
+  useEffect(() => {
+    const target = deepLinkRef.current;
+    if (target && convs.some((c) => c.id === target)) {
+      setSelectedId(target);
+      deepLinkRef.current = null;
+    }
+  }, [convs]);
 
   // Load staff + conversations
   useEffect(() => {
@@ -484,6 +504,63 @@ function MessageView({
   const [muted, setMuted] = useState(false);
   useEffect(() => { setMuted(isChatSoundMuted()); }, []);
 
+  // Desktop (OS) notification permission
+  const [notifPerm, setNotifPerm] = useState<WebNotificationPermission>("default");
+  useEffect(() => {
+    setNotifPerm(getNotificationPermission());
+    // If already granted, make sure this browser has an active push subscription.
+    if (getNotificationPermission() === "granted" && currentUserId) subscribeToPush(currentUserId);
+  }, [currentUserId]);
+  async function enableDesktopAlerts() {
+    const perm = await requestNotificationPermission();
+    setNotifPerm(perm);
+    if (perm === "granted" && currentUserId) await subscribeToPush(currentUserId);
+  }
+
+  // Emoji reactions (shared per conversation), grouped by message id
+  const [reactions, setReactions] = useState<Map<string, ChatReaction[]>>(new Map());
+  function groupReactions(list: ChatReaction[]): Map<string, ChatReaction[]> {
+    const map = new Map<string, ChatReaction[]>();
+    for (const r of list) {
+      const arr = map.get(r.messageId) ?? [];
+      arr.push(r); map.set(r.messageId, arr);
+    }
+    return map;
+  }
+  async function handleToggleReaction(messageId: string, emoji: string) {
+    const mine = (reactions.get(messageId) ?? []).some((r) => r.userId === currentUserId && r.emoji === emoji);
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const arr = (next.get(messageId) ?? []).slice();
+      if (mine) next.set(messageId, arr.filter((r) => !(r.userId === currentUserId && r.emoji === emoji)));
+      else { arr.push({ id: `tmp-${messageId}-${emoji}`, conversationId: conversation.id, messageId, userId: currentUserId, emoji }); next.set(messageId, arr); }
+      return next;
+    });
+    try {
+      if (mine) await removeReaction(messageId, currentUserId, emoji);
+      else await addReaction(conversation.id, messageId, currentUserId, emoji);
+    } catch {
+      loadReactions(conversation.id).then((list) => setReactions(groupReactions(list)));
+    }
+  }
+
+  // In-conversation search
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Jump from the pinned panel to a message in the timeline (flash highlight)
+  function scrollToMessage(messageId: string) {
+    setShowPinned(false);
+    setSearchOpen(false); setSearch("");
+    setTimeout(() => {
+      const el = scrollRef.current?.querySelector(`[data-mid="${messageId}"]`) as HTMLElement | null;
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("msg-flash");
+      setTimeout(() => el.classList.remove("msg-flash"), 1600);
+    }, 60);
+  }
+
   // Only one right-hand panel at a time
   function openThread(root: ChatMessage) {
     setShowTasks(false); setShowPinned(false);
@@ -525,13 +602,15 @@ function MessageView({
     let cancelled = false;
     setLoading(true);
     setThreadRoot(null); setThreadReplies([]); setShowPinned(false); setShowTasks(false);
+    setReactions(new Map()); setSearchOpen(false); setSearch("");
     Promise.all([
       loadMessages(conversation.id),
       loadThreadMeta(conversation.id),
       loadPinnedMessages(conversation.id),
-    ]).then(([m, meta, pins]) => {
+      loadReactions(conversation.id),
+    ]).then(([m, meta, pins, reacts]) => {
       if (cancelled) return;
-      setMessages(m); setThreadMeta(meta); setPinned(pins);
+      setMessages(m); setThreadMeta(meta); setPinned(pins); setReactions(groupReactions(reacts));
       setLoading(false);
       if (currentUserId) markRead(conversation.id, currentUserId).then(onAfterChange);
     });
@@ -571,7 +650,10 @@ function MessageView({
     const unsubPin = subscribeToPinned(conversation.id, () => {
       loadPinnedMessages(conversation.id).then((p) => { if (!cancelled) setPinned(p); });
     });
-    return () => { cancelled = true; unsub(); unsubPin(); };
+    const unsubReact = subscribeToReactions(conversation.id, () => {
+      loadReactions(conversation.id).then((list) => { if (!cancelled) setReactions(groupReactions(list)); });
+    });
+    return () => { cancelled = true; unsub(); unsubPin(); unsubReact(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id, currentUserId]);
 
@@ -581,6 +663,8 @@ function MessageView({
   }, [messages.length]);
 
   const latestPin = pinned[0];
+  const q = search.trim().toLowerCase();
+  const shown = q ? messages.filter((m) => !m.deletedAt && (m.body || "").toLowerCase().includes(q)) : messages;
 
   return (
     <div className="flex-1 flex min-h-0">
@@ -597,11 +681,31 @@ function MessageView({
             {conversation.kind === "dm" && " · Direct message"}
           </p>
         </div>
+        {notifPerm !== "granted" && notifPerm !== "unsupported" && (
+          <button onClick={enableDesktopAlerts}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+            style={{ background: "var(--accent)20", color: "var(--accent)", border: "1px solid var(--accent)40" }}
+            title={notifPerm === "denied"
+              ? "Desktop alerts are blocked — enable them in your browser site settings"
+              : "Get OS notifications when the tab isn't focused"}>
+            <BellRing size={12} /> {notifPerm === "denied" ? "Alerts blocked" : "Enable desktop alerts"}
+          </button>
+        )}
         <button onClick={toggleMute}
           className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
           style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
           title={muted ? "Sound off — click to enable" : "Sound on — click to mute"}>
           {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+        </button>
+        <button onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearch(""); }}
+          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+          style={{
+            background: searchOpen ? "var(--accent)25" : "var(--bg-surface)",
+            color: searchOpen ? "var(--accent)" : "var(--text-muted)",
+            border: `1px solid ${searchOpen ? "var(--accent)" : "var(--border)"}`,
+          }}
+          title="Search this conversation">
+          <Search size={13} />
         </button>
         <button onClick={togglePinnedPanel}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
@@ -647,6 +751,20 @@ function MessageView({
         </button>
       )}
 
+      {/* Search bar */}
+      {searchOpen && (
+        <div className="flex items-center gap-2 px-5 py-2 shrink-0"
+          style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-surface)" }}>
+          <Search size={13} style={{ color: "var(--text-muted)" }} />
+          <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setSearchOpen(false); setSearch(""); } }}
+            placeholder="Search messages in this conversation"
+            className="flex-1 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} />
+          {q && <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{shown.length} match{shown.length !== 1 ? "es" : ""}</span>}
+          <button onClick={() => { setSearchOpen(false); setSearch(""); }} className="shrink-0" style={{ color: "var(--text-muted)" }}><X size={13} /></button>
+        </div>
+      )}
+
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4">
         {loading ? (
@@ -657,10 +775,14 @@ function MessageView({
           <div className="text-center py-12">
             <p className="text-sm" style={{ color: "var(--text-muted)" }}>No messages yet. Say hi 👋</p>
           </div>
+        ) : shown.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No messages match “{search.trim()}”.</p>
+          </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {messages.map((msg, i) => {
-              const prev = messages[i - 1];
+            {shown.map((msg, i) => {
+              const prev = shown[i - 1];
               const showDateHeader = !prev || !isSameDay(prev.createdAt, msg.createdAt);
               const groupWithPrev = prev && prev.authorId === msg.authorId && isSameDay(prev.createdAt, msg.createdAt)
                 && new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
@@ -670,7 +792,7 @@ function MessageView({
                 && new Date(msg.createdAt) > new Date(initialLastReadAt)
                 && (!prev || new Date(prev.createdAt) <= new Date(initialLastReadAt) || prev.authorId === currentUserId);
               return (
-                <div key={msg.id}>
+                <div key={msg.id} data-mid={msg.id} className="rounded-lg">
                   {showDateHeader && (
                     <div className="text-center my-3">
                       <span className="text-xs px-3 py-1 rounded-full"
@@ -695,6 +817,9 @@ function MessageView({
                     isOwn={msg.authorId === currentUserId}
                     isPinned={pinnedIds.has(msg.id)}
                     replyMeta={threadMeta.get(msg.id)}
+                    reactions={reactions.get(msg.id)}
+                    currentUserId={currentUserId}
+                    onToggleReaction={(emoji) => handleToggleReaction(msg.id, emoji)}
                     onReply={() => openThread(msg)}
                     onOpenThread={() => openThread(msg)}
                     onTogglePin={() => handleTogglePin(msg)}
@@ -731,6 +856,8 @@ function MessageView({
           projects={projects}
           currentUserId={currentUserId}
           currentUserName={currentUserName}
+          reactions={reactions}
+          onToggleReaction={handleToggleReaction}
           onOpenTask={onOpenTask}
           onClose={() => setThreadRoot(null)}
         />
@@ -743,6 +870,7 @@ function MessageView({
           liveStaff={liveStaff}
           projects={projects}
           onUnpin={(messageId) => { setPinned((prev) => prev.filter((p) => p.messageId !== messageId)); unpinMessage(conversation.id, messageId).catch(reloadPinned); }}
+          onJump={(messageId) => scrollToMessage(messageId)}
           onOpenTask={onOpenTask}
           onClose={() => setShowPinned(false)}
         />
@@ -772,6 +900,15 @@ function MessageView({
           onDeleted={onDeleted}
         />
       )}
+      <style jsx global>{`
+        .msg-flash {
+          animation: msgFlash 1.6s ease;
+        }
+        @keyframes msgFlash {
+          0%, 100% { background: transparent; }
+          15%, 50% { background: rgba(var(--accent-rgb), 0.18); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -788,8 +925,11 @@ function pinnedSnippet(msg: ChatMessage): string {
 // Individual message
 // ────────────────────────────────────────────────────────────────────────────
 
+const REACTION_CHOICES = ["👍", "❤️", "✅", "😂", "🎉", "👀", "🙏", "🔥"];
+
 function MessageItem({
   msg, grouped, liveStaff, projects, isOwn, isPinned, replyMeta, inThread,
+  reactions, currentUserId, onToggleReaction,
   onReply, onOpenThread, onTogglePin, onSaved, onOpenTask,
 }: {
   msg: ChatMessage;
@@ -800,6 +940,9 @@ function MessageItem({
   isPinned?: boolean;
   replyMeta?: ThreadMeta;
   inThread?: boolean;
+  reactions?: ChatReaction[];
+  currentUserId?: string;
+  onToggleReaction?: (emoji: string) => void;
   onReply?: () => void;
   onOpenThread?: () => void;
   onTogglePin?: () => void;
@@ -811,6 +954,19 @@ function MessageItem({
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(msg.body);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  // Group this message's reactions by emoji → { count, mine }
+  const reactionGroups = useMemo(() => {
+    const map = new Map<string, { count: number; mine: boolean }>();
+    for (const r of reactions ?? []) {
+      const g = map.get(r.emoji) ?? { count: 0, mine: false };
+      g.count += 1;
+      if (r.userId === currentUserId) g.mine = true;
+      map.set(r.emoji, g);
+    }
+    return Array.from(map.entries());
+  }, [reactions, currentUserId]);
 
   async function handleSaveEdit() {
     if (!editBody.trim()) return;
@@ -900,13 +1056,54 @@ function MessageItem({
                 <span style={{ color: "var(--text-muted)" }}>· {formatTime(replyMeta.lastReplyAt)}</span>
               </button>
             )}
+            {/* Reaction chips */}
+            {reactionGroups.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {reactionGroups.map(([emoji, g]) => (
+                  <button key={emoji} onClick={() => onToggleReaction?.(emoji)}
+                    title={g.mine ? "Remove your reaction" : "React"}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs hover:opacity-80"
+                    style={{
+                      background: g.mine ? "var(--accent)25" : "var(--bg-surface)",
+                      border: `1px solid ${g.mine ? "var(--accent)" : "var(--border)"}`,
+                      color: "var(--text)",
+                    }}>
+                    <span>{emoji}</span>
+                    <span style={{ color: "var(--text-muted)" }}>{g.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Hover actions */}
       {!editing && (
-        <div className="opacity-0 group-hover:opacity-100 flex gap-1 shrink-0">
+        <div className={`${showEmojiPicker ? "opacity-100" : "opacity-0 group-hover:opacity-100"} flex gap-1 shrink-0`}>
+          {onToggleReaction && (
+            <div className="relative">
+              <button onClick={() => setShowEmojiPicker((v) => !v)} title="Add reaction"
+                className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+                style={{ color: "var(--text-muted)" }}>
+                <Smile size={12} />
+              </button>
+              {showEmojiPicker && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowEmojiPicker(false)} />
+                  <div className="absolute right-0 z-20 mt-1 p-1.5 rounded-lg flex gap-1 shadow-xl"
+                    style={{ background: "var(--bg-base)", border: "1px solid var(--border)", top: "100%" }}>
+                    {REACTION_CHOICES.map((e) => (
+                      <button key={e} onClick={() => { onToggleReaction?.(e); setShowEmojiPicker(false); }}
+                        className="w-7 h-7 rounded hover:scale-125 transition-transform text-base leading-none">
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {!inThread && onReply && (
             <button onClick={onReply} title="Reply in thread"
               className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
@@ -1132,6 +1329,9 @@ function Composer({
         if (notes.length > 0) await supabase.from("pm_notifications").insert(notes);
       }
 
+      // Deliver Web Push to recipients who aren't looking at the app.
+      notifyPush("chat", newMsg.id);
+
       setText("");
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -1241,7 +1441,8 @@ function Composer({
 // ────────────────────────────────────────────────────────────────────────────
 
 function ThreadPanel({
-  root, replies, loading, liveStaff, projects, currentUserId, currentUserName, onOpenTask, onClose,
+  root, replies, loading, liveStaff, projects, currentUserId, currentUserName,
+  reactions, onToggleReaction, onOpenTask, onClose,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -1250,6 +1451,8 @@ function ThreadPanel({
   projects: Project[];
   currentUserId: string;
   currentUserName: string;
+  reactions: Map<string, ChatReaction[]>;
+  onToggleReaction: (messageId: string, emoji: string) => void;
   onOpenTask: (taskId: string) => void;
   onClose: () => void;
 }) {
@@ -1272,6 +1475,8 @@ function ThreadPanel({
         <MessageItem
           msg={root} grouped={false} liveStaff={liveStaff} projects={projects}
           isOwn={root.authorId === currentUserId} inThread
+          reactions={reactions.get(root.id)} currentUserId={currentUserId}
+          onToggleReaction={(emoji) => onToggleReaction(root.id, emoji)}
           onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
         />
         <div className="flex items-center gap-3 my-2 px-2">
@@ -1291,6 +1496,8 @@ function ThreadPanel({
               <MessageItem
                 key={r.id} msg={r} grouped={false} liveStaff={liveStaff} projects={projects}
                 isOwn={r.authorId === currentUserId} inThread
+                reactions={reactions.get(r.id)} currentUserId={currentUserId}
+                onToggleReaction={(emoji) => onToggleReaction(r.id, emoji)}
                 onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
               />
             ))}
@@ -1318,12 +1525,13 @@ function ThreadPanel({
 // ────────────────────────────────────────────────────────────────────────────
 
 function PinnedPanel({
-  pinned, liveStaff, projects, onUnpin, onOpenTask, onClose,
+  pinned, liveStaff, projects, onUnpin, onJump, onOpenTask, onClose,
 }: {
   pinned: ChatPinnedMessage[];
   liveStaff: LiveStaff[];
   projects: Project[];
   onUnpin: (messageId: string) => void;
+  onJump: (messageId: string) => void;
   onOpenTask: (taskId: string) => void;
   onClose: () => void;
 }) {
@@ -1362,11 +1570,20 @@ function PinnedPanel({
                     {author ? staffName(author) : "Unknown"}
                   </span>
                   {msg && <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{formatTime(msg.createdAt)}</span>}
-                  <button onClick={() => onUnpin(p.messageId)} title="Unpin"
-                    className="ml-auto w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:opacity-100 shrink-0"
-                    style={{ color: "var(--text-muted)" }}>
-                    <PinOff size={12} />
-                  </button>
+                  <div className="ml-auto flex items-center gap-1 shrink-0">
+                    {msg && !msg.deletedAt && (
+                      <button onClick={() => onJump(p.messageId)} title="Jump to message"
+                        className="text-xs font-semibold px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100"
+                        style={{ color: "var(--accent)", background: "var(--accent)15" }}>
+                        Jump →
+                      </button>
+                    )}
+                    <button onClick={() => onUnpin(p.messageId)} title="Unpin"
+                      className="w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:opacity-100"
+                      style={{ color: "var(--text-muted)" }}>
+                      <PinOff size={12} />
+                    </button>
+                  </div>
                 </div>
                 {msg && !msg.deletedAt ? (
                   <>

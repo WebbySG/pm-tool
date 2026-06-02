@@ -49,6 +49,15 @@ export type ThreadMeta = {
   participantIds: string[];
 };
 
+// An emoji reaction on a message (one row per user+emoji+message).
+export type ChatReaction = {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  userId: string;
+  emoji: string;
+};
+
 // A pinned message in a conversation (shared across all members, unlimited per chat).
 export type ChatPinnedMessage = {
   id: string;

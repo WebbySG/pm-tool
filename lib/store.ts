@@ -19,6 +19,7 @@ import {
 } from "./mock-data";
 import * as db from "./db";
 import { uploadAttachment, supabase } from "./supabase";
+import { notifyPush } from "./push";
 
 interface Store {
   projects: Project[];
@@ -720,7 +721,10 @@ export const useStore = create<Store>()(
         ...s.notifications,
       ],
     }));
-    db.dbAddNotification(id, data);
+    // Await the insert so the push route can read the row, then fire Web Push
+    // (the route only pushes targeted, non-mention notifications).
+    await db.dbAddNotification(id, data);
+    notifyPush("notification", id);
   },
 
   // ─── Reorder ──────────────────────────────────────────────────────────────

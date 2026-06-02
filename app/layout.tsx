@@ -1,13 +1,20 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { StoreInitializer } from "@/components/store-initializer";
 import { ThemeProvider } from "@/components/theme-provider";
+import { PwaRegister } from "@/components/pwa-register";
 import { AuthProvider } from "@/lib/auth-context";
 import { getThemeVarsScript } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Webby SG OS",
   description: "Internal project management for Webby SG",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Webby OS" },
+  icons: { apple: "/webby-sg-logo.png" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a1828",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -18,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider />
+        <PwaRegister />
         <AuthProvider>
           <StoreInitializer />
           {children}

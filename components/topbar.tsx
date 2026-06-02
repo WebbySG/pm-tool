@@ -1,8 +1,13 @@
 "use client";
-import { Bell, Search, Plus, ChevronLeft } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, BellRing, Search, Plus, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import {
+  getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
+} from "@/lib/web-notifications";
+import { subscribeToPush } from "@/lib/push";
 
 interface TopbarProps {
   title: string;
@@ -21,6 +26,14 @@ export function Topbar({ title, back, action }: TopbarProps) {
     // Staff: see their targeted notifications + workspace-global (userId IS NULL) ones
     return !n.userId || n.userId === user?.id;
   }).length;
+
+  // Desktop (OS) notification permission — offer to enable from any page.
+  const [notifPerm, setNotifPerm] = useState<WebNotificationPermission>("granted");
+  useEffect(() => {
+    setNotifPerm(getNotificationPermission());
+    // Keep this browser's push subscription fresh for already-opted-in users.
+    if (getNotificationPermission() === "granted" && user?.id) subscribeToPush(user.id);
+  }, [user?.id]);
 
   return (
     <header
@@ -64,6 +77,22 @@ export function Topbar({ title, back, action }: TopbarProps) {
           style={{ color: "var(--text)" }}
         />
       </div>
+
+      {/* Enable desktop alerts (only when not yet granted) */}
+      {notifPerm === "default" && (
+        <button
+          onClick={async () => {
+            const perm = await requestNotificationPermission();
+            setNotifPerm(perm);
+            if (perm === "granted" && user?.id) await subscribeToPush(user.id);
+          }}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all hover:opacity-90"
+          style={{ background: "rgba(var(--accent-rgb),0.15)", color: "var(--accent)", border: "1px solid rgba(var(--accent-rgb),0.4)" }}
+          title="Get OS notifications when this tab isn't focused"
+        >
+          <BellRing size={14} /> Enable alerts
+        </button>
+      )}
 
       {/* Bell */}
       <Link

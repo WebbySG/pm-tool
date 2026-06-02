@@ -4,6 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { playNotificationSound } from "@/lib/notification-sound";
+import { showWebNotification } from "@/lib/web-notifications";
 import {
   Bot, AlertTriangle, UserPlus, RefreshCw, CheckSquare, ClipboardCheck, Bell, X,
 } from "lucide-react";
@@ -85,6 +86,8 @@ export function NotificationToastContainer() {
           type: n.type,
           href: hrefFor(n),
         };
+        // OS-level notification when the tab isn't focused
+        showWebNotification({ title: toast.title, body: toast.body, url: toast.href, tag: `notif-${n.id}` });
         setToasts((prev) => [...prev.filter((t) => t.id !== n.id), toast]);
         setTimeout(() => {
           setToasts((prev) => prev.filter((t) => t.id !== n.id));
