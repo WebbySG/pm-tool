@@ -8,6 +8,7 @@ import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
 import { subscribeToPush } from "@/lib/push";
+import { playNotificationSound, isChatSoundMuted } from "@/lib/notification-sound";
 
 interface TopbarProps {
   title: string;
@@ -82,6 +83,7 @@ export function Topbar({ title, back, action }: TopbarProps) {
       {notifPerm === "default" && (
         <button
           onClick={async () => {
+            if (!isChatSoundMuted()) playNotificationSound(); // audible confirmation + unlocks audio
             const perm = await requestNotificationPermission();
             setNotifPerm(perm);
             if (perm === "granted" && user?.id) await subscribeToPush(user.id);

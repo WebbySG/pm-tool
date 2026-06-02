@@ -19,7 +19,7 @@ import {
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
-import { playNotificationSound, isChatSoundMuted, setChatSoundMuted } from "@/lib/notification-sound";
+import { playNotificationSound, playSentSound, isChatSoundMuted, setChatSoundMuted } from "@/lib/notification-sound";
 import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
@@ -514,6 +514,9 @@ function MessageView({
     if (getNotificationPermission() === "granted" && currentUserId) subscribeToPush(currentUserId);
   }, [currentUserId]);
   async function enableDesktopAlerts() {
+    // Play a test chime right away so you can hear the sound works (this also
+    // unlocks audio). Desktop-notification permission is requested separately.
+    if (!isChatSoundMuted()) playNotificationSound();
     const perm = await requestNotificationPermission();
     setNotifPerm(perm);
     if (perm === "granted" && currentUserId) await subscribeToPush(currentUserId);
@@ -572,7 +575,12 @@ function MessageView({
   function togglePinnedPanel() { setThreadRoot(null); setShowTasks(false); setShowPinned((v) => !v); }
   function toggleTasksPanel() { setThreadRoot(null); setShowPinned(false); setShowTasks((v) => !v); }
 
-  function toggleMute() { const next = !muted; setMuted(next); setChatSoundMuted(next); }
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    setChatSoundMuted(next);
+    if (!next) playNotificationSound(); // turning sound ON → play a test chime
+  }
 
   async function reloadPinned() { setPinned(await loadPinnedMessages(conversation.id)); }
 
@@ -1333,6 +1341,8 @@ function Composer({
 
       // Deliver Web Push to recipients who aren't looking at the app.
       notifyPush("chat", newMsg.id);
+      // Audible "sent" feedback for the sender.
+      playSentSound();
 
       setText("");
       setFile(null);

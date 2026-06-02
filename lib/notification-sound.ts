@@ -24,6 +24,27 @@ function getCtx(): AudioContext | null {
   }
 }
 
+// Browsers keep the AudioContext "suspended" until a real user gesture. Register a
+// one-time global listener that resumes it on the first interaction, so the chime
+// can play later from realtime handlers (which aren't themselves user gestures).
+let unlockBound = false;
+export function primeAudioUnlock(): void {
+  if (typeof window === "undefined" || unlockBound) return;
+  unlockBound = true;
+  const unlock = () => {
+    try {
+      const ac = getCtx();
+      if (ac && ac.state === "suspended") void ac.resume();
+    } catch { /* ignore */ }
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+    window.removeEventListener("touchstart", unlock);
+  };
+  window.addEventListener("pointerdown", unlock, { once: false });
+  window.addEventListener("keydown", unlock, { once: false });
+  window.addEventListener("touchstart", unlock, { once: false });
+}
+
 export function isChatSoundMuted(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -70,6 +91,22 @@ export function playNotificationSound(): void {
     const t = ac.currentTime + 0.01;
     note(ac, 880, t, 0.18, 0.16);        // A5
     note(ac, 1320, t + 0.09, 0.22, 0.12); // E6 — pleasant ascending two-note bell
+  } catch {
+    /* ignore playback errors */
+  }
+}
+
+/**
+ * Short, soft "message sent" blip — played when YOU send a message. Deliberately
+ * quieter/lower than the incoming chime so the two are distinguishable.
+ */
+export function playSentSound(): void {
+  if (isChatSoundMuted()) return;
+  const ac = getCtx();
+  if (!ac) return;
+  try {
+    const t = ac.currentTime + 0.01;
+    note(ac, 620, t, 0.12, 0.08);        // single quick low note
   } catch {
     /* ignore playback errors */
   }

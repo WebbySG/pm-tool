@@ -89,16 +89,18 @@ export function UnreadInbox() {
     return <MessageSquare size={13} style={{ color: "#34d399" }} />;
   }
 
-  // Don't clutter the chat page itself — the sidebar already shows unread there.
-  if (!user?.id || (pathname && pathname.startsWith("/chat"))) return null;
+  if (!user?.id) return null;
 
   function openConversation(id: string) {
     setOpen(false);
     router.push(`/chat?c=${id}`);
   }
 
+  // On /chat, lift the bubble above the message composer so it doesn't cover Send.
+  const onChat = Boolean(pathname && pathname.startsWith("/chat"));
+
   return (
-    <div className="fixed z-50 flex flex-col items-end gap-2" style={{ right: 20, bottom: 20 }}>
+    <div className="fixed z-50 flex flex-col items-end gap-2" style={{ right: 20, bottom: onChat ? 92 : 20 }}>
       {open && (
         <div ref={panelRef} className="rounded-2xl overflow-hidden shadow-2xl flex flex-col"
           style={{ width: 340, maxHeight: 460, background: "var(--bg-base)", border: "1px solid var(--border)", boxShadow: "0 16px 40px rgba(0,0,0,0.5)" }}>
