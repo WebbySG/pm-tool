@@ -138,3 +138,32 @@ export function playSentSound(): void {
     /* ignore playback errors */
   }
 }
+
+/**
+ * Light "pop" played when you react to a message. Uses a quick rising triangle
+ * wave — deliberately a different timbre from the sine-bell message sounds.
+ */
+export function playReactionSound(): void {
+  if (isChatSoundMuted()) return;
+  const ac = getCtx();
+  if (!ac) return;
+  const vol = getChatSoundVolume();
+  if (vol <= 0) return;
+  try {
+    const t = ac.currentTime + 0.005;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(700, t);
+    osc.frequency.exponentialRampToValueAtTime(1500, t + 0.06); // quick upward "pop"
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.4 * vol, t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    osc.connect(gain);
+    gain.connect(ac.destination);
+    osc.start(t);
+    osc.stop(t + 0.14);
+  } catch {
+    /* ignore playback errors */
+  }
+}

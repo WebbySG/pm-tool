@@ -19,7 +19,7 @@ import {
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
-import { playNotificationSound, playSentSound, isChatSoundMuted, setChatSoundMuted, getChatSoundVolume, setChatSoundVolume } from "@/lib/notification-sound";
+import { playNotificationSound, playSentSound, playReactionSound, isChatSoundMuted, setChatSoundMuted, getChatSoundVolume, setChatSoundVolume } from "@/lib/notification-sound";
 import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
@@ -542,6 +542,7 @@ function MessageView({
   }
   async function handleToggleReaction(messageId: string, emoji: string) {
     const mine = (reactions.get(messageId) ?? []).some((r) => r.userId === currentUserId && r.emoji === emoji);
+    if (!mine) playReactionSound(); // distinct "pop" when adding a reaction
     setReactions((prev) => {
       const next = new Map(prev);
       const arr = (next.get(messageId) ?? []).slice();
