@@ -1,8 +1,11 @@
-name: Deploy to VPS
+name: Deploy to VPS (manual fallback)
 
+# Deploys now happen pull-based ON the VPS via cron (scripts/deploy.sh), because
+# GitHub-hosted runners can't reliably SSH into the VPS (port 22 i/o timeout).
+# This SSH workflow is kept as a MANUAL fallback only — run it from the Actions
+# tab via "Run workflow". It no longer fires on every push (so no more red failures).
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   deploy:

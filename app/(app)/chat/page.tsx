@@ -97,6 +97,10 @@ export default function ChatPage() {
   const [convs, setConvs] = useState<ConversationWithUnread[]>([]);
   const [convSearch, setConvSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Always-current selection, so realtime callbacks (which capture an old reloadConvs
+  // closure) don't think nothing is selected and yank you to the latest chat.
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   const [showNew, setShowNew] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
@@ -138,7 +142,9 @@ export default function ChatPage() {
     try {
       const list = await loadConversationsForUser(user.id);
       setConvs(list);
-      if (!selectedId && list.length > 0) setSelectedId(list[0].id);
+      // Only auto-select when nothing is selected yet (initial load) — never override
+      // the chat the user is currently reading when a new message arrives elsewhere.
+      if (!selectedIdRef.current && list.length > 0) { selectedIdRef.current = list[0].id; setSelectedId(list[0].id); }
     } finally {
       if (!silent) setLoadingConvs(false);
     }
@@ -921,6 +927,7 @@ function MessageView({
         onTaskInsertConsumed={() => setPendingTaskInsert(null)}
         replyingTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
+        draftKey={conversation.id}
         onSent={() => { /* realtime will update */ }}
       />
       </div>
@@ -1305,7 +1312,7 @@ function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; l
 function Composer({
   conversationId, currentUserId, currentUserName, liveStaff, projects, onSent,
   pendingTaskInsert, onTaskInsertConsumed, parentId, placeholder, autoFocus,
-  replyingTo, onCancelReply,
+  replyingTo, onCancelReply, draftKey,
 }: {
   conversationId: string;
   currentUserId: string;
@@ -1320,8 +1327,21 @@ function Composer({
   autoFocus?: boolean;
   replyingTo?: ChatMessage | null;
   onCancelReply?: () => void;
+  draftKey?: string;
 }) {
-  const [text, setText] = useState("");
+  // Persist the unsent draft per conversation/thread so switching chats keeps it.
+  const draftStorageKey = draftKey ? `chat-draft-${draftKey}` : null;
+  const [text, setText] = useState<string>(() => {
+    if (!draftStorageKey || typeof window === "undefined") return "";
+    try { return localStorage.getItem(draftStorageKey) ?? ""; } catch { return ""; }
+  });
+  useEffect(() => {
+    if (!draftStorageKey || typeof window === "undefined") return;
+    try {
+      if (text) localStorage.setItem(draftStorageKey, text);
+      else localStorage.removeItem(draftStorageKey);
+    } catch { /* ignore */ }
+  }, [text, draftStorageKey]);
 
   // External task insertion (from the Tasks side-panel)
   useEffect(() => {
@@ -1661,6 +1681,7 @@ function ThreadPanel({
         parentId={root.id}
         placeholder="Reply in thread…"
         autoFocus
+        draftKey={`t:${root.id}`}
         onSent={() => { /* realtime will update */ }}
       />
     </aside>

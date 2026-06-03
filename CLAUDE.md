@@ -347,7 +347,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 - **State:** Zustand with `persist` middleware (sessionStorage)
 - **Database/Auth:** Supabase (PostgreSQL + Auth + Storage)
 - **Drag and Drop:** DnD Kit
-- **Deployment:** GitHub Actions → VPS via `appleboy/ssh-action`
+- **Deployment:** **Pull-based** — a cron job on the VPS runs [scripts/deploy.sh](scripts/deploy.sh) every ~2 min: it `git fetch`es `origin/master`, and only when there's a new commit does `git reset --hard` + `npm install` + `npm run build` + `pm2 restart pm-tool`. The VPS reaches OUT to GitHub (443), so no inbound SSH is needed. (The old GitHub Actions `appleboy/ssh-action` workflow kept failing with `dial tcp :22 i/o timeout` because runners couldn't SSH in; it's now `workflow_dispatch`-only as a manual fallback.) One-time VPS setup: `chmod +x scripts/deploy.sh` then add the cron line in that script's header. Logs: `/var/log/pm-tool-deploy.log`. `.env.local` (untracked) is preserved across `git reset --hard`.
 - **VPS:** Runs HTTPS at `https://os.webby.sg` (SSL via Let's Encrypt, auto-renews) — `crypto.randomUUID()` is available; the `uuid()` helper in `lib/store.ts` will use it automatically
 
 ### Role System
