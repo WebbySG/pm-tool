@@ -249,10 +249,10 @@ function TopRightDecor() {
   return (
     <Svg style={styles.topRightDecor} viewBox="0 0 130 130">
       <G>
-        <Circle cx="105" cy="25" r="55" fill={C.red} opacity="0.08" />
-        <Circle cx="115" cy="15" r="35" fill={C.red} opacity="0.14" />
-        <Circle cx="125" cy="5"  r="18" fill={C.red} opacity="0.6" />
-        <Circle cx="100" cy="40" r="6"  fill={C.ink} opacity="0.5" />
+        <Circle cx={105} cy={25} r={55} fill={C.red} opacity={0.08} />
+        <Circle cx={115} cy={15} r={35} fill={C.red} opacity={0.14} />
+        <Circle cx={125} cy={5}  r={18} fill={C.red} opacity={0.6} />
+        <Circle cx={100} cy={40} r={6}  fill={C.ink} opacity={0.5} />
       </G>
     </Svg>
   );
@@ -264,16 +264,16 @@ function BottomRightDecor() {
     <Svg style={styles.bottomRightDecor} viewBox="0 0 120 90">
       <G>
         {/* concentric arc rings (3D-ish ripple) */}
-        <Path d="M 30 90 A 50 50 0 0 1 130 90" stroke={C.red} strokeWidth="1.5" fill="none" opacity="0.35" />
-        <Path d="M 50 90 A 35 35 0 0 1 120 90" stroke={C.red} strokeWidth="1.2" fill="none" opacity="0.55" />
-        <Path d="M 65 90 A 22 22 0 0 1 109 90" stroke={C.red} strokeWidth="1" fill="none" opacity="0.8" />
+        <Path d="M 30 90 A 50 50 0 0 1 130 90" stroke={C.red} strokeWidth={1.5} fill="none" opacity={0.35} />
+        <Path d="M 50 90 A 35 35 0 0 1 120 90" stroke={C.red} strokeWidth={1.2} fill="none" opacity={0.55} />
+        <Path d="M 65 90 A 22 22 0 0 1 109 90" stroke={C.red} strokeWidth={1} fill="none" opacity={0.8} />
         {/* sun core */}
-        <Circle cx="87" cy="90" r="10" fill={C.red} opacity="0.85" />
-        <Circle cx="87" cy="90" r="5"  fill={C.white} />
+        <Circle cx={87} cy={90} r={10} fill={C.red} opacity={0.85} />
+        <Circle cx={87} cy={90} r={5}  fill={C.white} />
         {/* tiny accent dots */}
-        <Circle cx="40" cy="40" r="2" fill={C.ink} opacity="0.35" />
-        <Circle cx="55" cy="28" r="1.5" fill={C.red} opacity="0.5" />
-        <Circle cx="70" cy="18" r="1" fill={C.ink} opacity="0.35" />
+        <Circle cx={40} cy={40} r={2} fill={C.ink} opacity={0.35} />
+        <Circle cx={55} cy={28} r={1.5} fill={C.red} opacity={0.5} />
+        <Circle cx={70} cy={18} r={1} fill={C.ink} opacity={0.35} />
       </G>
     </Svg>
   );
@@ -293,7 +293,7 @@ function CornerDots() {
               <Circle
                 key={`${r}-${c}`}
                 cx={c * gap + 2} cy={r * gap + 2} r={0.9}
-                fill={C.ink} opacity={String(opacity)}
+                fill={C.ink} opacity={opacity}
               />
             );
           }),
@@ -308,9 +308,9 @@ function StatusWatermark({ label, color }: { label: string; color: string }) {
   return (
     <Svg style={styles.watermark} viewBox={`0 0 ${PAGE_W} 200`}>
       <SvgText
-        x={PAGE_W / 2} y="130"
+        x={PAGE_W / 2} y={130}
         style={{ fontSize: 120, fontFamily: "Helvetica-Bold" }}
-        fill={color} fillOpacity="0.06"
+        fill={color} fillOpacity={0.06}
         textAnchor="middle"
         transform={`rotate(-18 ${PAGE_W / 2} 130)`}
       >
