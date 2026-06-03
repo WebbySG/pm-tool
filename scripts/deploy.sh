@@ -15,6 +15,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# Pass "force" as the first arg to deploy even when already up to date
+# (used for the first manual deploy):  bash scripts/deploy.sh force
+FORCE="${1:-}"
+
 REPO_DIR="/root/pm-tool"
 BRANCH="master"
 LOG="/var/log/pm-tool-deploy.log"
@@ -41,7 +45,7 @@ git fetch origin "$BRANCH" --quiet
 LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
 
-if [ "$LOCAL" = "$REMOTE" ]; then
+if [ "$LOCAL" = "$REMOTE" ] && [ "$FORCE" != "force" ]; then
   exit 0   # already up to date — nothing to do
 fi
 

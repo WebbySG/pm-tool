@@ -633,6 +633,12 @@ export function subscribeToInboxForUser(
     .on("postgres_changes", {
       event: "*", schema: "public", table: "pm_chat_conversations",
     }, () => onAnyChange())
+    // Also refresh when THIS user's read state changes (markRead updates last_read_at),
+    // so unread badges/popup clear the moment a conversation is read.
+    .on("postgres_changes", {
+      event: "*", schema: "public", table: "pm_chat_members",
+      filter: `user_id=eq.${userId}`,
+    }, () => onAnyChange())
     .subscribe();
   return () => { supabase.removeChannel(channel); };
 }
