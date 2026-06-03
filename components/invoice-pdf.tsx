@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 40, // top reserve so the running header (continuation pages) has room
-    paddingBottom: 200, // reserve space for signatures + decoration + footer at the bottom
+    paddingBottom: 300, // reserve space for the pinned totals + payment + signatures + footer
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -186,6 +186,17 @@ const styles = StyleSheet.create({
     fontSize: 8, color: C.red, letterSpacing: 1.5, fontFamily: "Helvetica-Bold", marginBottom: 6,
   },
   notesPanelText: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
+
+  // ─── Bottom block: totals + payment + signatures, pinned to bottom of last page ──
+  bottomBlock: {
+    position: "absolute",
+    bottom: 50, // sits just above the footer
+    left: 0, right: 0,
+  },
+  signaturesRow: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingLeft: 50, paddingRight: 40, marginTop: 22,
+  },
 
   // ─── Signatures (absolutely pinned at bottom of last page) ──────────────
   signaturesBlock: {
@@ -453,66 +464,65 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Totals */}
-        <View style={styles.totalsBlock} wrap={false}>
-          <View style={styles.totalsTable}>
-            <View style={styles.totalsRow}>
-              <Text style={styles.totalsLabel}>SUBTOTAL</Text>
-              <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
-            </View>
-            {hasDiscount ? (
-              <View style={styles.totalsRow}>
-                <Text style={styles.totalsLabel}>{discountLabel}</Text>
-                <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
-              </View>
-            ) : null}
-            <View style={styles.totalsRowGrand}>
-              <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-              <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Notes / payment panel */}
-        {(invoice.notes || invoice.paymentInstructions) ? (
-          <View style={styles.notesPanel} wrap={false}>
-            {invoice.paymentInstructions ? (
-              <>
-                <Text style={styles.notesPanelLabel}>PAYMENT</Text>
-                {invoice.paymentInstructions.split("\n").map((line, i) => (
-                  <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
-                ))}
-              </>
-            ) : null}
-            {invoice.notes ? (
-              <>
-                {invoice.paymentInstructions ? <Text style={{ marginTop: 8 }} /> : null}
-                <Text style={styles.notesPanelLabel}>NOTES</Text>
-                {invoice.notes.split("\n").map((line, i) => (
-                  <Text key={`n${i}`} style={styles.notesPanelText}>{line}</Text>
-                ))}
-              </>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* Decorative bottom-right (above footer) — fixed, on every page */}
-        <BottomRightDecor />
-
-        {/* Signatures — absolutely pinned above footer; render() limits to LAST page */}
+        {/* Decorative bottom-right — only on continuation pages (keeps last-page bottom clean) */}
         <View
-          style={styles.signaturesBlock}
+          fixed
+          render={(args: unknown) => {
+            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
+            if (pageNumber === totalPages) return null;
+            return <BottomRightDecor />;
+          }}
+        />
+
+        {/* Totals + Payment + Signatures — pinned to the bottom of the LAST page,
+            so they sit flush at the bottom above the signature line rather than
+            floating high on a sparse continuation page. */}
+        <View
+          style={styles.bottomBlock}
           render={(args: unknown) => {
             const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
             if (pageNumber !== totalPages) return null;
             return (
               <>
-                {["Name / Title", "Customer Signature", "Date"].map((label) => (
-                  <View key={label} style={styles.signature}>
-                    <View style={styles.signatureLine} />
-                    <Text style={styles.signatureLabel}>{label}</Text>
+                {/* Totals */}
+                <View style={styles.totalsBlock}>
+                  <View style={styles.totalsTable}>
+                    <View style={styles.totalsRow}>
+                      <Text style={styles.totalsLabel}>SUBTOTAL</Text>
+                      <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
+                    </View>
+                    {hasDiscount ? (
+                      <View style={styles.totalsRow}>
+                        <Text style={styles.totalsLabel}>{discountLabel}</Text>
+                        <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.totalsRowGrand}>
+                      <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
+                      <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
+                    </View>
                   </View>
-                ))}
+                </View>
+
+                {/* Payment instructions only (client-facing notes removed) */}
+                {invoice.paymentInstructions ? (
+                  <View style={styles.notesPanel}>
+                    <Text style={styles.notesPanelLabel}>PAYMENT</Text>
+                    {invoice.paymentInstructions.split("\n").map((line, i) => (
+                      <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
+                    ))}
+                  </View>
+                ) : null}
+
+                {/* Signatures */}
+                <View style={styles.signaturesRow}>
+                  {["Name / Title", "Customer Signature", "Date"].map((label) => (
+                    <View key={label} style={styles.signature}>
+                      <View style={styles.signatureLine} />
+                      <Text style={styles.signatureLabel}>{label}</Text>
+                    </View>
+                  ))}
+                </View>
               </>
             );
           }}

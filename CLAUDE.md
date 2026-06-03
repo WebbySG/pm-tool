@@ -388,6 +388,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_chat_pinned_messages` | `id`, `conversation_id` (FK, cascade), `message_id` (FK, cascade), `pinned_by`, `created_at`. Unique `(conversation_id, message_id)`. **Shared** per conversation (not per-user), unlimited. RLS `pm_allow_all`, in `supabase_realtime` publication |
 | `pm_chat_reactions` | `id`, `conversation_id` (FK, cascade), `message_id` (FK, cascade), `user_id`, `emoji`, `created_at`. Unique `(message_id, user_id, emoji)`. Emoji reactions, shared. RLS `pm_allow_all`, in `supabase_realtime` publication |
 | `pm_push_subscriptions` | `id`, `user_id`, `endpoint` (unique), `p256dh`, `auth`, `created_at`. Browser Web Push subscriptions (one per device/browser). RLS `pm_allow_all`. Read only server-side by the push API route. |
+| `pm_billing_reminders` | `id`, `title`, `client_name`, `project_id` (FK, SET NULL), `service_type` (hosting/domain/seo/maintenance/other), `amount`, `currency`, `frequency` (yearly/semiannual/quarterly/monthly/one_time/custom), `interval_months`, `next_due_date`, `lead_days`, `status` (active/paused/done), `notes`, `last_notified_on`, `last_chased_at`, `created_by`. Recurring renewal / payment-chase reminders. RLS `pm_allow_all`. |
 | `pm_invoices` | `id`, `invoice_number`, `project_id` (FK → `pm_projects`, ON DELETE SET NULL — the live link), `client_id` (legacy/unused — client page removed, kept nullable for back-compat), `status` (draft/sent/paid/void), `currency`, `issue_date`, `due_date`, snapshot `bill_to_*` fields, `subtotal`, `discount_type` (none/percent/fixed), `discount_value`, `total`, `reminder_cadence_days`, `sent_at`, `paid_at`, `paid_by`, `pdf_path` |
 | `pm_invoice_line_items` | `id`, `invoice_id`, `description`, `qty`, `unit_price`, `line_total` (generated) |
 | `pm_invoice_templates` | `id`, `name`, `description`, `default_notes`, `default_payment_instructions`, `default_due_days` |
@@ -449,6 +450,8 @@ app/(app)/invoices/[id]/page.tsx         — View/edit, mark sent/paid, duplicat
 app/(app)/invoices/templates/page.tsx    — Template list
 app/(app)/invoices/templates/new/page.tsx — Create template
 app/(app)/invoices/templates/[id]/page.tsx — Edit template
+lib/billing-db.ts                        — Renewal/payment-reminder types + CRUD + markChased
+app/(app)/renewals/page.tsx              — Renewals calendar + upcoming list + add/edit (admin only)
 ```
 
 ### Invoice Module
@@ -471,6 +474,16 @@ app/(app)/invoices/templates/[id]/page.tsx — Edit template
 - **Logo asset:** `public/webby-sg-logo.png` — path is hardcoded in `lib/invoice-business-details.ts → logoPath`. Drop the WebbySG logo there as a PNG (transparent background, ~600px). If the file is missing, React-PDF will throw at generation time — there's no fallback in the current code.
 - **Business details:** Webby SG / UEN 202444139M / 60 Paya Lebar Road #07-54 Paya Lebar Square / Singapore 409051 / Contact 8080 5608 (Leon). Edit `lib/invoice-business-details.ts` to change.
 - **Seeded templates:** "Monthly SEO Project" (SEO Starter $2400 + Google Ads $300/mo) and "Premium Website Development" ($899 one-time). Live in `pm_invoice_templates`.
+
+### Renewals & Payment Reminders Module
+
+- **Admin-only.** Sidebar entry "Renewals" (`CalendarClock`), page wrapped in `<AdminOnly>`. Route `/renewals`.
+- **Purpose:** track recurring renewals (yearly hosting/domain, monthly/3-/6-month SEO, etc.) and get reminded to **chase clients for payment**.
+- **Data:** `pm_billing_reminders` (see table list). Each reminder = a client (free text) + optional project link + service type + amount + frequency + `next_due_date` + `lead_days` (how many days before due to start chasing). [lib/billing-db.ts](lib/billing-db.ts) holds types + CRUD. `frequencyToMonths` maps frequency→`interval_months` (yearly=12, semiannual=6, quarterly=3, monthly=1, custom=N, one_time=null).
+- **UI:** [app/(app)/renewals/page.tsx](app/(app)/renewals/page.tsx) — a month **calendar grid** (renewals shown on their due date, click to edit) + an **Upcoming & overdue** list (sorted soonest-first, color-coded by service, overdue in red) + an add/edit dialog.
+- **Mark chased/paid** (`markChased`): recurring reminders roll `next_due_date` forward to the next future occurrence and reset `last_notified_on`; one-offs are set `status='done'`.
+- **Auto alerts (daily job):** Postgres function `pm_run_billing_reminders()` runs via **pg_cron** (`pm-billing-reminders-daily`, 01:00 UTC ≈ 09:00 SGT). For each active reminder within its lead window (or overdue) not yet notified today, it inserts a `pm_notifications` row (`type='billing_reminder'`, `user_id = created_by`, `link='/renewals'`) and sets `last_notified_on = today` — so it chases **daily until marked done**. This flows through the existing in-app toast + (once VAPID is configured on the VPS) Web Push.
+- **Notification routing change:** the admin tray previously showed **only** `approval_request`; it now also shows notifications **targeted to the admin** (`userId === self`) so renewal reminders surface. Updated in [components/topbar.tsx](components/topbar.tsx), [components/sidebar.tsx](components/sidebar.tsx), [app/(app)/notifications/page.tsx](app/(app)/notifications/page.tsx) (also routes via `n.link`), and [components/notification-toast-container.tsx](components/notification-toast-container.tsx). `billing_reminder` added to the notification `typeConfig` (CalendarClock / amber).
 
 ### Chat Module
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -17,6 +17,7 @@ const ALL_NAV = [
   { href: "/content",     label: "Content",       icon: FileEdit,        color: "#10b981", adminOnly: false },
   { href: "/archive",     label: "Archive",       icon: Archive,         color: "#6b7280", adminOnly: false },
   { href: "/invoices",    label: "Invoices",      icon: Receipt,         color: "#fbbf24", adminOnly: true  },
+  { href: "/renewals",    label: "Renewals",      icon: CalendarClock,   color: "#f59e0b", adminOnly: true  },
   { href: "/templates",   label: "Templates",     icon: ListChecks,      color: "#a78bfa", adminOnly: true  },
   { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: true  },
   { href: "/team",        label: "Team",          icon: Users,           color: "#22d3ee", adminOnly: true  },
@@ -34,7 +35,7 @@ export function Sidebar() {
   // Admin tray shows only approval requests; staff see workspace-global + their own targeted.
   const unreadCount = notifications.filter((n) => {
     if (n.read) return false;
-    if (isAdmin) return n.type === "approval_request";
+    if (isAdmin) return n.type === "approval_request" || n.userId === user?.id;
     return !n.userId || n.userId === user?.id;
   }).length;
   const NAV = ALL_NAV.filter((item) => {

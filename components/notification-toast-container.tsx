@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { playNotificationSound } from "@/lib/notification-sound";
 import { showWebNotification } from "@/lib/web-notifications";
 import {
-  Bot, AlertTriangle, UserPlus, RefreshCw, CheckSquare, ClipboardCheck, Bell, X,
+  Bot, AlertTriangle, UserPlus, RefreshCw, CheckSquare, ClipboardCheck, Bell, X, CalendarClock,
 } from "lucide-react";
 
 // Slack-style transient popups for new app notifications (pm_notifications).
@@ -41,6 +41,7 @@ const typeConfig: Record<string, { icon: typeof Bot; color: string; bg: string; 
   status_change:    { icon: RefreshCw,     color: "#f59e0b", bg: "#f59e0b20", label: "Status" },
   mention:          { icon: CheckSquare,   color: "#22c55e", bg: "#22c55e20", label: "Mention" },
   approval_request: { icon: ClipboardCheck, color: "#a855f7", bg: "#a855f720", label: "Approval" },
+  billing_reminder: { icon: CalendarClock,  color: "#f59e0b", bg: "#f59e0b20", label: "Renewal" },
 };
 
 function hrefFor(n: NotifRow): string {
@@ -70,7 +71,8 @@ export function NotificationToastContainer() {
         // - Admin: only approval requests are worth interrupting for.
         // - Staff: targeted (user_id === self) or workspace-global (user_id IS NULL).
         if (isAdmin) {
-          if (n.type !== "approval_request") return;
+          // Admins get approval requests + anything targeted to them (e.g. renewal reminders).
+          if (n.type !== "approval_request" && n.user_id !== user.id) return;
         } else {
           if (n.user_id && n.user_id !== user.id) return;
         }

@@ -63,7 +63,7 @@ export async function POST(req: Request) {
       payload = {
         title: name,
         body: preview(msg.body, msg.attachment_name),
-        url: `/chat?c=${msg.conversation_id}`,
+        url: `/chat?c=${msg.conversation_id}&m=${msg.id}`,
         tag: `chat-${msg.conversation_id}`,
       };
     } else if (kind === "notification") {

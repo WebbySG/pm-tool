@@ -43,6 +43,7 @@ function rowToMessage(r: Row, mentions: string[] = []): ChatMessage {
     deletedAt: (r.deleted_at as string | null) ?? null,
     createdAt: r.created_at as string,
     parentId: (r.parent_id as string | null) ?? null,
+    quotedMessageId: (r.quoted_message_id as string | null) ?? null,
     mentionedUserIds: mentions,
   };
 }
@@ -392,6 +393,8 @@ export type SendMessageInput = {
   mentionedUserIds?: string[];
   // When set, this message is a reply within the given thread-root's thread.
   parentId?: string | null;
+  // When set, this message quotes another message inline (main timeline).
+  quotedMessageId?: string | null;
 };
 
 export async function sendMessage(input: SendMessageInput): Promise<ChatMessage> {
@@ -403,6 +406,7 @@ export async function sendMessage(input: SendMessageInput): Promise<ChatMessage>
     attachment_name: input.attachment?.name ?? null,
     attachment_type: input.attachment?.type ?? null,
     parent_id: input.parentId ?? null,
+    quoted_message_id: input.quotedMessageId ?? null,
   }).select("*").single();
   if (error) throw error;
   const msg = rowToMessage(row as Row);

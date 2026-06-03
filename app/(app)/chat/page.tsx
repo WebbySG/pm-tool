@@ -30,7 +30,7 @@ import {
   X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
   Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut, CornerUpLeft,
   Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
-  Volume2, VolumeX, BellRing, Smile,
+  Volume2, VolumeX, BellRing, Smile, Reply,
 } from "lucide-react";
 
 // Walk projects to find a task by ID (top-level or subtask)
@@ -105,10 +105,11 @@ export default function ChatPage() {
   const [newCatInput, setNewCatInput] = useState(false);
   const [newCatName, setNewCatName] = useState("");
 
-  // Deep-link: /chat?c=<id> opens that conversation (e.g. from the unread popup).
+  // Deep-link: /chat?c=<id> opens that conversation; &m=<msgId> scrolls to a message.
   const searchParams = useSearchParams();
   const deepLinkRef = useRef<string | null>(null);
   useEffect(() => { const c = searchParams.get("c"); if (c) deepLinkRef.current = c; }, [searchParams]);
+  const focusMessageId = searchParams.get("m");
 
   // Resolve the open task drawer (live from store)
   const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
@@ -424,6 +425,7 @@ export default function ChatPage() {
               currentUserId={user?.id ?? ""}
               currentUserName={user?.name ?? ""}
               isAdmin={user?.pmRole === "admin"}
+              focusMessageId={focusMessageId}
               onAfterChange={() => reloadConvs(true)}
               onDeleted={() => { setSelectedId(null); reloadConvs(true); }}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
@@ -469,7 +471,7 @@ export default function ChatPage() {
 // ────────────────────────────────────────────────────────────────────────────
 
 function MessageView({
-  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, onAfterChange, onDeleted, onOpenTask,
+  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, focusMessageId, onAfterChange, onDeleted, onOpenTask,
 }: {
   conversation: ConversationWithUnread;
   displayName: string;
@@ -478,6 +480,7 @@ function MessageView({
   currentUserId: string;
   currentUserName: string;
   isAdmin: boolean;
+  focusMessageId?: string | null;
   onAfterChange: () => void;
   onDeleted: () => void;
   onOpenTask: (taskId: string) => void;
@@ -501,6 +504,14 @@ function MessageView({
   const [pinned, setPinned] = useState<ChatPinnedMessage[]>([]);
   const [showPinned, setShowPinned] = useState(false);
   const pinnedIds = useMemo(() => new Set(pinned.map((p) => p.messageId)), [pinned]);
+
+  // Inline quote reply: the message currently being quoted in the composer
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const messagesById = useMemo(() => {
+    const m = new Map<string, ChatMessage>();
+    for (const msg of messages) m.set(msg.id, msg);
+    return m;
+  }, [messages]);
 
   // Sound mute + volume (per browser)
   const [muted, setMuted] = useState(false);
@@ -621,7 +632,7 @@ function MessageView({
     let cancelled = false;
     setLoading(true);
     setThreadRoot(null); setThreadReplies([]); setShowPinned(false); setShowTasks(false);
-    setReactions(new Map()); setSearchOpen(false); setSearch("");
+    setReactions(new Map()); setSearchOpen(false); setSearch(""); setReplyingTo(null);
     Promise.all([
       loadMessages(conversation.id),
       loadThreadMeta(conversation.id),
@@ -680,6 +691,16 @@ function MessageView({
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages.length]);
+
+  // Deep-link: after messages load, scroll to & flash the message from a notification.
+  const focusConsumedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || !focusMessageId) return;
+    if (focusConsumedRef.current === focusMessageId) return;
+    focusConsumedRef.current = focusMessageId;
+    scrollToMessage(focusMessageId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, focusMessageId, messages.length]);
 
   const latestPin = pinned[0];
   const q = search.trim().toLowerCase();
@@ -876,6 +897,9 @@ function MessageView({
                     onReply={() => openThread(msg)}
                     onOpenThread={() => openThread(msg)}
                     onTogglePin={() => handleTogglePin(msg)}
+                    onQuote={() => setReplyingTo(msg)}
+                    quotedMessage={msg.quotedMessageId ? (messagesById.get(msg.quotedMessageId) ?? null) : undefined}
+                    onJumpToQuote={(id) => scrollToMessage(id)}
                     onSaved={() => { /* realtime will update */ }}
                     onOpenTask={onOpenTask}
                   />
@@ -895,6 +919,8 @@ function MessageView({
         projects={projects}
         pendingTaskInsert={pendingTaskInsert}
         onTaskInsertConsumed={() => setPendingTaskInsert(null)}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
         onSent={() => { /* realtime will update */ }}
       />
       </div>
@@ -966,6 +992,11 @@ function MessageView({
   );
 }
 
+function quoteAuthorName(authorId: string, liveStaff: LiveStaff[]): string {
+  const a = liveStaff.find((s) => staffAuthId(s) === authorId);
+  return a ? staffName(a) : "Unknown";
+}
+
 // Short one-line preview of a (possibly attachment-only) message for the pinned bar.
 function pinnedSnippet(msg: ChatMessage): string {
   const body = (msg.body || "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").trim();
@@ -983,7 +1014,7 @@ const REACTION_CHOICES = ["👍", "❤️", "✅", "😂", "🎉", "👀", "🙏
 function MessageItem({
   msg, grouped, liveStaff, projects, isOwn, isPinned, replyMeta, inThread,
   reactions, currentUserId, onToggleReaction,
-  onReply, onOpenThread, onTogglePin, onSaved, onOpenTask,
+  onReply, onOpenThread, onTogglePin, onQuote, quotedMessage, onJumpToQuote, onSaved, onOpenTask,
 }: {
   msg: ChatMessage;
   grouped: boolean;
@@ -999,6 +1030,9 @@ function MessageItem({
   onReply?: () => void;
   onOpenThread?: () => void;
   onTogglePin?: () => void;
+  onQuote?: () => void;
+  quotedMessage?: ChatMessage | null;
+  onJumpToQuote?: (messageId: string) => void;
   onSaved: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -1086,6 +1120,24 @@ function MessageItem({
           </div>
         ) : (
           <div>
+            {/* Inline quoted message */}
+            {msg.quotedMessageId && (
+              <button onClick={() => onJumpToQuote?.(msg.quotedMessageId!)}
+                className="flex items-start gap-1.5 mb-1 px-2 py-1 rounded text-left hover:opacity-80 max-w-md"
+                style={{ background: "var(--bg-surface)", borderLeft: "3px solid var(--accent)" }}>
+                <Reply size={10} style={{ color: "var(--accent)", marginTop: 3 }} className="shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold block" style={{ color: "var(--accent)" }}>
+                    {quotedMessage ? quoteAuthorName(quotedMessage.authorId, liveStaff) : "Quoted message"}
+                  </span>
+                  <span className="text-xs truncate block" style={{ color: "var(--text-muted)" }}>
+                    {quotedMessage
+                      ? (quotedMessage.deletedAt ? "Message deleted" : pinnedSnippet(quotedMessage))
+                      : "Tap to view"}
+                  </span>
+                </div>
+              </button>
+            )}
             {msg.body && (
               <div className="text-sm whitespace-pre-wrap break-words" style={{ color: "var(--text)" }}>
                 <RenderBody body={msg.body} liveStaff={liveStaff} projects={projects} onOpenTask={onOpenTask} />
@@ -1156,6 +1208,13 @@ function MessageItem({
                 </>
               )}
             </div>
+          )}
+          {!inThread && onQuote && (
+            <button onClick={onQuote} title="Quote reply"
+              className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+              style={{ color: "var(--text-muted)" }}>
+              <Reply size={12} />
+            </button>
           )}
           {!inThread && onReply && (
             <button onClick={onReply} title="Reply in thread"
@@ -1246,6 +1305,7 @@ function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; l
 function Composer({
   conversationId, currentUserId, currentUserName, liveStaff, projects, onSent,
   pendingTaskInsert, onTaskInsertConsumed, parentId, placeholder, autoFocus,
+  replyingTo, onCancelReply,
 }: {
   conversationId: string;
   currentUserId: string;
@@ -1258,6 +1318,8 @@ function Composer({
   parentId?: string | null;
   placeholder?: string;
   autoFocus?: boolean;
+  replyingTo?: ChatMessage | null;
+  onCancelReply?: () => void;
 }) {
   const [text, setText] = useState("");
 
@@ -1272,6 +1334,10 @@ function Composer({
     setTimeout(() => textareaRef.current?.focus(), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingTaskInsert]);
+  // Focus the input when the user starts a quote reply
+  useEffect(() => {
+    if (replyingTo) setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [replyingTo]);
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1321,9 +1387,14 @@ function Composer({
     const before = text.slice(0, mentionMenu.startIdx);
     const after = text.slice((textareaRef.current?.selectionStart ?? text.length));
     const insert = `@${s.first_name} `;
+    const caret = (before + insert).length;
     setText(before + insert + after);
     setMentionMenu(null);
-    setTimeout(() => textareaRef.current?.focus(), 0);
+    // Place the cursor right AFTER the inserted mention so typing continues in front.
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (el) { el.focus(); el.setSelectionRange(caret, caret); }
+    }, 0);
   }
 
   function pickTask(taskId: string) {
@@ -1331,9 +1402,13 @@ function Composer({
     const before = text.slice(0, taskMenu.startIdx);
     const after = text.slice((textareaRef.current?.selectionStart ?? text.length));
     const insert = `[task:${taskId}] `;
+    const caret = (before + insert).length;
     setText(before + insert + after);
     setTaskMenu(null);
-    setTimeout(() => textareaRef.current?.focus(), 0);
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (el) { el.focus(); el.setSelectionRange(caret, caret); }
+    }, 0);
   }
 
   const mentionMatches = useMemo(() => {
@@ -1366,7 +1441,9 @@ function Composer({
         attachment,
         mentionedUserIds: mentions,
         parentId: parentId ?? null,
+        quotedMessageId: replyingTo?.id ?? null,
       });
+      onCancelReply?.(); // clear the quote bar after sending
 
       // Fire targeted notifications for @-mentions (excluding self)
       if (mentions.length > 0) {
@@ -1377,7 +1454,7 @@ function Composer({
             type: "mention",
             title: `${currentUserName} mentioned you in chat`,
             body: text.slice(0, 200),
-            link: `/chat`,
+            link: `/chat?c=${conversationId}&m=${newMsg.id}`,
           }));
         if (notes.length > 0) await supabase.from("pm_notifications").insert(notes);
       }
@@ -1408,6 +1485,21 @@ function Composer({
 
   return (
     <div className="shrink-0 px-5 py-3" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-base)" }}>
+      {replyingTo && (
+        <div className="flex items-start gap-2 mb-2 px-3 py-2 rounded-lg"
+          style={{ background: "var(--bg-surface)", borderLeft: "3px solid var(--accent)" }}>
+          <Reply size={12} style={{ color: "var(--accent)", marginTop: 2 }} />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold" style={{ color: "var(--accent)" }}>
+              Replying to {quoteAuthorName(replyingTo.authorId, liveStaff)}
+            </p>
+            <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{pinnedSnippet(replyingTo)}</p>
+          </div>
+          <button onClick={onCancelReply} title="Cancel reply" style={{ color: "var(--text-muted)" }}>
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {file && (
         <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs"
           style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>
@@ -1699,7 +1791,7 @@ function NewConversationDialog({
         id = await findOrCreateDM(currentUserId, dmTarget);
       } else if (kind === "group") {
         if (!groupName.trim()) { setError("Name your group"); setBusy(false); return; }
-        if (groupMembers.length < 2) { setError("Pick at least 2 others"); setBusy(false); return; }
+        if (groupMembers.length < 1) { setError("Add at least 1 member"); setBusy(false); return; }
         id = await createGroup(groupName.trim(), groupMembers, currentUserId);
       } else {
         if (!projectId) { setError("Pick a project"); setBusy(false); return; }

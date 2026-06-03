@@ -310,7 +310,14 @@ export default function ProjectsPage() {
     ? projects
     : projects.filter((p) => p.assignedStaff.includes(filterStaff));
 
-  const ungrouped = visibleProjects.filter((p) => !p.channelId || !channels.find((c) => c.id === p.channelId));
+  // Stable, predictable order within each channel (alphabetical) so cards don't
+  // appear in arbitrary database order.
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  const projectsInChannel = (channelId: string) => visibleProjects.filter((p) => p.channelId === channelId).sort(byName);
+
+  const ungrouped = visibleProjects
+    .filter((p) => !p.channelId || !channels.find((c) => c.id === p.channelId))
+    .sort(byName);
 
   return (
     <>
@@ -389,7 +396,7 @@ export default function ProjectsPage() {
               <ChannelGroup
                 key={channel.id}
                 channel={channel}
-                projects={visibleProjects.filter((p) => p.channelId === channel.id)}
+                projects={projectsInChannel(channel.id)}
                 isOver={overChannelId === channel.id}
                 isAdmin={isAdmin}
                 liveStaff={liveStaff}

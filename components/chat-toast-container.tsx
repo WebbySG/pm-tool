@@ -84,11 +84,11 @@ export function ChatToastContainer() {
 
         // Audible chime for new messages while you're elsewhere in the app
         playNotificationSound();
-        // OS-level notification when the tab isn't focused
+        // OS-level notification when the tab isn't focused — deep-links to the message
         showWebNotification({
           title: author?.name ?? "New message",
           body: body.slice(0, 140),
-          url: "/chat",
+          url: `/chat?c=${m.conversation_id}&m=${m.id}`,
           tag: `chat-${m.conversation_id}`,
         });
 
@@ -120,7 +120,7 @@ export function ChatToastContainer() {
       {toasts.map((t, i) => {
         const color = AVATAR_COLORS[Math.abs(t.id.charCodeAt(0)) % AVATAR_COLORS.length];
         return (
-          <Link key={t.id} href="/chat" onClick={() => dismiss(t.id)}
+          <Link key={t.id} href={`/chat?c=${t.conversationId}&m=${t.id}`} onClick={() => dismiss(t.id)}
             className="flex items-start gap-2.5 p-3 rounded-xl shadow-lg transition-all anim-float-in"
             style={{
               background: "var(--bg-base)",

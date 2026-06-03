@@ -23,7 +23,8 @@ export function Topbar({ title, back, action }: TopbarProps) {
   // Admin bell only counts approval requests; staff see their full stream.
   const unreadCount = notifications.filter((n) => {
     if (n.read) return false;
-    if (isAdmin) return n.type === "approval_request";
+    // Admin tray: approval requests + anything targeted to them (e.g. renewal reminders)
+    if (isAdmin) return n.type === "approval_request" || n.userId === user?.id;
     // Staff: see their targeted notifications + workspace-global (userId IS NULL) ones
     return !n.userId || n.userId === user?.id;
   }).length;

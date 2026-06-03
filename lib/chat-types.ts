@@ -39,6 +39,8 @@ export type ChatMessage = {
   createdAt: string;
   // Threading: NULL for top-level messages; set to the thread-root message id for replies.
   parentId: string | null;
+  // Inline quote reply: the message being quoted (shown as a snippet above this one).
+  quotedMessageId: string | null;
   mentionedUserIds: string[];
 };
 

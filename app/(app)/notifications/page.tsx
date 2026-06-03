@@ -1,7 +1,7 @@
 "use client";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
-import { Bot, AlertTriangle, CheckSquare, UserPlus, RefreshCw, CheckCheck, ClipboardCheck, Check, Loader2 } from "lucide-react";
+import { Bot, AlertTriangle, CheckSquare, UserPlus, RefreshCw, CheckCheck, ClipboardCheck, Check, Loader2, CalendarClock } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
@@ -13,6 +13,7 @@ const typeConfig: Record<string, { icon: typeof Bot; color: string; bg: string; 
   status_change:    { icon: RefreshCw,       color: "#f59e0b", bg: "#f59e0b20", label: "Status" },
   mention:          { icon: CheckSquare,     color: "#22c55e", bg: "#22c55e20", label: "Mention" },
   approval_request: { icon: ClipboardCheck,  color: "#a855f7", bg: "#a855f720", label: "Approval" },
+  billing_reminder: { icon: CalendarClock,    color: "#f59e0b", bg: "#f59e0b20", label: "Renewal" },
 };
 
 function timeAgo(date: string) {
@@ -31,6 +32,8 @@ export default function NotificationsPage() {
   function openNotification(n: typeof notifications[number]) {
     if (n.projectId && n.taskId) {
       router.push(`/projects/${n.projectId}?task=${n.taskId}`);
+    } else if (n.link) {
+      router.push(n.link);
     } else if (n.projectId) {
       router.push(`/projects/${n.projectId}`);
     }
@@ -42,7 +45,7 @@ export default function NotificationsPage() {
   // for them. Staff still see their full notification stream (approvals,
   // revisions, mentions).
   const visible = isAdmin
-    ? notifications.filter((n) => n.type === "approval_request")
+    ? notifications.filter((n) => n.type === "approval_request" || n.userId === user?.id)
     : notifications.filter((n) => !n.userId || n.userId === user?.id);
   const unread = visible.filter((n) => !n.read);
   const read = visible.filter((n) => n.read);
