@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 40, // top reserve so the running header (continuation pages) has room
-    paddingBottom: 150, // reserve for footer + decoration; the summary is pushed down to here
+    paddingBottom: 200, // reserve for the bottom-pinned signatures + decoration + footer
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -426,6 +426,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         <View style={styles.billToBlock}>
           <Text style={styles.sectionLabel}>BILL TO</Text>
           <Text style={styles.billToName}>{invoice.billToName || "—"}</Text>
+          {invoice.billToAttention ? <Text style={styles.billToDetail}>Attn: {invoice.billToAttention}</Text> : null}
           {invoice.billToAddress ? <Text style={styles.billToDetail}>{invoice.billToAddress}</Text> : null}
         </View>
 
@@ -451,9 +452,10 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
             const { heading, body } = splitDescription(li.description || "");
             const rowStyle = i % 2 === 1 ? styles.trAlt : styles.tr;
             return (
-              // wrap={false} keeps a whole line item together — it moves entirely to
-              // the next page instead of being cut across the page break.
-              <View key={li.id} style={rowStyle} wrap={false}>
+              // No wrap={false}: a long description flows and fills the page (and
+              // continues onto the next) instead of jumping whole to the next page
+              // and leaving the first page empty.
+              <View key={li.id} style={rowStyle}>
                 <View style={styles.tdDesc}>
                   {heading ? <Text style={styles.itemHeading}>{heading}</Text> : null}
                   {body ? <Text style={styles.itemBody}>{body}</Text> : null}
@@ -466,12 +468,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Flexible spacer: pushes the Total/Payment/Signatures summary down so it sits
-            neatly near the bottom (sign-off area), with the gap above it — instead of
-            the summary floating right under the items with dead space below. */}
-        <View style={{ flexGrow: 1, minHeight: 24 }} />
-
-        {/* Totals */}
+        {/* Totals — flow right after the items */}
         <View style={styles.totalsBlock} wrap={false}>
           <View style={styles.totalsTable}>
             <View style={styles.totalsRow}>
@@ -501,18 +498,29 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           </View>
         ) : null}
 
-        {/* Signatures */}
-        <View style={styles.signaturesRow} wrap={false}>
-          {["Name / Title", "Customer Signature", "Date"].map((label) => (
-            <View key={label} style={styles.signature}>
-              <View style={styles.signatureLine} />
-              <Text style={styles.signatureLabel}>{label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Decorative graphic — bottom-right of the last page (as before) */}
+        {/* Decorative graphic — bottom-right of the LAST page (direct element, like the
+            version that looked right). NOT wrapped in a fixed/render View — that was
+            what threw it into the middle of page 1. */}
         <BottomRightDecor />
+
+        {/* Signatures — pinned at the bottom of the last page only */}
+        <View
+          style={styles.signaturesBlock}
+          render={(args: unknown) => {
+            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
+            if (pageNumber !== totalPages) return null;
+            return (
+              <>
+                {["Name / Title", "Customer Signature", "Date"].map((label) => (
+                  <View key={label} style={styles.signature}>
+                    <View style={styles.signatureLine} />
+                    <Text style={styles.signatureLabel}>{label}</Text>
+                  </View>
+                ))}
+              </>
+            );
+          }}
+        />
 
         {/* Footer */}
         <View style={styles.footer} fixed>

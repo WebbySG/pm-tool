@@ -33,6 +33,7 @@ function rowToInvoice(r: Row, items: InvoiceLineItem[] = []): Invoice {
     issueDate: r.issue_date as string,
     dueDate: r.due_date as string,
     billToName: (r.bill_to_name as string) ?? "",
+    billToAttention: (r.bill_to_attention as string) ?? "",
     billToEmail: (r.bill_to_email as string) ?? "",
     billToAddress: (r.bill_to_address as string) ?? "",
     notes: (r.notes as string) ?? "",
@@ -128,6 +129,7 @@ export type InvoiceDraft = {
   issueDate: string;
   dueDate: string;
   billToName: string;
+  billToAttention: string;
   billToEmail: string;
   billToAddress: string;
   notes: string;
@@ -157,6 +159,7 @@ export async function createInvoice(draft: InvoiceDraft): Promise<string> {
     issue_date: draft.issueDate,
     due_date: draft.dueDate,
     bill_to_name: draft.billToName,
+    bill_to_attention: draft.billToAttention || null,
     bill_to_email: draft.billToEmail || null,
     bill_to_address: draft.billToAddress || null,
     notes: draft.notes || null,
@@ -198,6 +201,7 @@ export async function updateInvoice(
   if (patch.issueDate !== undefined) updates.issue_date = patch.issueDate;
   if (patch.dueDate !== undefined) updates.due_date = patch.dueDate;
   if (patch.billToName !== undefined) updates.bill_to_name = patch.billToName;
+  if (patch.billToAttention !== undefined) updates.bill_to_attention = patch.billToAttention || null;
   if (patch.billToEmail !== undefined) updates.bill_to_email = patch.billToEmail || null;
   if (patch.billToAddress !== undefined) updates.bill_to_address = patch.billToAddress || null;
   if (patch.notes !== undefined) updates.notes = patch.notes || null;
@@ -292,6 +296,7 @@ export async function duplicateInvoice(sourceId: string, opts: {
     issueDate: opts.issueDate,
     dueDate: opts.dueDate,
     billToName: src.billToName,
+    billToAttention: src.billToAttention,
     billToEmail: src.billToEmail,
     billToAddress: src.billToAddress,
     notes: src.notes,

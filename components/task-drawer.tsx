@@ -896,6 +896,17 @@ function TaskPanel({
             />
           </div>
 
+          {/* Added (created date) — read-only */}
+          {task.createdAt && (
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Added</p>
+              <p className="w-full px-3 py-2 rounded-lg text-sm"
+                style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#8b90a7" }}>
+                {new Date(task.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+              </p>
+            </div>
+          )}
+
           {/* Recurring */}
           <div>
             <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Recurring</p>

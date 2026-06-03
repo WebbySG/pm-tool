@@ -23,6 +23,7 @@ export type Invoice = {
   issueDate: string;
   dueDate: string;
   billToName: string;
+  billToAttention: string;
   billToEmail: string;
   billToAddress: string;
   notes: string;

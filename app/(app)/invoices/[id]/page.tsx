@@ -49,6 +49,7 @@ export default function InvoiceDetailPage() {
   const [issueDate, setIssueDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [billToName, setBillToName] = useState("");
+  const [billToAttention, setBillToAttention] = useState("");
   const [billToEmail, setBillToEmail] = useState("");
   const [billToAddress, setBillToAddress] = useState("");
   const [notes, setNotes] = useState("");
@@ -81,6 +82,7 @@ export default function InvoiceDetailPage() {
     setIssueDate(i.issueDate);
     setDueDate(i.dueDate);
     setBillToName(i.billToName);
+    setBillToAttention(i.billToAttention);
     setBillToEmail(i.billToEmail);
     setBillToAddress(i.billToAddress);
     setNotes(i.notes);
@@ -103,6 +105,7 @@ export default function InvoiceDetailPage() {
       await updateInvoice(inv.id, {
         projectId, issueDate, dueDate,
         billToName: billToName.trim(),
+        billToAttention: billToAttention.trim(),
         billToEmail: billToEmail.trim(),
         billToAddress,
         notes, paymentInstructions,
@@ -284,6 +287,13 @@ export default function InvoiceDetailPage() {
 
           <Field label="Bill to (name)">
             <input value={billToName} onChange={(e) => markDirty(setBillToName)(e.target.value)}
+              className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
+              style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
+          </Field>
+
+          <Field label="Attention to (Attn)">
+            <input value={billToAttention} onChange={(e) => markDirty(setBillToAttention)(e.target.value)}
+              placeholder="e.g. Karyn Wang — optional"
               className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
               style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
           </Field>
