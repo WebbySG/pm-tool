@@ -131,6 +131,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40, paddingTop: 18, paddingBottom: 16,
   },
   billToName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginTop: 4 },
+  billToClient: { fontSize: 11, color: C.text, marginTop: 2 },
   billToDetail: { fontSize: 9.5, color: C.textMuted, marginTop: 2 },
 
   // ─── Table ──────────────────────────────────────────────────────────────
@@ -426,7 +427,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
         <View style={styles.billToBlock}>
           <Text style={styles.sectionLabel}>BILL TO</Text>
           <Text style={styles.billToName}>{invoice.billToName || "—"}</Text>
-          {invoice.billToAttention ? <Text style={styles.billToDetail}>Attn: {invoice.billToAttention}</Text> : null}
+          {invoice.billToAttention ? <Text style={styles.billToClient}>{invoice.billToAttention}</Text> : null}
           {invoice.billToAddress ? <Text style={styles.billToDetail}>{invoice.billToAddress}</Text> : null}
         </View>
 
@@ -468,7 +469,11 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Totals — flow right after the items */}
+        {/* Flexible spacer — pushes Totals + Payment down so they sit just above the
+            pinned signature line, with the empty space appearing above them instead. */}
+        <View style={{ flexGrow: 1, minHeight: 16 }} />
+
+        {/* Totals */}
         <View style={styles.totalsBlock} wrap={false}>
           <View style={styles.totalsTable}>
             <View style={styles.totalsRow}>

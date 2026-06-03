@@ -285,13 +285,14 @@ export default function InvoiceDetailPage() {
             </Field>
           </div>
 
-          <Field label="Bill to (name)">
+          <Field label="Bill to — Company name">
             <input value={billToName} onChange={(e) => markDirty(setBillToName)(e.target.value)}
+              placeholder="e.g. Footprints Student Care Pte Ltd"
               className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
               style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
           </Field>
 
-          <Field label="Attention to (Attn)">
+          <Field label="Client name (below company)">
             <input value={billToAttention} onChange={(e) => markDirty(setBillToAttention)(e.target.value)}
               placeholder="e.g. Karyn Wang — optional"
               className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
