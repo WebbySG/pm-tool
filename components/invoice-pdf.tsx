@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 40, // top reserve so the running header (continuation pages) has room
-    paddingBottom: 300, // reserve space for the pinned totals + payment + signatures + footer
+    paddingBottom: 150, // reserve for footer + decoration; the summary is pushed down to here
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -451,7 +451,9 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
             const { heading, body } = splitDescription(li.description || "");
             const rowStyle = i % 2 === 1 ? styles.trAlt : styles.tr;
             return (
-              <View key={li.id} style={rowStyle}>
+              // wrap={false} keeps a whole line item together — it moves entirely to
+              // the next page instead of being cut across the page break.
+              <View key={li.id} style={rowStyle} wrap={false}>
                 <View style={styles.tdDesc}>
                   {heading ? <Text style={styles.itemHeading}>{heading}</Text> : null}
                   {body ? <Text style={styles.itemBody}>{body}</Text> : null}
@@ -464,69 +466,53 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Decorative bottom-right — only on continuation pages (keeps last-page bottom clean) */}
-        <View
-          fixed
-          render={(args: unknown) => {
-            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
-            if (pageNumber === totalPages) return null;
-            return <BottomRightDecor />;
-          }}
-        />
+        {/* Flexible spacer: pushes the Total/Payment/Signatures summary down so it sits
+            neatly near the bottom (sign-off area), with the gap above it — instead of
+            the summary floating right under the items with dead space below. */}
+        <View style={{ flexGrow: 1, minHeight: 24 }} />
 
-        {/* Totals + Payment + Signatures — pinned to the bottom of the LAST page,
-            so they sit flush at the bottom above the signature line rather than
-            floating high on a sparse continuation page. */}
-        <View
-          style={styles.bottomBlock}
-          render={(args: unknown) => {
-            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
-            if (pageNumber !== totalPages) return null;
-            return (
-              <>
-                {/* Totals */}
-                <View style={styles.totalsBlock}>
-                  <View style={styles.totalsTable}>
-                    <View style={styles.totalsRow}>
-                      <Text style={styles.totalsLabel}>SUBTOTAL</Text>
-                      <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
-                    </View>
-                    {hasDiscount ? (
-                      <View style={styles.totalsRow}>
-                        <Text style={styles.totalsLabel}>{discountLabel}</Text>
-                        <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.totalsRowGrand}>
-                      <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-                      <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
-                    </View>
-                  </View>
-                </View>
+        {/* Totals */}
+        <View style={styles.totalsBlock} wrap={false}>
+          <View style={styles.totalsTable}>
+            <View style={styles.totalsRow}>
+              <Text style={styles.totalsLabel}>SUBTOTAL</Text>
+              <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
+            </View>
+            {hasDiscount ? (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>{discountLabel}</Text>
+                <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
+              </View>
+            ) : null}
+            <View style={styles.totalsRowGrand}>
+              <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
+              <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
+            </View>
+          </View>
+        </View>
 
-                {/* Payment instructions only (client-facing notes removed) */}
-                {invoice.paymentInstructions ? (
-                  <View style={styles.notesPanel}>
-                    <Text style={styles.notesPanelLabel}>PAYMENT</Text>
-                    {invoice.paymentInstructions.split("\n").map((line, i) => (
-                      <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
-                    ))}
-                  </View>
-                ) : null}
+        {/* Payment instructions (client-facing notes removed) */}
+        {invoice.paymentInstructions ? (
+          <View style={styles.notesPanel} wrap={false}>
+            <Text style={styles.notesPanelLabel}>PAYMENT</Text>
+            {invoice.paymentInstructions.split("\n").map((line, i) => (
+              <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
+            ))}
+          </View>
+        ) : null}
 
-                {/* Signatures */}
-                <View style={styles.signaturesRow}>
-                  {["Name / Title", "Customer Signature", "Date"].map((label) => (
-                    <View key={label} style={styles.signature}>
-                      <View style={styles.signatureLine} />
-                      <Text style={styles.signatureLabel}>{label}</Text>
-                    </View>
-                  ))}
-                </View>
-              </>
-            );
-          }}
-        />
+        {/* Signatures */}
+        <View style={styles.signaturesRow} wrap={false}>
+          {["Name / Title", "Customer Signature", "Date"].map((label) => (
+            <View key={label} style={styles.signature}>
+              <View style={styles.signatureLine} />
+              <Text style={styles.signatureLabel}>{label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Decorative graphic — bottom-right of the last page (as before) */}
+        <BottomRightDecor />
 
         {/* Footer */}
         <View style={styles.footer} fixed>
