@@ -1151,12 +1151,20 @@ function MessageItem({
               </div>
             )}
             {msg.attachmentUrl && (
-              <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 mt-1.5 px-3 py-2 rounded-lg text-sm hover:opacity-80"
-                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                {msg.attachmentType === "image" ? <ImageIcon size={13} /> : <FileText size={13} />}
-                {msg.attachmentName}
-              </a>
+              msg.attachmentType === "image" ? (
+                <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className="block mt-1.5 w-fit">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={msg.attachmentUrl} alt={msg.attachmentName ?? "image"}
+                    style={{ maxWidth: 340, maxHeight: 340, borderRadius: 10, border: "1px solid var(--border)", objectFit: "contain", display: "block" }} />
+                </a>
+              ) : (
+                <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 mt-1.5 px-3 py-2 rounded-lg text-sm hover:opacity-80"
+                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                  <FileText size={13} />
+                  {msg.attachmentName}
+                </a>
+              )
             )}
             {/* Thread reply badge */}
             {!inThread && replyMeta && replyMeta.count > 0 && (
@@ -1359,6 +1367,12 @@ function Composer({
     if (replyingTo) setTimeout(() => textareaRef.current?.focus(), 0);
   }, [replyingTo]);
   const [file, setFile] = useState<File | null>(null);
+  // Local preview URL for an image attachment (e.g. a pasted screenshot).
+  const filePreview = useMemo(
+    () => (file && file.type.startsWith("image/")) ? URL.createObjectURL(file) : null,
+    [file],
+  );
+  useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mentionMenu, setMentionMenu] = useState<{ query: string; startIdx: number } | null>(null);
@@ -1503,6 +1517,25 @@ function Composer({
     if (e.key === "Escape") { setMentionMenu(null); setTaskMenu(null); }
   }
 
+  // Ctrl/Cmd+V of a screenshot/image → auto-attach it.
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const blob = it.getAsFile();
+        if (blob) {
+          const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+          const named = new File([blob], blob.name || `pasted-${Date.now()}.${ext}`, { type: blob.type });
+          setFile(named);
+          e.preventDefault();
+        }
+        return;
+      }
+    }
+  }
+
   return (
     <div className="shrink-0 px-5 py-3" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-base)" }}>
       {replyingTo && (
@@ -1523,7 +1556,12 @@ function Composer({
       {file && (
         <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs"
           style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>
-          <Paperclip size={11} />
+          {filePreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={filePreview} alt={file.name} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} />
+          ) : (
+            <Paperclip size={11} />
+          )}
           <span className="flex-1 truncate">{file.name}</span>
           <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}
             style={{ color: "#ef4444" }}><X size={11} /></button>
@@ -1584,11 +1622,11 @@ function Composer({
             <Paperclip size={14} />
           </div>
         </label>
-        <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={onKeyDown}
+        <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={onKeyDown} onPaste={onPaste}
           autoFocus={autoFocus}
-          rows={1} placeholder={placeholder ?? "Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."}
-          className="flex-1 bg-transparent text-sm outline-none px-3 py-2 rounded-lg resize-none"
-          style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 38, maxHeight: 160, background: "var(--bg-surface)" }} />
+          rows={5} placeholder={placeholder ?? "Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."}
+          className="flex-1 bg-transparent text-sm outline-none px-3 py-2 rounded-lg resize-y leading-relaxed"
+          style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 120, maxHeight: 260, background: "var(--bg-surface)" }} />
         <button onClick={handleSend} disabled={sending || (!text.trim() && !file)}
           className="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0"
           style={{

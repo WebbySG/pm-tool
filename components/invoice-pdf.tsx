@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 40, // top reserve so the running header (continuation pages) has room
-    paddingBottom: 200, // reserve for the bottom-pinned signatures + decoration + footer
+    paddingBottom: 270, // reserve for the bottom-pinned Total/Payment/Signatures cluster + footer
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -469,59 +469,55 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Flexible spacer — pushes Totals + Payment down so they sit just above the
-            pinned signature line, with the empty space appearing above them instead. */}
-        <View style={{ flexGrow: 1, minHeight: 16 }} />
-
-        {/* Totals */}
-        <View style={styles.totalsBlock} wrap={false}>
-          <View style={styles.totalsTable}>
-            <View style={styles.totalsRow}>
-              <Text style={styles.totalsLabel}>SUBTOTAL</Text>
-              <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
-            </View>
-            {hasDiscount ? (
-              <View style={styles.totalsRow}>
-                <Text style={styles.totalsLabel}>{discountLabel}</Text>
-                <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
-              </View>
-            ) : null}
-            <View style={styles.totalsRowGrand}>
-              <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-              <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Payment instructions (client-facing notes removed) */}
-        {invoice.paymentInstructions ? (
-          <View style={styles.notesPanel} wrap={false}>
-            <Text style={styles.notesPanelLabel}>PAYMENT</Text>
-            {invoice.paymentInstructions.split("\n").map((line, i) => (
-              <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
-            ))}
-          </View>
-        ) : null}
-
-        {/* Decorative graphic — bottom-right of the LAST page (direct element, like the
-            version that looked right). NOT wrapped in a fixed/render View — that was
-            what threw it into the middle of page 1. */}
-        <BottomRightDecor />
-
-        {/* Signatures — pinned at the bottom of the last page only */}
+        {/* Total Due + Payment + Signatures — pinned together at the bottom of the LAST
+            page (above the footer). The items flow above and fill the page; the empty
+            space ends up between the items and this cluster, not below the payment. */}
         <View
-          style={styles.signaturesBlock}
+          style={styles.bottomBlock}
           render={(args: unknown) => {
             const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
             if (pageNumber !== totalPages) return null;
             return (
               <>
-                {["Name / Title", "Customer Signature", "Date"].map((label) => (
-                  <View key={label} style={styles.signature}>
-                    <View style={styles.signatureLine} />
-                    <Text style={styles.signatureLabel}>{label}</Text>
+                {/* Totals */}
+                <View style={styles.totalsBlock}>
+                  <View style={styles.totalsTable}>
+                    <View style={styles.totalsRow}>
+                      <Text style={styles.totalsLabel}>SUBTOTAL</Text>
+                      <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
+                    </View>
+                    {hasDiscount ? (
+                      <View style={styles.totalsRow}>
+                        <Text style={styles.totalsLabel}>{discountLabel}</Text>
+                        <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.totalsRowGrand}>
+                      <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
+                      <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
+                    </View>
                   </View>
-                ))}
+                </View>
+
+                {/* Payment */}
+                {invoice.paymentInstructions ? (
+                  <View style={styles.notesPanel}>
+                    <Text style={styles.notesPanelLabel}>PAYMENT</Text>
+                    {invoice.paymentInstructions.split("\n").map((line, i) => (
+                      <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
+                    ))}
+                  </View>
+                ) : null}
+
+                {/* Signatures */}
+                <View style={styles.signaturesRow}>
+                  {["Name / Title", "Customer Signature", "Date"].map((label) => (
+                    <View key={label} style={styles.signature}>
+                      <View style={styles.signatureLine} />
+                      <Text style={styles.signatureLabel}>{label}</Text>
+                    </View>
+                  ))}
+                </View>
               </>
             );
           }}
