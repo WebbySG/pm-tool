@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { Check, RotateCcw, Loader2 } from "lucide-react";
 import { Suspense } from "react";
 import { useDraft } from "@/lib/use-draft";
+import { AdminOnly } from "@/components/admin-guard";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -224,11 +225,11 @@ function NewCredentialForm() {
 
 export default function NewCredentialPage() {
   return (
-    <>
+    <AdminOnly>
       <Topbar title="Add Credential" />
       <Suspense>
         <NewCredentialForm />
       </Suspense>
-    </>
+    </AdminOnly>
   );
 }

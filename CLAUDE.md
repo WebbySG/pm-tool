@@ -353,7 +353,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 ### Role System
 
 - **Admin:** Full access to all features, all projects, all tasks, all management pages
-- **Staff:** View only assigned projects; create/edit/delete own tasks only; no credentials, templates, or team pages
+- **Staff:** View only assigned projects; create/edit/delete own tasks only; no templates or team pages. **Credentials:** staff now see the Credentials tab but ONLY the credentials an admin has explicitly granted them (via `pm_credentials.allowed_staff`); they cannot add, manage access, or delete. See the Credentials Module section below.
 - **Content Access:** Controlled per-staff via `can_access_content` boolean in `staff_members`
 - Role resolved by: `user_roles` table first (owner/admin → admin role), then `staff_members.pm_role`
 - **Critical:** Staff must NOT have rows in `user_roles`, or they will incorrectly receive admin role
@@ -453,6 +453,17 @@ app/(app)/invoices/templates/[id]/page.tsx — Edit template
 lib/billing-db.ts                        — Renewal/payment-reminder types + CRUD + markChased
 app/(app)/renewals/page.tsx              — Renewals calendar + upcoming list + add/edit (admin only)
 ```
+
+### Credentials Module
+
+- **Shared with per-staff access.** Admins have full CRUD and manage who can see each credential. Staff see the **Credentials tab** but only the credentials granted to them.
+- **Access model:** each `pm_credentials` row has `allowed_staff` (`text[]`) holding the auth UUIDs (`staffAuthId = user_id ?? id`) of staff allowed to view it. Empty array = admin-only.
+- **DB-level enforcement (RLS) — not just UI.** `pm_credentials` was changed from a blanket `pm_allow_all` policy to scoped policies so staff browsers never even download credentials they aren't granted:
+  - `pm_credentials_select`: `pm_is_admin() OR auth.uid()::text = ANY(allowed_staff)`
+  - `pm_credentials_insert/update/delete`: `pm_is_admin()` only
+  - Helper `public.pm_is_admin()` is `SECURITY DEFINER STABLE`, mirrors [lib/auth-context.tsx](lib/auth-context.tsx) role resolution: admin if a `user_roles` row is owner/admin **OR** `staff_members.pm_role = 'admin'`. Migration: `restrict_pm_credentials_to_admin_and_allowed_staff`. **If you add another sensitive table, reuse `pm_is_admin()`.**
+- **UI:** [app/(app)/credentials/page.tsx](app/(app)/credentials/page.tsx) is NOT wrapped in `<AdminOnly>` anymore — it renders for everyone but passes `isAdmin` down. Add Credential button, the per-row **Manage** access menu, the access avatars, and the **delete** button are all admin-only. Staff also get a client-side `allowedStaff.includes(user.id)` filter as a safeguard against stale persisted store data. `app/(app)/credentials/new/page.tsx` IS wrapped in `<AdminOnly>` (blocks staff reaching the add form by URL).
+- **Manage menu gotcha:** the access dropdown uses `position: fixed` anchored to the Manage button via `getBoundingClientRect()`. It must NOT be `absolute` — the credential rows live inside a `rounded-xl overflow-hidden` card, which clips an absolutely-positioned dropdown (it was rendering cut off below the card and was unclickable). Any future in-row popover here has the same constraint.
 
 ### Invoice Module
 

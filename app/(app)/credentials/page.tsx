@@ -1,11 +1,10 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Topbar } from "@/components/topbar";
 import { type Credential } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2 } from "lucide-react";
-import { AdminOnly } from "@/components/admin-guard";
 import { useAuth } from "@/lib/auth-context";
 
 interface LiveStaff {
@@ -16,15 +15,35 @@ function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
-function CredentialRow({ cred, isLast, liveStaff }: { cred: Credential; isLast: boolean; liveStaff: LiveStaff[] }) {
+function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential; isLast: boolean; liveStaff: LiveStaff[]; isAdmin: boolean }) {
   const { updateCredentialAccess, deleteCredential } = useStore();
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState<"user" | "pass" | null>(null);
   const [loginToast, setLoginToast] = useState(false);
   const [showAccessMenu, setShowAccessMenu] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const manageBtnRef = useRef<HTMLButtonElement>(null);
 
   const allowedUsers = liveStaff.filter((s) => cred.allowedStaff.includes(staffAuthId(s)));
+
+  // The access menu is rendered with position:fixed (anchored to the Manage
+  // button) so it escapes the card's `overflow-hidden` clipping — otherwise the
+  // dropdown gets cut off below the card and can't be clicked. Flip upward when
+  // there isn't enough room below (e.g. last row of a long vault).
+  function toggleAccessMenu() {
+    if (showAccessMenu) { setShowAccessMenu(false); return; }
+    const r = manageBtnRef.current?.getBoundingClientRect();
+    if (r) {
+      const right = Math.max(8, window.innerWidth - r.right);
+      const estH = Math.min(window.innerHeight * 0.6, 36 + Math.max(1, liveStaff.length) * 44);
+      const openUp = r.bottom + 6 + estH > window.innerHeight - 8 && r.top - 6 - estH > 8;
+      setMenuPos(openUp
+        ? { bottom: window.innerHeight - r.top + 6, right }
+        : { top: r.bottom + 6, right });
+    }
+    setShowAccessMenu(true);
+  }
 
   function copyToClipboard(text: string, field: "user" | "pass") {
     navigator.clipboard.writeText(text).then(() => {
@@ -137,66 +156,77 @@ function CredentialRow({ cred, isLast, liveStaff }: { cred: Credential; isLast: 
         </div>
       )}
 
-      {/* Access control */}
-      <div className="relative flex items-center gap-2 shrink-0">
-        <span className="text-xs" style={{ color: "#4a7090" }}>Access:</span>
-        {allowedUsers.length === 0 ? (
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#ef444420", color: "#ef4444" }}>Admin only</span>
-        ) : (
-          <div className="flex -space-x-2">
-            {allowedUsers.map((s) => (
-              <div key={s.id} title={staffName(s)} className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2" style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}>
-                {staffInitials(s)}
-              </div>
-            ))}
-          </div>
-        )}
-        <button
-          onClick={() => setShowAccessMenu(!showAccessMenu)}
-          className="text-xs px-2 py-0.5 rounded-lg hover:opacity-80 transition-opacity"
-          style={{ background: "#1c3248", color: "#4a7090" }}
-        >
-          Manage
-        </button>
-
-        {showAccessMenu && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setShowAccessMenu(false)} />
-            <div className="absolute right-0 top-full mt-1 rounded-lg z-20 shadow-lg overflow-hidden" style={{ background: "#0e1e30", border: "1px solid #1c3248", minWidth: "200px" }}>
-              <p className="text-xs font-semibold px-3 pt-2.5 pb-1" style={{ color: "#4a7090" }}>STAFF ACCESS</p>
-              {liveStaff.map((s) => {
-                const id = staffAuthId(s);
-                const hasAccess = cred.allowedStaff.includes(id);
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => toggleAccess(id)}
-                    className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
-                    style={{ color: "#cce4ff" }}
-                  >
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "#38b6e8", color: "#fff" }}>
-                      {staffInitials(s)}
-                    </div>
-                    <span className="flex-1 text-left text-xs">{staffName(s)}</span>
-                    <div className="w-4 h-4 rounded border flex items-center justify-center shrink-0" style={{ borderColor: hasAccess ? "#22c55e" : "#1c3248", background: hasAccess ? "#22c55e" : "transparent" }}>
-                      {hasAccess && <Check size={10} color="#fff" />}
-                    </div>
-                  </button>
-                );
-              })}
+      {/* Access control — admin only */}
+      {isAdmin && (
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs" style={{ color: "#4a7090" }}>Access:</span>
+          {allowedUsers.length === 0 ? (
+            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#ef444420", color: "#ef4444" }}>Admin only</span>
+          ) : (
+            <div className="flex -space-x-2">
+              {allowedUsers.map((s) => (
+                <div key={s.id} title={staffName(s)} className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2" style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}>
+                  {staffInitials(s)}
+                </div>
+              ))}
             </div>
-          </>
-        )}
-      </div>
+          )}
+          <button
+            ref={manageBtnRef}
+            onClick={toggleAccessMenu}
+            className="text-xs px-2 py-0.5 rounded-lg hover:opacity-80 transition-opacity"
+            style={{ background: "#1c3248", color: "#4a7090" }}
+          >
+            Manage
+          </button>
 
-      <button
-        onClick={handleDelete}
-        className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
-        style={{ color: confirmDelete ? "#ef4444" : "#8b90a750" }}
-        title={confirmDelete ? "Click again to confirm" : "Delete"}
-      >
-        <Trash2 size={13} />
-      </button>
+          {showAccessMenu && menuPos && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowAccessMenu(false)} />
+              <div
+                className="fixed rounded-lg z-50 shadow-lg"
+                style={{ top: menuPos.top, bottom: menuPos.bottom, right: menuPos.right, background: "#0e1e30", border: "1px solid #1c3248", minWidth: "220px", maxHeight: "60vh", overflowY: "auto" }}
+              >
+                <p className="text-xs font-semibold px-3 pt-2.5 pb-1" style={{ color: "#4a7090" }}>STAFF ACCESS</p>
+                {liveStaff.length === 0 && (
+                  <p className="text-xs px-3 pb-2.5" style={{ color: "#4a7090" }}>No active staff to assign.</p>
+                )}
+                {liveStaff.map((s) => {
+                  const id = staffAuthId(s);
+                  const hasAccess = cred.allowedStaff.includes(id);
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => toggleAccess(id)}
+                      className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
+                      style={{ color: "#cce4ff" }}
+                    >
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "#38b6e8", color: "#fff" }}>
+                        {staffInitials(s)}
+                      </div>
+                      <span className="flex-1 text-left text-xs">{staffName(s)}</span>
+                      <div className="w-4 h-4 rounded border flex items-center justify-center shrink-0" style={{ borderColor: hasAccess ? "#22c55e" : "#1c3248", background: hasAccess ? "#22c55e" : "transparent" }}>
+                        {hasAccess && <Check size={10} color="#fff" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <button
+          onClick={handleDelete}
+          className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
+          style={{ color: confirmDelete ? "#ef4444" : "#8b90a750" }}
+          title={confirmDelete ? "Click again to confirm" : "Delete"}
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
     </div>
   );
 }
@@ -204,38 +234,61 @@ function CredentialRow({ cred, isLast, liveStaff }: { cred: Credential; isLast: 
 export default function CredentialsPage() {
   const { credentials } = useStore();
   const { user } = useAuth();
+  const isAdmin = user?.pmRole === "admin";
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    // Only admins need the staff list (for the per-credential access menu).
+    if (!user?.id || !isAdmin) return;
     supabase.from("staff_members").select("id,user_id,email,first_name,last_name,avatar_initials")
       .eq("status", "active")
       .then(({ data }) => setLiveStaff((data as LiveStaff[]) ?? []));
-  }, [user?.id]);
+  }, [user?.id, isAdmin]);
+
+  // Staff only see credentials explicitly granted to them. DB-level RLS already
+  // enforces this (pm_credentials_select), but we filter client-side too as a
+  // safeguard against any stale data already in the persisted store.
+  const visibleCreds = isAdmin
+    ? credentials
+    : credentials.filter((c) => !!user?.id && c.allowedStaff.includes(user.id));
 
   // Group by free-text client name (ungrouped if blank)
-  const clientNames = Array.from(new Set(credentials.map((c) => c.client || ""))).sort();
+  const clientNames = Array.from(new Set(visibleCreds.map((c) => c.client || ""))).sort();
   const grouped = clientNames.map((name) => ({
     name,
-    creds: credentials.filter((c) => (c.client || "") === name),
+    creds: visibleCreds.filter((c) => (c.client || "") === name),
   }));
 
   return (
-    <AdminOnly>
-      <Topbar title="Credentials Vault" action={{ label: "Add Credential", href: "/credentials/new" }} />
+    <>
+      <Topbar
+        title="Credentials Vault"
+        action={isAdmin ? { label: "Add Credential", href: "/credentials/new" } : undefined}
+      />
       <div className="p-6 flex flex-col gap-6">
 
         {/* Security notice */}
         <div className="rounded-xl p-4 flex gap-3 items-center" style={{ background: "#0f1d2e", border: "1px solid #22c55e30" }}>
           <Shield size={18} style={{ color: "#22c55e" }} />
-          <p className="text-sm" style={{ color: "#4a7090" }}>
-            All credentials are encrypted. Access is logged and controlled by Admin.
-            <span className="ml-1 font-medium" style={{ color: "#cce4ff" }}>Staff can only view credentials you have granted access to.</span>
-          </p>
+          {isAdmin ? (
+            <p className="text-sm" style={{ color: "#4a7090" }}>
+              All credentials are encrypted. Access is logged and controlled by Admin.
+              <span className="ml-1 font-medium" style={{ color: "#cce4ff" }}>Staff can only view credentials you have granted access to.</span>
+            </p>
+          ) : (
+            <p className="text-sm" style={{ color: "#4a7090" }}>
+              These are the credentials an admin has shared with you.
+              <span className="ml-1 font-medium" style={{ color: "#cce4ff" }}>Keep them confidential — access is logged.</span>
+            </p>
+          )}
         </div>
 
-        {credentials.length === 0 && (
-          <p className="text-sm" style={{ color: "#4a7090" }}>No credentials stored yet.</p>
+        {visibleCreds.length === 0 && (
+          <p className="text-sm" style={{ color: "#4a7090" }}>
+            {isAdmin
+              ? "No credentials stored yet."
+              : "No credentials have been shared with you yet. Ask an admin to grant you access."}
+          </p>
         )}
 
         {grouped.map(({ name, creds }) => (
@@ -249,12 +302,12 @@ export default function CredentialsPage() {
             </div>
             <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
               {creds.map((cred, i) => (
-                <CredentialRow key={cred.id} cred={cred} isLast={i === creds.length - 1} liveStaff={liveStaff} />
+                <CredentialRow key={cred.id} cred={cred} isLast={i === creds.length - 1} liveStaff={liveStaff} isAdmin={isAdmin} />
               ))}
             </div>
           </div>
         ))}
       </div>
-    </AdminOnly>
+    </>
   );
 }

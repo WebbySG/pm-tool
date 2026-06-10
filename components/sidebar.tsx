@@ -19,7 +19,7 @@ const ALL_NAV = [
   { href: "/invoices",    label: "Invoices",      icon: Receipt,         color: "#fbbf24", adminOnly: true  },
   { href: "/renewals",    label: "Renewals",      icon: CalendarClock,   color: "#f59e0b", adminOnly: true  },
   { href: "/templates",   label: "Templates",     icon: ListChecks,      color: "#a78bfa", adminOnly: true  },
-  { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: true  },
+  { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: false },
   { href: "/team",        label: "Team",          icon: Users,           color: "#22d3ee", adminOnly: true  },
   { href: "/notifications", label: "Notifications", icon: Bell,          color: "#fb923c", adminOnly: false, badge: true },
 ] as const;

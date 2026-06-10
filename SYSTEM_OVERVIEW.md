@@ -25,11 +25,12 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | Role | Projects | Tasks | Team | Credentials | Templates | Content |
 |---|---|---|---|---|---|---|
 | Admin | Full CRUD | Full CRUD all tasks | Full management | Full access | Full CRUD | Always |
-| Staff | View assigned only | Own tasks only | No access | No access | No access | If enabled |
+| Staff | View assigned only | Own tasks only | No access | View granted only | No access | If enabled |
 
 - Role is resolved by `user_roles` table first, then `staff_members.pm_role`
 - Staff must not appear in `user_roles` or they receive admin role
 - Content access per-staff via `can_access_content` in `staff_members`
+- **Credentials:** staff see only credentials whose `pm_credentials.allowed_staff` array contains their auth UUID. Enforced at the DB via RLS (`pm_credentials_select` + the `pm_is_admin()` helper), not just in the UI. Staff cannot add/manage/delete credentials.
 
 ---
 
