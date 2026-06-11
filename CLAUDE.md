@@ -358,6 +358,12 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 - Role resolved by: `user_roles` table first (owner/admin → admin role), then `staff_members.pm_role`
 - **Critical:** Staff must NOT have rows in `user_roles`, or they will incorrectly receive admin role
 
+### Staff Invite Lifecycle ([app/actions/invite.ts](app/actions/invite.ts))
+
+1. **Invite** (`inviteStaff`): `inviteUserByEmail` creates the auth user immediately; a `staff_members` row is upserted with `status='invited'`, `user_id=NULL`. Any auto-created `user_roles` row is deleted (staff must never be in `user_roles`).
+2. **Accept** (`linkStaffAccount`): on first sign-in, the auth callback ([app/auth/callback/page.tsx](app/auth/callback/page.tsx)) and the set-password page ([app/auth/set-password/page.tsx](app/auth/set-password/page.tsx)) both call this server action. It verifies the caller's access token server-side and sets `user_id = auth uid`, `status='active'` on the email-matched row. Idempotent. **Without this step the row stays `invited` with NULL `user_id` forever** — the member never appears in assignee dropdowns (they filter `status='active'`) and resolves to a nameless default profile.
+3. **Revoke** (`revokeStaff`): reassigns the user's tasks and `assigned_staff` entries to a **live active admin** (owner preferred, the revoked user explicitly excluded — they may wrongly hold an owner row themselves); if no live admin target exists, tasks are unassigned (`assignee_id=NULL`) rather than left pointing at a dead UUID. Also deletes the user's `user_roles` rows, then the auth user, then the staff row.
+
 ### Admin Must Always Be Able To Edit
 
 **Tasks:** title, status, priority, assignee, due date (must save to DB), description, tags, recurring, subtasks, delete, move to another project (top-level tasks only — subtasks travel with their parent; `moveTaskToProject` in `lib/store.ts`)
@@ -415,6 +421,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 6. `confirmation_token` NULL in auth.users — Supabase requires empty string `''` not NULL
 7. PostgREST schema cache stale after migrations — run `NOTIFY pgrst, 'reload schema'`
 8. `initialized` in persist partialize — causes stale data; keep it out of persisted state
+9. **Dangling user IDs after staff revocation** — deleting an auth user does NOT clean up `pm_tasks.assignee_id`, `pm_projects.assigned_staff`, or their `user_roles` rows. June 2026 incident: Shoaib's old account (`35b86038-…`) was revoked while it wrongly held a `user_roles` owner row; the old `revokeStaff` owner lookup (`.eq("role","owner").limit(1)`) picked the revoked user *themselves*, so reassignment no-op'd and 38 tasks + 12 projects pointed at a dead UUID Shoaib's new account couldn't match → staff saw none of their tasks. Fixed `revokeStaff` now excludes the revoked user from the lookup, requires a live active admin target (else unassigns), and deletes the revoked user's `user_roles` rows. If a staffer reports "can't see assigned tasks", FIRST check `pm_tasks.assignee_id` values against `auth.users`/`staff_members` for orphans.
 
 ### Key File Map
 

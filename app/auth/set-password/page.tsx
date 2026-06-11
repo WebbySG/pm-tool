@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { linkStaffAccount } from "@/app/actions/invite";
 import { useRouter } from "next/navigation";
 import { Zap, Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 
@@ -25,6 +26,12 @@ export default function SetPasswordPage() {
       setError(updateError.message);
       setLoading(false);
       return;
+    }
+    // Safety net: ensure the invited staff_members row is linked + active even
+    // if the auth callback's link call didn't run (idempotent server action).
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      await linkStaffAccount(session.access_token);
     }
     setDone(true);
     setTimeout(() => router.replace("/dashboard"), 1500);

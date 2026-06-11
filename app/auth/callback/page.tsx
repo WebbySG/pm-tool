@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { linkStaffAccount } from "@/app/actions/invite";
 import { Zap, AlertCircle } from "lucide-react";
 
 export default function AuthCallbackPage() {
@@ -27,6 +28,11 @@ export default function AuthCallbackPage() {
           setError(exchangeError.message);
           return;
         }
+        // Link the invited staff_members row (sets user_id + status='active')
+        // before any page tries to resolve this user against active staff.
+        if (data.session?.access_token) {
+          await linkStaffAccount(data.session.access_token);
+        }
         // Invited users need to set a password before they can log in next time
         if (data.session?.user?.app_metadata?.provider === "email" && !data.session.user.last_sign_in_at) {
           router.replace("/auth/set-password");
@@ -42,11 +48,13 @@ export default function AuthCallbackPage() {
         if (event === "SIGNED_IN" && session) {
           // Check if this is an invite acceptance (user has no password yet)
           const isInvite = hashParams.get("type") === "invite";
-          if (isInvite) {
-            router.replace("/auth/set-password");
-          } else {
-            router.replace("/dashboard");
-          }
+          // Defer the server action out of the auth callback (auth-js holds its
+          // internal lock for the callback's duration — see lib/auth-context.tsx).
+          const token = session.access_token;
+          setTimeout(async () => {
+            await linkStaffAccount(token);
+            router.replace(isInvite ? "/auth/set-password" : "/dashboard");
+          }, 0);
         }
       });
 
