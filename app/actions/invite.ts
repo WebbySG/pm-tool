@@ -1,18 +1,43 @@
 "use server";
 import { createClient } from "@supabase/supabase-js";
 
-export async function inviteStaff(data: { name: string; email: string }): Promise<{ success: boolean; error?: string }> {
+function createAdminClient() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) return null;
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceKey,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
+
+// Server actions are publicly reachable HTTP endpoints — every privileged
+// action must verify the caller is an admin. Mirrors pm_is_admin() in the DB:
+// admin if user_roles says owner/admin OR staff_members.pm_role = 'admin'.
+async function verifyAdminCaller(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  callerToken: string | undefined
+): Promise<{ ok: boolean; error?: string }> {
+  if (!callerToken) return { ok: false, error: "Not signed in." };
+  const { data: { user }, error } = await admin.auth.getUser(callerToken);
+  if (error || !user) return { ok: false, error: "Could not verify session." };
+  const [{ data: roleRow }, { data: staffRow }] = await Promise.all([
+    admin.from("user_roles").select("role").eq("user_id", user.id).maybeSingle(),
+    admin.from("staff_members").select("pm_role").eq("user_id", user.id).maybeSingle(),
+  ]);
+  const isAdmin = ["owner", "admin"].includes((roleRow?.role as string) ?? "") || staffRow?.pm_role === "admin";
+  return isAdmin ? { ok: true } : { ok: false, error: "Admin access required." };
+}
+
+export async function inviteStaff(data: { name: string; email: string; callerToken: string }): Promise<{ success: boolean; error?: string }> {
   try {
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
+    const admin = createAdminClient();
+    if (!admin) {
       return { success: false, error: "Server not configured for invites. Add SUPABASE_SERVICE_ROLE_KEY to .env.local." };
     }
 
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
+    const auth = await verifyAdminCaller(admin, data.callerToken);
+    if (!auth.ok) return { success: false, error: auth.error };
 
     const nameParts = data.name.trim().split(" ");
     const firstName = nameParts[0] ?? "";
@@ -71,18 +96,13 @@ export async function inviteStaff(data: { name: string; email: string }): Promis
 // every sign-in.
 export async function linkStaffAccount(accessToken: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
+    const admin = createAdminClient();
+    if (!admin) {
       return { success: false, error: "Server not configured. Add SUPABASE_SERVICE_ROLE_KEY to .env.local." };
     }
 
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-
     // Verify the token server-side — never trust a client-supplied user id.
+    // No admin check here: this only links the caller's OWN email-matched row.
     const { data: { user }, error: userErr } = await admin.auth.getUser(accessToken);
     if (userErr || !user?.email) {
       return { success: false, error: "Could not verify session." };
@@ -101,18 +121,15 @@ export async function linkStaffAccount(accessToken: string): Promise<{ success: 
   }
 }
 
-export async function revokeStaff(data: { staffId: string; userId: string | null; email: string }): Promise<{ success: boolean; error?: string }> {
+export async function revokeStaff(data: { staffId: string; userId: string | null; email: string; callerToken: string }): Promise<{ success: boolean; error?: string }> {
   try {
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
+    const admin = createAdminClient();
+    if (!admin) {
       return { success: false, error: "Server not configured. Add SUPABASE_SERVICE_ROLE_KEY to .env.local." };
     }
 
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
+    const auth = await verifyAdminCaller(admin, data.callerToken);
+    if (!auth.ok) return { success: false, error: auth.error };
 
     // Find auth user by email if we don't have user_id yet (pending invite)
     let authUserId = data.userId;
@@ -207,6 +224,59 @@ export async function revokeStaff(data: { staffId: string; userId: string | null
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unexpected error revoking staff.";
+    return { success: false, error: message };
+  }
+}
+
+// Admin sets/resets a staff member's password directly — no email link needed.
+// This is the safe alternative to the admin clicking the invite link (which
+// signs THEM in as the staff member and kicks out their own session, and
+// consumes the one-time link). Also links + activates the staff row, since a
+// password-bearing account is immediately usable.
+export async function setStaffPassword(data: { staffId: string; newPassword: string; callerToken: string }): Promise<{ success: boolean; error?: string }> {
+  try {
+    const admin = createAdminClient();
+    if (!admin) {
+      return { success: false, error: "Server not configured. Add SUPABASE_SERVICE_ROLE_KEY to .env.local." };
+    }
+
+    const auth = await verifyAdminCaller(admin, data.callerToken);
+    if (!auth.ok) return { success: false, error: auth.error };
+
+    if ((data.newPassword ?? "").length < 8) {
+      return { success: false, error: "Password must be at least 8 characters." };
+    }
+
+    const { data: staffRow, error: staffErr } = await admin
+      .from("staff_members")
+      .select("id, email, user_id")
+      .eq("id", data.staffId)
+      .maybeSingle();
+    if (staffErr || !staffRow) return { success: false, error: "Staff member not found." };
+
+    let authUserId = staffRow.user_id as string | null;
+    if (!authUserId) {
+      const { data: { users } } = await admin.auth.admin.listUsers();
+      authUserId = users.find((u) => u.email === staffRow.email)?.id ?? null;
+    }
+    if (!authUserId) {
+      return { success: false, error: "No auth account exists for this member yet — send an invite first." };
+    }
+
+    const { error: pwErr } = await admin.auth.admin.updateUserById(authUserId, {
+      password: data.newPassword,
+      email_confirm: true,
+    });
+    if (pwErr) return { success: false, error: pwErr.message };
+
+    await admin
+      .from("staff_members")
+      .update({ user_id: authUserId, status: "active" })
+      .eq("id", staffRow.id);
+
+    return { success: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unexpected error setting password.";
     return { success: false, error: message };
   }
 }

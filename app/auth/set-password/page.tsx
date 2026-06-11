@@ -106,6 +106,8 @@ export default function SetPasswordPage() {
                     <Lock size={14} style={{ color: "var(--text-muted)" }} />
                     <input
                       type={showPw ? "text" : "password"}
+                      name="new-password"
+                      autoComplete="new-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Min. 8 characters"
@@ -131,6 +133,8 @@ export default function SetPasswordPage() {
                     <Lock size={14} style={{ color: "var(--text-muted)" }} />
                     <input
                       type={showPw ? "text" : "password"}
+                      name="confirm-password"
+                      autoComplete="new-password"
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
                       placeholder="Repeat your password"

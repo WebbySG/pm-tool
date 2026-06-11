@@ -118,6 +118,8 @@ export default function LoginPage() {
                 <Mail size={14} style={{ color: "var(--text-muted)" }} />
                 <input
                   type="email"
+                  name="email"
+                  autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@agency.com"
@@ -141,6 +143,8 @@ export default function LoginPage() {
                 <Lock size={14} style={{ color: "var(--text-muted)" }} />
                 <input
                   type={showPw ? "text" : "password"}
+                  name="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"

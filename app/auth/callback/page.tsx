@@ -30,8 +30,9 @@ export default function AuthCallbackPage() {
         }
         // Link the invited staff_members row (sets user_id + status='active')
         // before any page tries to resolve this user against active staff.
+        // Never let a failed server action strand the user on the spinner.
         if (data.session?.access_token) {
-          await linkStaffAccount(data.session.access_token);
+          try { await linkStaffAccount(data.session.access_token); } catch { /* non-fatal */ }
         }
         // Invited users need to set a password before they can log in next time
         if (data.session?.user?.app_metadata?.provider === "email" && !data.session.user.last_sign_in_at) {
@@ -52,16 +53,24 @@ export default function AuthCallbackPage() {
           // internal lock for the callback's duration — see lib/auth-context.tsx).
           const token = session.access_token;
           setTimeout(async () => {
-            await linkStaffAccount(token);
+            try { await linkStaffAccount(token); } catch { /* non-fatal */ }
             router.replace(isInvite ? "/auth/set-password" : "/dashboard");
           }, 0);
         }
       });
 
-      // Fallback: session already established
+      // Fallback: session already established (supabase-js can process the
+      // URL hash before our subscription registers, so SIGNED_IN never fires
+      // for us). This path MUST mirror the subscription branch — it previously
+      // skipped both the staff-row linking and the set-password redirect,
+      // which left invited accounts unlinked and passwordless.
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        router.replace("/dashboard");
+        if (session.access_token) {
+          try { await linkStaffAccount(session.access_token); } catch { /* non-fatal */ }
+        }
+        const isInvite = hashParams.get("type") === "invite";
+        router.replace(isInvite ? "/auth/set-password" : "/dashboard");
       }
 
       return () => subscription.unsubscribe();
