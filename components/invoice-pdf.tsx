@@ -34,7 +34,7 @@ const PAGE_H = 841.89;
 const styles = StyleSheet.create({
   page: {
     paddingTop: 40, // top reserve so the running header (continuation pages) has room
-    paddingBottom: 270, // reserve for the bottom-pinned Total/Payment/Signatures cluster + footer
+    paddingBottom: 58, // reserve for the fixed footer pinned at the page bottom
     paddingHorizontal: 0,
     paddingLeft: 18, // visual gutter inside the left accent strip
     fontSize: 10,
@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 40,
     paddingTop: 4, // page already reserves 40pt at the top
-    paddingBottom: 22,
+    paddingBottom: 12,
   },
 
   // ─── Running header (continuation pages only) ───────────────────────────
@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
   // ─── FROM + meta ────────────────────────────────────────────────────────
   fromMetaRow: {
     flexDirection: "row",
-    paddingHorizontal: 40, paddingTop: 22, paddingBottom: 4,
+    paddingHorizontal: 40, paddingTop: 12, paddingBottom: 4,
     gap: 32,
   },
   fromBlock: { flex: 1 },
@@ -111,8 +111,8 @@ const styles = StyleSheet.create({
   },
 
   fromContactName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 2 },
-  fromContactSub: { fontSize: 10, color: C.text, lineHeight: 1.5, marginBottom: 2 },
-  fromAddrTop: { fontSize: 9.5, color: C.text, lineHeight: 1.5, marginTop: 6 },
+  fromContactSub: { fontSize: 10, color: C.text, lineHeight: 1.4, marginBottom: 1 },
+  fromAddrTop: { fontSize: 9.5, color: C.text, lineHeight: 1.4, marginTop: 5 },
 
   metaRowLine: {
     flexDirection: "row", justifyContent: "space-between",
@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
 
   // ─── BILL TO ────────────────────────────────────────────────────────────
   billToBlock: {
-    paddingHorizontal: 40, paddingTop: 18, paddingBottom: 16,
+    paddingHorizontal: 40, paddingTop: 10, paddingBottom: 8,
   },
   billToName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: C.ink, marginTop: 4 },
   billToClient: { fontSize: 11, color: C.text, marginTop: 2 },
@@ -147,9 +147,9 @@ const styles = StyleSheet.create({
   thPrice: { width: 80, textAlign: "right" },
   thAmount: { width: 90, textAlign: "right" },
 
-  tr: { flexDirection: "row", paddingVertical: 10, alignItems: "flex-start" },
+  tr: { flexDirection: "row", paddingVertical: 7, alignItems: "flex-start" },
   trAlt: {
-    flexDirection: "row", paddingVertical: 10, alignItems: "flex-start",
+    flexDirection: "row", paddingVertical: 7, alignItems: "flex-start",
     backgroundColor: C.rowAlt,
   },
   tdDesc: { flex: 1, paddingLeft: 6, paddingRight: 8 },
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
   tdAmount: { width: 90, textAlign: "right", fontSize: 10, paddingRight: 6, paddingTop: 1 },
 
   itemHeading: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: C.ink, marginBottom: 3 },
-  itemBody: { fontSize: 9, color: C.text, lineHeight: 1.5 },
+  itemBody: { fontSize: 9, color: C.text, lineHeight: 1.35 },
 
   // ─── Totals ─────────────────────────────────────────────────────────────
   totalsBlock: {
@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
 
   // ─── Notes panel ────────────────────────────────────────────────────────
   notesPanel: {
-    marginHorizontal: 40, marginTop: 22, padding: 14,
+    marginHorizontal: 40, marginTop: 12, padding: 11,
     backgroundColor: C.panel,
     borderLeftWidth: 3, borderLeftColor: C.red, borderLeftStyle: "solid",
   },
@@ -188,15 +188,15 @@ const styles = StyleSheet.create({
   },
   notesPanelText: { fontSize: 9.5, color: C.text, lineHeight: 1.5 },
 
-  // ─── Bottom block: totals + payment + signatures, pinned to bottom of last page ──
+  // ─── Bottom block: totals + payment + signatures, flows in right after the table ──
+  // Kept together (wrap={false}) so the cluster never splits across a page break;
+  // flowing in-line means a short invoice has no mid-page whitespace gap.
   bottomBlock: {
-    position: "absolute",
-    bottom: 50, // sits just above the footer
-    left: 0, right: 0,
+    marginTop: 12,
   },
   signaturesRow: {
     flexDirection: "row", justifyContent: "space-between",
-    paddingLeft: 50, paddingRight: 40, marginTop: 22,
+    paddingLeft: 50, paddingRight: 40, marginTop: 16,
   },
 
   // ─── Signatures (absolutely pinned at bottom of last page) ──────────────
@@ -469,59 +469,51 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           })}
         </View>
 
-        {/* Total Due + Payment + Signatures — pinned together at the bottom of the LAST
-            page (above the footer). The items flow above and fill the page; the empty
-            space ends up between the items and this cluster, not below the payment. */}
-        <View
-          style={styles.bottomBlock}
-          render={(args: unknown) => {
-            const { pageNumber, totalPages } = args as { pageNumber: number; totalPages: number };
-            if (pageNumber !== totalPages) return null;
-            return (
-              <>
-                {/* Totals */}
-                <View style={styles.totalsBlock}>
-                  <View style={styles.totalsTable}>
-                    <View style={styles.totalsRow}>
-                      <Text style={styles.totalsLabel}>SUBTOTAL</Text>
-                      <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
-                    </View>
-                    {hasDiscount ? (
-                      <View style={styles.totalsRow}>
-                        <Text style={styles.totalsLabel}>{discountLabel}</Text>
-                        <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.totalsRowGrand}>
-                      <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-                      <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
-                    </View>
-                  </View>
+        {/* Total Due + Payment + Signatures — flow in right after the items table and are
+            kept together (wrap={false}) so the cluster never splits across a page break.
+            Flowing in-line (rather than absolute-pinning to the page bottom) means a short
+            invoice has no large mid-page whitespace gap. */}
+        <View style={styles.bottomBlock} wrap={false}>
+          {/* Totals */}
+          <View style={styles.totalsBlock}>
+            <View style={styles.totalsTable}>
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>SUBTOTAL</Text>
+                <Text style={styles.totalsValue}>{formatMoney(subtotal)}</Text>
+              </View>
+              {hasDiscount ? (
+                <View style={styles.totalsRow}>
+                  <Text style={styles.totalsLabel}>{discountLabel}</Text>
+                  <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
                 </View>
+              ) : null}
+              <View style={styles.totalsRowGrand}>
+                <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
+                <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
+              </View>
+            </View>
+          </View>
 
-                {/* Payment */}
-                {invoice.paymentInstructions ? (
-                  <View style={styles.notesPanel}>
-                    <Text style={styles.notesPanelLabel}>PAYMENT</Text>
-                    {invoice.paymentInstructions.split("\n").map((line, i) => (
-                      <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
-                    ))}
-                  </View>
-                ) : null}
+          {/* Payment */}
+          {invoice.paymentInstructions ? (
+            <View style={styles.notesPanel}>
+              <Text style={styles.notesPanelLabel}>PAYMENT</Text>
+              {invoice.paymentInstructions.split("\n").map((line, i) => (
+                <Text key={`p${i}`} style={styles.notesPanelText}>{line}</Text>
+              ))}
+            </View>
+          ) : null}
 
-                {/* Signatures */}
-                <View style={styles.signaturesRow}>
-                  {["Name / Title", "Customer Signature", "Date"].map((label) => (
-                    <View key={label} style={styles.signature}>
-                      <View style={styles.signatureLine} />
-                      <Text style={styles.signatureLabel}>{label}</Text>
-                    </View>
-                  ))}
-                </View>
-              </>
-            );
-          }}
-        />
+          {/* Signatures */}
+          <View style={styles.signaturesRow}>
+            {["Name / Title", "Customer Signature", "Date"].map((label) => (
+              <View key={label} style={styles.signature}>
+                <View style={styles.signatureLine} />
+                <Text style={styles.signatureLabel}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
 
         {/* Footer */}
         <View style={styles.footer} fixed>
