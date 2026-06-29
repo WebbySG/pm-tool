@@ -17,6 +17,7 @@ export type BillingReminder = {
   nextDueDate: string;   // YYYY-MM-DD
   leadDays: number;
   status: BillingStatus;
+  paid: boolean;         // current period (due nextDueDate) settled?
   notes: string;
   lastChasedAt: string | null;
   createdBy: string | null;
@@ -58,6 +59,7 @@ function rowToReminder(r: Row): BillingReminder {
     nextDueDate: r.next_due_date as string,
     leadDays: (r.lead_days as number) ?? 14,
     status: (r.status as BillingStatus) ?? "active",
+    paid: (r.paid as boolean) ?? false,
     notes: (r.notes as string) ?? "",
     lastChasedAt: (r.last_chased_at as string | null) ?? null,
     createdBy: (r.created_by as string | null) ?? null,
@@ -84,6 +86,7 @@ export type BillingDraft = {
   nextDueDate: string;
   leadDays: number;
   status?: BillingStatus;
+  paid?: boolean;
   notes?: string;
   createdBy: string | null;
 };
@@ -104,6 +107,7 @@ function draftToRow(d: BillingDraft): Row {
     next_due_date: d.nextDueDate,
     lead_days: d.leadDays,
     status: d.status ?? "active",
+    paid: d.paid ?? false,
     notes: d.notes ?? null,
   };
 }
@@ -135,6 +139,16 @@ export async function setBillingStatus(id: string, status: BillingStatus): Promi
   if (error) throw error;
 }
 
+/** Toggle whether the current period (due nextDueDate) has been paid. Stops/resumes daily chasing. */
+export async function setBillingPaid(id: string, paid: boolean): Promise<void> {
+  const { error } = await supabase.from("pm_billing_reminders").update({
+    paid,
+    last_chased_at: paid ? new Date().toISOString() : null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (error) throw error;
+}
+
 /**
  * Mark a reminder as chased/paid: recurring ones roll forward to the next future
  * occurrence; one-offs are marked done. Resets the daily-notification guard.
@@ -143,7 +157,7 @@ export async function markChased(r: BillingReminder): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   if (!r.intervalMonths) {
     await supabase.from("pm_billing_reminders")
-      .update({ status: "done", last_chased_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({ status: "done", paid: true, last_chased_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", r.id);
     return;
   }
@@ -152,6 +166,7 @@ export async function markChased(r: BillingReminder): Promise<void> {
   while (next <= today && guard < 120) { next = addMonths(next, r.intervalMonths); guard++; }
   const { error } = await supabase.from("pm_billing_reminders").update({
     next_due_date: next,
+    paid: false, // new period starts unpaid
     last_chased_at: new Date().toISOString(),
     last_notified_on: null,
     updated_at: new Date().toISOString(),

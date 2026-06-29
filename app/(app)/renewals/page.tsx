@@ -6,12 +6,12 @@ import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import {
   loadBillingReminders, createBillingReminder, updateBillingReminder, deleteBillingReminder,
-  setBillingStatus, markChased,
+  setBillingStatus, setBillingPaid, markChased,
   type BillingReminder, type BillingFrequency, type BillingServiceType, type BillingDraft,
 } from "@/lib/billing-db";
 import {
   CalendarClock, Plus, ChevronLeft, ChevronRight, Check, Pencil, Trash2,
-  Pause, Play, X, Loader2,
+  Pause, Play, X, Loader2, RotateCw,
 } from "lucide-react";
 
 const SERVICE_META: Record<BillingServiceType, { label: string; color: string }> = {
@@ -106,6 +106,7 @@ function RenewalsInner() {
   const todayStr = todayISO();
 
   async function handleChased(r: BillingReminder) { await markChased(r); reload(); }
+  async function handleTogglePaid(r: BillingReminder) { await setBillingPaid(r.id, !r.paid); reload(); }
   async function handleDelete(id: string) { await deleteBillingReminder(id); reload(); }
   async function handleToggleStatus(r: BillingReminder) {
     await setBillingStatus(r.id, r.status === "paused" ? "active" : "paused"); reload();
@@ -158,9 +159,9 @@ function RenewalsInner() {
                     return (
                       <button key={r.id} onClick={() => { setEditing(r); setShowForm(true); }}
                         className="text-left text-[10px] leading-tight px-1 py-0.5 rounded truncate hover:opacity-80"
-                        style={{ background: `${c}25`, color: c }}
-                        title={`${r.clientName} — ${SERVICE_META[r.serviceType].label}`}>
-                        {r.clientName || SERVICE_META[r.serviceType].label}
+                        style={{ background: `${c}25`, color: c, opacity: r.paid ? 0.55 : 1 }}
+                        title={`${r.clientName} — ${SERVICE_META[r.serviceType].label}${r.paid ? " (paid)" : ""}`}>
+                        {r.paid ? "✓ " : ""}{r.clientName || SERVICE_META[r.serviceType].label}
                       </button>
                     );
                   })}
@@ -190,7 +191,10 @@ function RenewalsInner() {
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ background: `${meta.color}25`, color: meta.color }}>{meta.label}</span>
                     <span className="text-sm font-semibold truncate flex-1" style={{ color: "var(--text)" }}>{r.clientName || "—"}</span>
-                    <span className="text-xs font-semibold shrink-0" style={{ color: di.color }}>{r.status === "paused" ? "Paused" : di.text}</span>
+                    <span className="text-xs font-semibold shrink-0"
+                      style={{ color: r.status === "paused" ? "var(--text-muted)" : r.paid ? "#22c55e" : di.color }}>
+                      {r.status === "paused" ? "Paused" : r.paid ? "Paid ✓" : di.text}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
                     <span>{fmtDate(r.nextDueDate)}</span>
@@ -200,10 +204,17 @@ function RenewalsInner() {
                   </div>
                   {r.notes && <p className="text-xs mt-1 break-words" style={{ color: "var(--text-muted)" }}>{r.notes}</p>}
                   <div className="flex items-center gap-1 mt-2">
-                    <button onClick={() => handleChased(r)}
+                    <button onClick={() => handleTogglePaid(r)}
+                      title={r.paid ? "Marked paid for this period — click to undo" : "Mark this period as paid (stops reminders)"}
                       className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded"
-                      style={{ background: "#22c55e25", color: "#22c55e" }}>
-                      <Check size={11} /> {r.intervalMonths ? "Chased / paid" : "Mark done"}
+                      style={r.paid ? { background: "#22c55e", color: "#fff" } : { background: "#22c55e25", color: "#22c55e" }}>
+                      <Check size={11} /> {r.paid ? "Paid" : "Mark paid"}
+                    </button>
+                    <button onClick={() => handleChased(r)}
+                      title={r.intervalMonths ? "Roll forward to the next renewal period" : "Mark this one-off as done"}
+                      className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded"
+                      style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      {r.intervalMonths ? <><RotateCw size={11} /> Next renewal</> : <><Check size={11} /> Mark done</>}
                     </button>
                     <button onClick={() => handleToggleStatus(r)} title={r.status === "paused" ? "Resume" : "Pause"}
                       className="w-7 h-7 rounded flex items-center justify-center opacity-0 group-hover:opacity-100" style={{ color: "var(--text-muted)" }}>
@@ -255,6 +266,7 @@ function ReminderForm({
   const [customMonths, setCustomMonths] = useState<string>(initial?.intervalMonths ? String(initial.intervalMonths) : "2");
   const [nextDueDate, setNextDueDate] = useState(initial?.nextDueDate ?? todayISO());
   const [leadDays, setLeadDays] = useState<string>(String(initial?.leadDays ?? 14));
+  const [paid, setPaid] = useState<boolean>(initial?.paid ?? false);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -272,6 +284,7 @@ function ReminderForm({
       customMonths: frequency === "custom" ? parseInt(customMonths) || 1 : null,
       nextDueDate,
       leadDays: parseInt(leadDays) || 0,
+      paid,
       notes: notes.trim(),
       createdBy,
     };
@@ -341,6 +354,18 @@ function ReminderForm({
             <input value={leadDays} onChange={(e) => setLeadDays(e.target.value)} type="number" min="0" className={field} style={fieldStyle} />
           </Lbl>
         </div>
+
+        <label className="flex items-start gap-2 cursor-pointer select-none rounded-lg px-3 py-2"
+          style={{ border: "1px solid var(--border)", background: "var(--bg-base)" }}>
+          <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)}
+            className="mt-0.5 w-4 h-4" style={{ accentColor: "var(--accent)" }} />
+          <span className="flex flex-col">
+            <span className="text-xs font-semibold" style={{ color: "var(--text)" }}>Already paid for this period</span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              Leave unchecked if payment is still due — you’ll be reminded to chase it. Tick it once the client has paid for this date.
+            </span>
+          </span>
+        </label>
 
         <Lbl t="Notes (optional)">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="e.g. invoice via Stripe; remind on WhatsApp"
