@@ -10,7 +10,7 @@ import {
   loadInvoices, loadInvoiceTemplates, loadInvoice, loadInvoiceTemplate,
   createInvoice,
 } from "@/lib/invoice-db";
-import type { Invoice, InvoiceTemplate, DiscountType } from "@/lib/invoice-types";
+import type { Invoice, InvoiceTemplate, DiscountType, DocType } from "@/lib/invoice-types";
 import { FileText, Receipt, Loader2, ArrowRight, Check } from "lucide-react";
 
 function addDays(iso: string, days: number) {
@@ -30,6 +30,8 @@ export default function NewInvoicePage() {
   const [pastInvoices, setPastInvoices] = useState<Invoice[]>([]);
   const [loadingPickers, setLoadingPickers] = useState(true);
 
+  const [docType, setDocType] = useState<DocType>(() => (sp.get("type") === "quote" ? "quote" : "invoice"));
+  const isQuote = docType === "quote";
   const [projectId, setProjectId] = useState<string | null>(null);
   const [sourceLabel, setSourceLabel] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -91,6 +93,7 @@ export default function NewInvoicePage() {
   function applyInvoiceAsSource(inv: Invoice) {
     setTemplateId(inv.templateId);
     setProjectId(inv.projectId);
+    setDocType(inv.docType); // duplicating a quote makes a quote, an invoice makes an invoice
     setSourceLabel(`Duplicated from ${inv.invoiceNumber}`);
     setBillToName(inv.billToName);
     setBillToAttention(inv.billToAttention);
@@ -115,13 +118,14 @@ export default function NewInvoicePage() {
 
   async function handleSave() {
     if (!billToName.trim()) { setError("Bill-to name is required"); return; }
-    if (!dueDate) { setError("Due date is required"); return; }
+    if (!dueDate) { setError(isQuote ? "Valid-until date is required" : "Due date is required"); return; }
     setSaving(true); setError(null);
     try {
       const id = await createInvoice({
         clientId: null,
         projectId,
         templateId,
+        docType,
         issueDate,
         dueDate,
         billToName: billToName.trim(),
@@ -143,18 +147,40 @@ export default function NewInvoicePage() {
     }
   }
 
-  const recentInvoices = useMemo(() => pastInvoices.slice(0, 8), [pastInvoices]);
+  // Recent sources match the active doc type (quotes duplicate from quotes, etc).
+  const recentInvoices = useMemo(
+    () => pastInvoices.filter((i) => i.docType === docType).slice(0, 8),
+    [pastInvoices, docType],
+  );
 
   return (
     <AdminOnly>
-      <Topbar title="New Invoice" back={{ label: "Invoices", href: "/invoices" }} />
+      <Topbar title={isQuote ? "New Quote" : "New Invoice"} back={{ label: "Invoices", href: "/invoices" }} />
       <div className="p-6 flex flex-col gap-6 max-w-5xl">
+
+        {/* Document type toggle — an invoice or a quotation */}
+        <div className="flex gap-1 p-1 rounded-xl self-start"
+          style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+          {([["invoice", "Invoice"], ["quote", "Quote"]] as const).map(([val, label]) => {
+            const active = docType === val;
+            return (
+              <button key={val} type="button" onClick={() => setDocType(val)}
+                className="px-4 py-1.5 rounded-lg text-sm font-semibold transition-opacity"
+                style={{
+                  background: active ? "linear-gradient(135deg, var(--accent), var(--accent-2))" : "transparent",
+                  color: active ? "#fff" : "var(--text-muted)",
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
 
         {!showForm && (
           <>
             <div>
               <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                Start from a template, duplicate a past invoice, or create a blank one.
+                Start from a template, duplicate a past {isQuote ? "quote" : "invoice"}, or create a blank one.
               </p>
             </div>
 
@@ -178,10 +204,10 @@ export default function NewInvoicePage() {
                   )}
                 </Section>
 
-                {/* Past invoices */}
-                <Section title="Recent Invoices" icon={<Receipt size={14} style={{ color: "#fbbf24" }} />}>
+                {/* Past documents of the same type */}
+                <Section title={isQuote ? "Recent Quotes" : "Recent Invoices"} icon={<Receipt size={14} style={{ color: "#fbbf24" }} />}>
                   {recentInvoices.length === 0 ? (
-                    <EmptyHint text="No past invoices yet." />
+                    <EmptyHint text={`No past ${isQuote ? "quotes" : "invoices"} yet.`} />
                   ) : (
                     recentInvoices.map((inv) => (
                       <SourceRow key={inv.id} onClick={() => applyInvoiceAsSource(inv)}
@@ -262,7 +288,7 @@ export default function NewInvoicePage() {
                   className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
                   style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
               </Field>
-              <Field label="Due date *">
+              <Field label={isQuote ? "Valid until *" : "Due date *"}>
                 <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
                   className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
                   style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
@@ -276,7 +302,7 @@ export default function NewInvoicePage() {
                 onDiscountChange={(t, v) => { setDiscountType(t); setDiscountValue(v); }} />
             </div>
 
-            <Field label="Notes (shown on invoice)">
+            <Field label={`Notes (shown on ${isQuote ? "quote" : "invoice"})`}>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
                 className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full resize-y"
                 style={{ color: "var(--text)", border: "1px solid var(--border)" }} />
@@ -295,7 +321,7 @@ export default function NewInvoicePage() {
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
                 style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))", opacity: saving ? 0.7 : 1 }}>
                 {saving && <Loader2 size={13} className="animate-spin" />}
-                Create invoice as draft <ArrowRight size={13} />
+                Create {isQuote ? "quote" : "invoice"} as draft <ArrowRight size={13} />
               </button>
               <button onClick={() => router.back()} type="button"
                 className="px-5 py-2.5 rounded-xl text-sm font-semibold"

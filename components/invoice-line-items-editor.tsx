@@ -33,6 +33,41 @@ export function LineItemsEditor({
     onChange([...items, { description: "", qty: 1, unitPrice: 0 }]);
   }
 
+  // Enter → new line auto-prefixed with a "  • " bullet (matches the template bullet style).
+  // Shift+Enter → plain new line (for headings like "Professional Services" / blank spacers).
+  // Enter on an empty bullet → drop the bullet and exit the list.
+  const BULLET = "  • ";
+  function handleDescKeyDown(i: number, e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+    const el = e.currentTarget;
+    const value = el.value;
+    const start = el.selectionStart ?? value.length;
+    const end = el.selectionEnd ?? start;
+
+    const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+    const currentLine = value.slice(lineStart, start);
+    const bulletMatch = currentLine.match(/^(\s*[•\-*]\s+)(.*)$/);
+
+    e.preventDefault();
+
+    // Empty bullet (no content) → remove the bullet prefix, ending the list.
+    if (bulletMatch && start === end && bulletMatch[2].trim() === "") {
+      const newValue = value.slice(0, lineStart) + value.slice(start);
+      update(i, { description: newValue });
+      const caret = lineStart;
+      requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = caret; } catch { /* node gone */ } });
+      return;
+    }
+
+    // Continue an existing bullet with the same prefix; otherwise start a new bullet.
+    const prefix = bulletMatch ? bulletMatch[1] : BULLET;
+    const insert = "\n" + prefix;
+    const newValue = value.slice(0, start) + insert + value.slice(end);
+    update(i, { description: newValue });
+    const caret = start + insert.length;
+    requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = caret; } catch { /* node gone */ } });
+  }
+
   const showDiscount = !!onDiscountChange;
   const dType: DiscountType = discountType ?? "none";
   const dValue = discountValue ?? 0;
@@ -62,7 +97,8 @@ export function LineItemsEditor({
           <textarea
             value={li.description}
             onChange={(e) => update(i, { description: e.target.value })}
-            placeholder="Line description — supports multiple lines and bullets (• or -)"
+            onKeyDown={(e) => handleDescKeyDown(i, e)}
+            placeholder="Line description — Enter adds a • bullet · Shift+Enter for a plain line"
             rows={Math.max(2, li.description.split("\n").length)}
             className="bg-transparent text-sm outline-none px-2 py-1.5 rounded resize-y font-mono"
             style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 60 }}

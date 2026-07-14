@@ -5,7 +5,9 @@ import {
   Text as SvgText,
 } from "@react-pdf/renderer";
 import type { Invoice } from "@/lib/invoice-types";
-import { computeDerivedStatus, computeInvoiceTotals } from "@/lib/invoice-types";
+import {
+  computeDerivedStatus, computeInvoiceTotals, computeAmountPaid, computeBalanceDue,
+} from "@/lib/invoice-types";
 import { BUSINESS_DETAILS } from "@/lib/invoice-business-details";
 
 // Brand palette
@@ -324,6 +326,8 @@ function StatusWatermark({ label, color }: { label: string; color: string }) {
 export function InvoiceDocument({ invoice, logoUrl }: Props) {
   const src = logoUrl ?? BUSINESS_DETAILS.logoPath;
   const hasLogo = typeof src === "string" && src.length > 0;
+  const isQuote = invoice.docType === "quote";
+  const docTitle = isQuote ? "QUOTATION" : "INVOICE";
   const { subtotal, discountAmount, total } = computeInvoiceTotals({
     lineItems: invoice.lineItems,
     discountType: invoice.discountType,
@@ -334,8 +338,19 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
     ? `DISCOUNT (${invoice.discountValue}%)`
     : "DISCOUNT";
 
+  const amountPaid = computeAmountPaid(invoice.payments ?? []);
+  const balanceDue = computeBalanceDue({ total, payments: invoice.payments });
+  const hasPayments = amountPaid > 0;
+
   const derived = computeDerivedStatus(invoice);
   const watermark = (() => {
+    if (isQuote) {
+      if (derived === "converted") return { label: "CONVERTED", color: C.textMuted };
+      if (derived === "accepted") return { label: "ACCEPTED", color: C.green };
+      if (derived === "declined") return { label: "DECLINED", color: C.red };
+      if (derived === "expired") return { label: "EXPIRED", color: C.amber };
+      return null;
+    }
     if (derived === "paid") return { label: "PAID", color: C.green };
     if (derived === "overdue") return { label: "OVERDUE", color: C.red };
     if (invoice.status === "void") return { label: "VOID", color: C.textMuted };
@@ -343,7 +358,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
   })();
 
   return (
-    <Document title={`Invoice ${invoice.invoiceNumber}`} author={BUSINESS_DETAILS.name}>
+    <Document title={`${isQuote ? "Quote" : "Invoice"} ${invoice.invoiceNumber}`} author={BUSINESS_DETAILS.name}>
       <Page size="A4" style={styles.page} wrap>
 
         {/* Background decorations — fixed = appear on every page */}
@@ -362,7 +377,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
               <>
                 <View style={styles.runningHeaderContent}>
                   <Text style={styles.runningHeaderBrand}>
-                    {BUSINESS_DETAILS.name} · INVOICE {invoice.invoiceNumber}
+                    {BUSINESS_DETAILS.name} · {docTitle} {invoice.invoiceNumber}
                   </Text>
                   <Text style={styles.runningHeaderNote}>continued</Text>
                 </View>
@@ -384,7 +399,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
             </View>
           )}
           <View style={styles.titleBlock}>
-            <Text style={styles.invoiceTitle}>INVOICE</Text>
+            <Text style={[styles.invoiceTitle, ...(isQuote ? [{ fontSize: 27, letterSpacing: 2.5 }] : [])]}>{docTitle}</Text>
             <Text style={styles.invoiceTitleUnder}>{invoice.invoiceNumber}</Text>
           </View>
         </View>
@@ -407,7 +422,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
           </View>
 
           <View style={styles.metaBlock}>
-            <Text style={styles.sectionLabel}>INVOICE DETAILS</Text>
+            <Text style={styles.sectionLabel}>{isQuote ? "QUOTATION DETAILS" : "INVOICE DETAILS"}</Text>
             <View style={styles.metaRowLine}>
               <Text style={styles.metaLabel}>NUMBER</Text>
               <Text style={styles.metaValueAccent}>{invoice.invoiceNumber}</Text>
@@ -417,7 +432,7 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
               <Text style={styles.metaValue}>{formatDateLong(invoice.issueDate)}</Text>
             </View>
             <View style={styles.metaRowLineLast}>
-              <Text style={styles.metaLabel}>DUE DATE</Text>
+              <Text style={styles.metaLabel}>{isQuote ? "VALID UNTIL" : "DUE DATE"}</Text>
               <Text style={styles.metaValue}>{formatDateLong(invoice.dueDate)}</Text>
             </View>
           </View>
@@ -484,13 +499,30 @@ export function InvoiceDocument({ invoice, logoUrl }: Props) {
               {hasDiscount ? (
                 <View style={styles.totalsRow}>
                   <Text style={styles.totalsLabel}>{discountLabel}</Text>
-                  <Text style={[styles.totalsValue, { color: C.red }]}>−{formatMoney(discountAmount)}</Text>
+                  <Text style={[styles.totalsValue, { color: C.red }]}>-{formatMoney(discountAmount)}</Text>
                 </View>
               ) : null}
-              <View style={styles.totalsRowGrand}>
-                <Text style={styles.totalsLabelGrand}>TOTAL DUE</Text>
-                <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
-              </View>
+              {hasPayments ? (
+                <>
+                  <View style={styles.totalsRow}>
+                    <Text style={styles.totalsLabel}>TOTAL</Text>
+                    <Text style={styles.totalsValue}>{formatMoney(total)}</Text>
+                  </View>
+                  <View style={styles.totalsRow}>
+                    <Text style={styles.totalsLabel}>AMOUNT PAID</Text>
+                    <Text style={[styles.totalsValue, { color: C.green }]}>-{formatMoney(amountPaid)}</Text>
+                  </View>
+                  <View style={styles.totalsRowGrand}>
+                    <Text style={styles.totalsLabelGrand}>BALANCE DUE</Text>
+                    <Text style={styles.totalsValueGrand}>{formatMoney(balanceDue)}</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.totalsRowGrand}>
+                  <Text style={styles.totalsLabelGrand}>{isQuote ? "TOTAL" : "TOTAL DUE"}</Text>
+                  <Text style={styles.totalsValueGrand}>{formatMoney(total)}</Text>
+                </View>
+              )}
             </View>
           </View>
 

@@ -1,13 +1,14 @@
 import { supabase } from "./supabase";
 import type {
-  Invoice, InvoiceLineItem, InvoiceTemplate, InvoiceTemplateLineItem,
-  InvoiceStatus, InvoiceLog, InvoiceLogEvent, DiscountType,
+  Invoice, InvoiceLineItem, InvoicePayment, InvoiceTemplate, InvoiceTemplateLineItem,
+  InvoiceStatus, InvoiceLog, InvoiceLogEvent, DiscountType, DocType, DocStatus, QuoteStatus,
 } from "./invoice-types";
 import { computeInvoiceTotals } from "./invoice-types";
 
 type Row = Record<string, unknown>;
 
 const num = (v: unknown): number => (v == null ? 0 : typeof v === "number" ? v : parseFloat(String(v)));
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function rowToLineItem(r: Row): InvoiceLineItem {
   return {
@@ -21,14 +22,29 @@ function rowToLineItem(r: Row): InvoiceLineItem {
   };
 }
 
-function rowToInvoice(r: Row, items: InvoiceLineItem[] = []): Invoice {
+function rowToPayment(r: Row): InvoicePayment {
+  return {
+    id: r.id as string,
+    invoiceId: r.invoice_id as string,
+    amount: num(r.amount),
+    paidAt: r.paid_at as string,
+    reference: (r.reference as string) ?? "",
+    recordedBy: (r.recorded_by as string | null) ?? null,
+    createdAt: r.created_at as string,
+  };
+}
+
+function rowToInvoice(r: Row, items: InvoiceLineItem[] = [], payments: InvoicePayment[] = []): Invoice {
   return {
     id: r.id as string,
     invoiceNumber: r.invoice_number as string,
     clientId: (r.client_id as string | null) ?? null,
     projectId: (r.project_id as string | null) ?? null,
     templateId: (r.template_id as string | null) ?? null,
-    status: r.status as InvoiceStatus,
+    docType: ((r.doc_type as DocType) ?? "invoice"),
+    convertedToInvoiceId: (r.converted_to_invoice_id as string | null) ?? null,
+    convertedFromQuoteId: (r.converted_from_quote_id as string | null) ?? null,
+    status: r.status as DocStatus,
     currency: (r.currency as string) ?? "SGD",
     issueDate: r.issue_date as string,
     dueDate: r.due_date as string,
@@ -54,6 +70,7 @@ function rowToInvoice(r: Row, items: InvoiceLineItem[] = []): Invoice {
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
     lineItems: items,
+    payments,
   };
 }
 
@@ -91,15 +108,28 @@ export async function nextInvoiceNumber(): Promise<string> {
   return data as string;
 }
 
+/** Quote numbering mirrors invoices but with a distinct WSGQ- prefix (see next_quote_number RPC). */
+export async function nextQuoteNumber(): Promise<string> {
+  const { data, error } = await supabase.rpc("next_quote_number");
+  if (error) throw error;
+  return data as string;
+}
+
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
 export async function loadInvoices(): Promise<Invoice[]> {
-  const [{ data: invRows, error: invErr }, { data: lineRows, error: lineErr }] = await Promise.all([
+  const [
+    { data: invRows, error: invErr },
+    { data: lineRows, error: lineErr },
+    { data: payRows, error: payErr },
+  ] = await Promise.all([
     supabase.from("pm_invoices").select("*").order("created_at", { ascending: false }),
     supabase.from("pm_invoice_line_items").select("*").order("sort_order"),
+    supabase.from("pm_invoice_payments").select("*").order("paid_at"),
   ]);
   if (invErr) throw invErr;
   if (lineErr) throw lineErr;
+  if (payErr) throw payErr;
   const itemsByInvoice = new Map<string, InvoiceLineItem[]>();
   for (const r of lineRows ?? []) {
     const li = rowToLineItem(r as Row);
@@ -107,25 +137,46 @@ export async function loadInvoices(): Promise<Invoice[]> {
     arr.push(li);
     itemsByInvoice.set(li.invoiceId, arr);
   }
-  return (invRows ?? []).map((r) => rowToInvoice(r as Row, itemsByInvoice.get((r as Row).id as string) ?? []));
+  const paysByInvoice = new Map<string, InvoicePayment[]>();
+  for (const r of payRows ?? []) {
+    const p = rowToPayment(r as Row);
+    const arr = paysByInvoice.get(p.invoiceId) ?? [];
+    arr.push(p);
+    paysByInvoice.set(p.invoiceId, arr);
+  }
+  return (invRows ?? []).map((r) => {
+    const id = (r as Row).id as string;
+    return rowToInvoice(r as Row, itemsByInvoice.get(id) ?? [], paysByInvoice.get(id) ?? []);
+  });
 }
 
 export async function loadInvoice(id: string): Promise<Invoice | null> {
-  const [{ data: invRow, error: invErr }, { data: lineRows, error: lineErr }] = await Promise.all([
+  const [
+    { data: invRow, error: invErr },
+    { data: lineRows, error: lineErr },
+    { data: payRows, error: payErr },
+  ] = await Promise.all([
     supabase.from("pm_invoices").select("*").eq("id", id).maybeSingle(),
     supabase.from("pm_invoice_line_items").select("*").eq("invoice_id", id).order("sort_order"),
+    supabase.from("pm_invoice_payments").select("*").eq("invoice_id", id).order("paid_at"),
   ]);
   if (invErr) throw invErr;
   if (lineErr) throw lineErr;
+  if (payErr) throw payErr;
   if (!invRow) return null;
   const items = (lineRows ?? []).map((r) => rowToLineItem(r as Row));
-  return rowToInvoice(invRow as Row, items);
+  const payments = (payRows ?? []).map((r) => rowToPayment(r as Row));
+  return rowToInvoice(invRow as Row, items, payments);
 }
 
 export type InvoiceDraft = {
   clientId: string | null;
   projectId: string | null;
   templateId: string | null;
+  /** 'invoice' (default) or 'quote'. Quotes get a WSGQ- number. */
+  docType?: DocType;
+  /** When creating an invoice from a quote, the source quote id (back-link). */
+  convertedFromQuoteId?: string | null;
   issueDate: string;
   dueDate: string;
   billToName: string;
@@ -143,7 +194,8 @@ export type InvoiceDraft = {
 };
 
 export async function createInvoice(draft: InvoiceDraft): Promise<string> {
-  const invoiceNumber = await nextInvoiceNumber();
+  const docType = draft.docType ?? "invoice";
+  const invoiceNumber = docType === "quote" ? await nextQuoteNumber() : await nextInvoiceNumber();
   const discountType = draft.discountType ?? "none";
   const discountValue = draft.discountValue ?? 0;
   const { subtotal, total } = computeInvoiceTotals({
@@ -151,6 +203,8 @@ export async function createInvoice(draft: InvoiceDraft): Promise<string> {
   });
   const { data, error } = await supabase.from("pm_invoices").insert({
     invoice_number: invoiceNumber,
+    doc_type: docType,
+    converted_from_quote_id: draft.convertedFromQuoteId ?? null,
     client_id: draft.clientId,
     project_id: draft.projectId,
     template_id: draft.templateId,
@@ -185,7 +239,11 @@ export async function createInvoice(draft: InvoiceDraft): Promise<string> {
     );
     if (liErr) throw liErr;
   }
-  await logInvoiceEvent(invoiceId, "created", `Invoice ${invoiceNumber} created`, draft.createdBy);
+  await logInvoiceEvent(
+    invoiceId, "created",
+    `${docType === "quote" ? "Quote" : "Invoice"} ${invoiceNumber} created`,
+    draft.createdBy,
+  );
   return invoiceId;
 }
 
@@ -257,29 +315,110 @@ export async function deleteInvoice(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function markInvoicePaid(id: string, actor: string | null, note: string): Promise<void> {
-  const { error } = await supabase.from("pm_invoices").update({
-    status: "paid",
-    paid_at: new Date().toISOString(),
-    paid_by: actor,
-    paid_note: note || null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", id);
+// ─── Payments (partial-payment ledger) ──────────────────────────────────────────
+
+/**
+ * Reconcile the invoice's stored status + paid_* fields against its payment rows.
+ * - fully paid (balance ≤ 0)        → status='paid', paid_* taken from the latest payment
+ * - not fully paid (balance > 0)    → status reverts to 'sent' (if ever sent) else 'draft',
+ *                                      paid_* cleared. The derived "partial" status is computed
+ *                                      from the payments at read time (computeDerivedStatus).
+ * Called after every payment insert/delete so the stored status never drifts.
+ */
+async function syncInvoicePaidStatus(id: string): Promise<void> {
+  const { data: inv, error } = await supabase.from("pm_invoices")
+    .select("total, sent_at").eq("id", id).single();
   if (error) throw error;
-  await logInvoiceEvent(id, "marked_paid", note || "Marked paid", actor);
+  const { data: payRows, error: pErr } = await supabase.from("pm_invoice_payments")
+    .select("amount, paid_at, reference, recorded_by").eq("invoice_id", id);
+  if (pErr) throw pErr;
+
+  const total = num((inv as Row).total);
+  const pays = (payRows ?? []) as Row[];
+  const paid = round2(pays.reduce((s, p) => s + num(p.amount), 0));
+  const fullyPaid = paid > 0 && round2(total - paid) <= 0.004;
+
+  if (fullyPaid) {
+    const latest = [...pays].sort((a, b) =>
+      String(a.paid_at).localeCompare(String(b.paid_at)))[pays.length - 1];
+    const { error: upErr } = await supabase.from("pm_invoices").update({
+      status: "paid",
+      paid_at: (latest?.paid_at as string) ?? new Date().toISOString(),
+      paid_by: (latest?.recorded_by as string | null) ?? null,
+      paid_note: (latest?.reference as string | null) ?? null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
+    if (upErr) throw upErr;
+  } else {
+    const back: InvoiceStatus = (inv as { sent_at: string | null }).sent_at ? "sent" : "draft";
+    const { error: upErr } = await supabase.from("pm_invoices").update({
+      status: back, paid_at: null, paid_by: null, paid_note: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
+    if (upErr) throw upErr;
+  }
 }
 
-export async function markInvoiceUnpaid(id: string, actor: string | null): Promise<void> {
-  // Returns to 'sent' if it was previously sent, otherwise 'draft'
-  const { data, error } = await supabase.from("pm_invoices").select("sent_at").eq("id", id).single();
+/** Record a (possibly partial) payment against an invoice, then reconcile status. */
+export async function addInvoicePayment(
+  invoiceId: string,
+  payment: { amount: number; paidAt: string; reference?: string; recordedBy: string | null },
+): Promise<void> {
+  const amount = round2(payment.amount);
+  if (!(amount > 0)) throw new Error("Payment amount must be greater than 0.");
+  const reference = payment.reference?.trim() || null;
+  const { error } = await supabase.from("pm_invoice_payments").insert({
+    invoice_id: invoiceId,
+    amount,
+    paid_at: payment.paidAt,
+    reference,
+    recorded_by: payment.recordedBy,
+  });
   if (error) throw error;
-  const back: InvoiceStatus = (data as { sent_at: string | null }).sent_at ? "sent" : "draft";
-  const { error: upErr } = await supabase.from("pm_invoices").update({
-    status: back, paid_at: null, paid_by: null, paid_note: null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", id);
-  if (upErr) throw upErr;
-  await logInvoiceEvent(id, "updated", "Payment reverted", actor);
+  await syncInvoicePaidStatus(invoiceId);
+  await logInvoiceEvent(
+    invoiceId, "payment_recorded",
+    `Payment of S$${amount.toFixed(2)} recorded${reference ? ` · ${reference}` : ""}`,
+    payment.recordedBy,
+  );
+}
+
+/** Remove a recorded payment, then reconcile status (may revert paid → sent). */
+export async function deleteInvoicePayment(
+  paymentId: string, invoiceId: string, actor: string | null,
+): Promise<void> {
+  const { error } = await supabase.from("pm_invoice_payments").delete().eq("id", paymentId);
+  if (error) throw error;
+  await syncInvoicePaidStatus(invoiceId);
+  await logInvoiceEvent(invoiceId, "payment_removed", "Payment removed", actor);
+}
+
+/** Mark the full remaining balance paid in one step (records a payment for the balance). */
+export async function markInvoicePaid(id: string, actor: string | null, note: string): Promise<void> {
+  const inv = await loadInvoice(id);
+  if (!inv) throw new Error("Invoice not found");
+  const paid = round2(inv.payments.reduce((s, p) => s + p.amount, 0));
+  const balance = round2(inv.total - paid);
+  if (balance > 0) {
+    const { error } = await supabase.from("pm_invoice_payments").insert({
+      invoice_id: id,
+      amount: balance,
+      paid_at: new Date().toISOString(),
+      reference: note?.trim() || null,
+      recorded_by: actor,
+    });
+    if (error) throw error;
+  }
+  await syncInvoicePaidStatus(id);
+  await logInvoiceEvent(id, "marked_paid", note?.trim() || "Marked paid (full balance)", actor);
+}
+
+/** Clear ALL recorded payments and revert the invoice to unpaid (sent/draft). */
+export async function markInvoiceUnpaid(id: string, actor: string | null): Promise<void> {
+  const { error } = await supabase.from("pm_invoice_payments").delete().eq("invoice_id", id);
+  if (error) throw error;
+  await syncInvoicePaidStatus(id);
+  await logInvoiceEvent(id, "updated", "Payment reverted — all payments cleared", actor);
 }
 
 export async function duplicateInvoice(sourceId: string, opts: {
@@ -311,6 +450,82 @@ export async function duplicateInvoice(sourceId: string, opts: {
     createdBy: opts.actor,
   });
   await logInvoiceEvent(newId, "duplicated", `Duplicated from ${src.invoiceNumber}`, opts.actor);
+  return newId;
+}
+
+// ─── Quotes ───────────────────────────────────────────────────────────────────
+
+/**
+ * Update a quote's lifecycle status (sent / accepted / declined / expired / draft).
+ * Invoices use markInvoicePaid / payments instead — this is quote-only.
+ */
+export async function setQuoteStatus(
+  id: string, status: QuoteStatus, actor: string | null,
+): Promise<void> {
+  const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+  if (status === "sent") updates.sent_at = new Date().toISOString();
+  const { error } = await supabase.from("pm_invoices").update(updates).eq("id", id);
+  if (error) throw error;
+  const evt: InvoiceLogEvent =
+    status === "accepted" ? "accepted"
+    : status === "declined" ? "declined"
+    : status === "sent" ? "sent"
+    : "updated";
+  await logInvoiceEvent(id, evt, `Quote marked ${status}`, actor);
+}
+
+/**
+ * Convert a quote into a brand-new draft invoice (the quote is preserved).
+ * The quote is marked accepted + linked to the new invoice; the new invoice
+ * carries a back-link to the quote. Idempotent: re-converting returns the
+ * already-linked invoice id.
+ */
+export async function convertQuoteToInvoice(quoteId: string, opts: {
+  issueDate: string;
+  dueDate: string;
+  actor: string | null;
+}): Promise<string> {
+  const q = await loadInvoice(quoteId);
+  if (!q) throw new Error("Quote not found");
+  if (q.docType !== "quote") throw new Error("This document is not a quote.");
+  if (q.convertedToInvoiceId) return q.convertedToInvoiceId; // already converted
+
+  const newId = await createInvoice({
+    clientId: q.clientId,
+    projectId: q.projectId,
+    templateId: q.templateId,
+    docType: "invoice",
+    convertedFromQuoteId: q.id,
+    issueDate: opts.issueDate,
+    dueDate: opts.dueDate,
+    billToName: q.billToName,
+    billToAttention: q.billToAttention,
+    billToEmail: q.billToEmail,
+    billToAddress: q.billToAddress,
+    notes: q.notes,
+    paymentInstructions: q.paymentInstructions,
+    currency: q.currency,
+    reminderCadenceDays: q.reminderCadenceDays,
+    discountType: q.discountType,
+    discountValue: q.discountValue,
+    lineItems: q.lineItems.map((li, i) => ({
+      description: li.description, qty: li.qty, unitPrice: li.unitPrice, sortOrder: i,
+    })),
+    createdBy: opts.actor,
+  });
+
+  // Mark the quote accepted + converted, linking it to the new invoice.
+  const { error } = await supabase.from("pm_invoices").update({
+    status: "accepted",
+    converted_to_invoice_id: newId,
+    updated_at: new Date().toISOString(),
+  }).eq("id", quoteId);
+  if (error) throw error;
+
+  const { data: newRow } = await supabase.from("pm_invoices")
+    .select("invoice_number").eq("id", newId).maybeSingle();
+  const newNumber = (newRow as { invoice_number?: string } | null)?.invoice_number ?? "";
+  await logInvoiceEvent(quoteId, "converted", `Converted to invoice ${newNumber}`, opts.actor);
   return newId;
 }
 

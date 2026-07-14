@@ -1,5 +1,14 @@
 export type InvoiceStatus = "draft" | "sent" | "paid" | "void";
 
+/** Quotes reuse the pm_invoices table (doc_type='quote') but have their own lifecycle. */
+export type QuoteStatus = "draft" | "sent" | "accepted" | "declined" | "expired";
+
+/** The stored `status` column value — union of both document lifecycles. */
+export type DocStatus = InvoiceStatus | QuoteStatus;
+
+/** A pm_invoices row is either a real invoice or a quotation. */
+export type DocType = "invoice" | "quote";
+
 export type DiscountType = "none" | "percent" | "fixed";
 
 export type InvoiceLineItem = {
@@ -12,13 +21,29 @@ export type InvoiceLineItem = {
   sortOrder: number;
 };
 
+/** A single recorded payment against an invoice (supports partial payments). */
+export type InvoicePayment = {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  paidAt: string;
+  reference: string;
+  recordedBy: string | null;
+  createdAt: string;
+};
+
 export type Invoice = {
   id: string;
   invoiceNumber: string;
   clientId: string | null;
   projectId: string | null;
   templateId: string | null;
-  status: InvoiceStatus;
+  docType: DocType;
+  /** For a quote: the invoice it was converted into (null until converted). */
+  convertedToInvoiceId: string | null;
+  /** For an invoice created from a quote: the source quote's id. */
+  convertedFromQuoteId: string | null;
+  status: DocStatus;
   currency: string;
   issueDate: string;
   dueDate: string;
@@ -44,6 +69,7 @@ export type Invoice = {
   createdAt: string;
   updatedAt: string;
   lineItems: InvoiceLineItem[];
+  payments: InvoicePayment[];
 };
 
 export type InvoiceTemplateLineItem = {
@@ -70,7 +96,9 @@ export type InvoiceTemplate = {
 
 export type InvoiceLogEvent =
   | "created" | "updated" | "sent" | "reminder_sent"
-  | "marked_paid" | "marked_void" | "duplicated";
+  | "marked_paid" | "marked_void" | "duplicated"
+  | "payment_recorded" | "payment_removed"
+  | "converted" | "accepted" | "declined";
 
 export type InvoiceLog = {
   id: string;
@@ -108,8 +136,53 @@ export function computeInvoiceTotals(args: {
   };
 }
 
-export function computeDerivedStatus(inv: Pick<Invoice, "status" | "dueDate">): InvoiceStatus | "overdue" {
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Total received across all recorded payments. */
+export function computeAmountPaid(payments: Array<{ amount: number }>): number {
+  return round2(payments.reduce((s, p) => s + (p.amount || 0), 0));
+}
+
+/** Outstanding balance = invoice total − amount paid (never below 0). */
+export function computeBalanceDue(
+  inv: { total: number; payments?: Array<{ amount: number }> },
+): number {
+  const balance = round2(inv.total - computeAmountPaid(inv.payments ?? []));
+  return balance < 0 ? 0 : balance;
+}
+
+export type DerivedStatus = DocStatus | "overdue" | "partial" | "converted";
+
+/**
+ * Display status, never stored as-is for the derived values.
+ * Quotes (doc_type='quote') have their own lifecycle — no payments / overdue:
+ * - converted (has a linked invoice) → "converted" (takes priority)
+ * - sent past its "valid until" date → "expired"
+ * - otherwise → draft / sent / accepted / declined / expired as stored
+ * Invoices:
+ * - draft / paid / void → returned as-is
+ * - sent with a partial payment recorded → "partial"
+ * - sent past its due date → "overdue"
+ * - otherwise → "sent"
+ * "partial" takes priority over "overdue" so a part-paid invoice reads as part-paid.
+ */
+export function computeDerivedStatus(
+  inv: Pick<Invoice, "status" | "dueDate" | "total" | "docType" | "convertedToInvoiceId">
+    & { payments?: Array<{ amount: number }> },
+): DerivedStatus {
+  if (inv.docType === "quote") {
+    if (inv.convertedToInvoiceId) return "converted";
+    if (inv.status === "sent") {
+      const due = new Date(inv.dueDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (due < today) return "expired"; // past its "valid until" date
+    }
+    return inv.status;
+  }
   if (inv.status !== "sent") return inv.status;
+  const paid = computeAmountPaid(inv.payments ?? []);
+  if (paid > 0 && round2(inv.total - paid) > 0) return "partial";
   const due = new Date(inv.dueDate);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
