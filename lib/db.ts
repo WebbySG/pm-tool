@@ -277,6 +277,7 @@ export type TaskComment = {
   attachmentType: string | null;
   mentionedUserIds: string[];
   createdAt: string;
+  editedAt: string | null;
 };
 
 function rowToTaskComment(row: Row): TaskComment {
@@ -291,6 +292,7 @@ function rowToTaskComment(row: Row): TaskComment {
     attachmentType: (row.attachment_type as string | null) ?? null,
     mentionedUserIds: (row.mentioned_user_ids as string[] | null) ?? [],
     createdAt: row.created_at as string,
+    editedAt: (row.edited_at as string | null) ?? null,
   };
 }
 
@@ -332,9 +334,114 @@ export async function dbAddTaskComment(input: {
   return rowToTaskComment(data as Row);
 }
 
+export async function dbUpdateTaskComment(commentId: string, input: {
+  body: string;
+  mentionedUserIds?: string[];
+}): Promise<TaskComment | null> {
+  const patch: Record<string, unknown> = {
+    body: input.body,
+    edited_at: new Date().toISOString(),
+  };
+  if (input.mentionedUserIds !== undefined) patch.mentioned_user_ids = input.mentionedUserIds;
+  const { data, error } = await supabase
+    .from("pm_task_comments")
+    .update(patch)
+    .eq("id", commentId)
+    .select("*")
+    .single();
+  if (error) { console.error("dbUpdateTaskComment", error); return null; }
+  return rowToTaskComment(data as Row);
+}
+
 export async function dbDeleteTaskComment(commentId: string) {
   const { error } = await supabase.from("pm_task_comments").delete().eq("id", commentId);
   if (error) console.error("dbDeleteTaskComment", error);
+}
+
+// ─── Task Activity (audit log) ────────────────────────────────────────────────
+// Written ONLY by the pm_tasks trigger (pm_log_task_activity). Admin-only read
+// (RLS = pm_is_admin()). Staff never see this table.
+
+export type TaskActivity = {
+  id: string;
+  taskId: string | null;
+  projectId: string | null;
+  taskTitle: string | null;
+  actorId: string | null;
+  action: string;          // 'created' | 'updated' | 'moved' | 'deleted'
+  field: string | null;    // for 'updated'/'moved': which field changed
+  oldValue: string | null;
+  newValue: string | null;
+  createdAt: string;
+};
+
+function rowToTaskActivity(row: Row): TaskActivity {
+  return {
+    id: row.id as string,
+    taskId: (row.task_id as string | null) ?? null,
+    projectId: (row.project_id as string | null) ?? null,
+    taskTitle: (row.task_title as string | null) ?? null,
+    actorId: (row.actor_id as string | null) ?? null,
+    action: (row.action as string) ?? "updated",
+    field: (row.field as string | null) ?? null,
+    oldValue: (row.old_value as string | null) ?? null,
+    newValue: (row.new_value as string | null) ?? null,
+    createdAt: row.created_at as string,
+  };
+}
+
+// Per-task history (newest first). Returns [] for non-admins (RLS blocks the read).
+export async function dbListTaskActivity(taskId: string): Promise<TaskActivity[]> {
+  const { data, error } = await supabase
+    .from("pm_task_activity")
+    .select("*")
+    .eq("task_id", taskId)
+    .order("created_at", { ascending: false });
+  if (error) { console.error("dbListTaskActivity", error); return []; }
+  return (data ?? []).map((r) => rowToTaskActivity(r as Row));
+}
+
+// Global feed for the admin Activity page (newest first, capped).
+export async function dbListRecentActivity(limit = 200): Promise<TaskActivity[]> {
+  const { data, error } = await supabase
+    .from("pm_task_activity")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) { console.error("dbListRecentActivity", error); return []; }
+  return (data ?? []).map((r) => rowToTaskActivity(r as Row));
+}
+
+// ─── Task Comment Versions (edit history) ─────────────────────────────────────
+// Written ONLY by the pm_task_comments trigger (pm_snapshot_comment_version).
+// RLS = pm_is_admin() OR edited_by = auth.uid() (admin + the author).
+
+export type CommentVersion = {
+  id: string;
+  commentId: string;
+  body: string;
+  editedBy: string | null;
+  supersededAt: string;
+};
+
+// Previous bodies of a comment, oldest first (so v1 = original).
+export async function dbListCommentVersions(commentId: string): Promise<CommentVersion[]> {
+  const { data, error } = await supabase
+    .from("pm_task_comment_versions")
+    .select("*")
+    .eq("comment_id", commentId)
+    .order("superseded_at", { ascending: true });
+  if (error) { console.error("dbListCommentVersions", error); return []; }
+  return (data ?? []).map((r) => {
+    const row = r as Row;
+    return {
+      id: row.id as string,
+      commentId: row.comment_id as string,
+      body: (row.body as string) ?? "",
+      editedBy: (row.edited_by as string | null) ?? null,
+      supersededAt: row.superseded_at as string,
+    };
+  });
 }
 
 // ─── Channels ────────────────────────────────────────────────────────────────

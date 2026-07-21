@@ -176,6 +176,19 @@ function findInTemplateTree(tasks: TaskTemplate[], taskId: string): TaskTemplate
 let mediaCounter = 100;
 let pinCounter = 100;
 
+// When a pending-review task is resolved (approved, sent back for revision, or
+// its status otherwise moved off "pending_review"), mark any unread
+// approval-request notifications for that task as read — so they stop showing
+// as unread once the admin acts on the TASK itself (from the task drawer), not
+// only via the notifications-page Approve button. `read` is a shared column, so
+// this also clears it for the staff member who requested the review.
+async function clearTaskApprovalRequests(get: () => Store, taskId: string) {
+  const pending = get().notifications.filter(
+    (n) => n.type === "approval_request" && n.taskId === taskId && !n.read
+  );
+  for (const n of pending) await get().markNotificationRead(n.id);
+}
+
 export const useStore = create<Store>()(
   persist(
   (set, get) => ({
@@ -413,6 +426,7 @@ export const useStore = create<Store>()(
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
+    await clearTaskApprovalRequests(get, taskId);
     await get().addNotification({
       title: "Task Approved",
       body: `"${taskTitle}" has been approved and marked as complete.`,
@@ -429,6 +443,7 @@ export const useStore = create<Store>()(
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "revision_required" }) })) }));
     await db.dbUpdateTask(taskId, { status: "revision_required" });
+    await clearTaskApprovalRequests(get, taskId);
     await get().addNotification({
       title: "Revision Required",
       body: `"${taskTitle}" requires revisions before it can be approved.`,
@@ -443,6 +458,7 @@ export const useStore = create<Store>()(
   updateTaskStatus: async (projectId, taskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
     await db.dbUpdateTask(taskId, { status });
+    if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
   },
 
   updateTaskPriority: async (projectId, taskId, priority) => {

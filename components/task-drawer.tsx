@@ -3,14 +3,18 @@ import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
-  Bold, Italic, List, Heading, MessageSquare, Send, Palette, Eraser,
+  Bold, Italic, List, Heading, MessageSquare, Send, Palette, Eraser, Pencil,
+  History, Clock,
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase, uploadAttachment } from "@/lib/supabase";
 import { errorMessage } from "@/lib/utils";
-import { dbListTaskComments, dbAddTaskComment, dbDeleteTaskComment, type TaskComment } from "@/lib/db";
+import {
+  dbListTaskComments, dbAddTaskComment, dbUpdateTaskComment, dbDeleteTaskComment, type TaskComment,
+  dbListTaskActivity, type TaskActivity, dbListCommentVersions, type CommentVersion,
+} from "@/lib/db";
 
 interface LiveStaff {
   id: string;
@@ -580,6 +584,19 @@ function TaskPanel({
   const [postingComment, setPostingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentBody, setEditingCommentBody] = useState("");
+  const [savingCommentEdit, setSavingCommentEdit] = useState(false);
+  const [editCommentError, setEditCommentError] = useState<string | null>(null);
+  // Comment edit history (admin + the comment's own author). Loaded on demand.
+  const [openVersionsId, setOpenVersionsId] = useState<string | null>(null);
+  const [versionsByComment, setVersionsByComment] = useState<Record<string, CommentVersion[]>>({});
+  const [loadingVersionsId, setLoadingVersionsId] = useState<string | null>(null);
+  // Task activity / audit log (admin only). Collapsed + lazy-loaded.
+  const [showActivity, setShowActivity] = useState(false);
+  const [activity, setActivity] = useState<TaskActivity[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityLoaded, setActivityLoaded] = useState(false);
   const commentFileRef = useRef<HTMLInputElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -764,6 +781,101 @@ function TaskPanel({
     await dbDeleteTaskComment(id);
     setComments((prev) => prev.filter((c) => c.id !== id));
     setConfirmDeleteCommentId(null);
+  }
+
+  function startEditComment(c: TaskComment) {
+    setEditingCommentId(c.id);
+    setEditingCommentBody(c.body);
+    setEditCommentError(null);
+  }
+
+  function cancelEditComment() {
+    setEditingCommentId(null);
+    setEditingCommentBody("");
+    setEditCommentError(null);
+  }
+
+  async function handleSaveCommentEdit(id: string) {
+    const body = editingCommentBody.trim();
+    const target = comments.find((c) => c.id === id);
+    // Allow an empty body only when the comment still carries an attachment.
+    if (!body && !target?.attachmentUrl) { setEditCommentError("Comment can't be empty."); return; }
+    if (savingCommentEdit) return;
+    setSavingCommentEdit(true);
+    setEditCommentError(null);
+    try {
+      const updated = await dbUpdateTaskComment(id, { body });
+      if (!updated) { setEditCommentError("Failed to save changes."); return; }
+      setComments((prev) => prev.map((c) => (c.id === id ? updated : c)));
+      cancelEditComment();
+    } catch (err: unknown) {
+      setEditCommentError(errorMessage(err) || "Failed to save changes.");
+    } finally {
+      setSavingCommentEdit(false);
+    }
+    // Refresh any open version history for this comment (the edit just archived one).
+    if (openVersionsId === id) { setVersionsByComment((prev) => ({ ...prev, [id]: [] })); void loadCommentVersions(id, true); }
+  }
+
+  async function loadCommentVersions(commentId: string, force = false) {
+    if (!force && versionsByComment[commentId]) return;
+    setLoadingVersionsId(commentId);
+    const rows = await dbListCommentVersions(commentId);
+    setVersionsByComment((prev) => ({ ...prev, [commentId]: rows }));
+    setLoadingVersionsId((cur) => (cur === commentId ? null : cur));
+  }
+
+  function toggleCommentVersions(commentId: string) {
+    if (openVersionsId === commentId) { setOpenVersionsId(null); return; }
+    setOpenVersionsId(commentId);
+    void loadCommentVersions(commentId);
+  }
+
+  async function toggleActivity() {
+    const next = !showActivity;
+    setShowActivity(next);
+    if (next && !activityLoaded) {
+      setActivityLoading(true);
+      const rows = await dbListTaskActivity(task.id);
+      setActivity(rows);
+      setActivityLoaded(true);
+      setActivityLoading(false);
+    }
+  }
+
+  // ── Activity formatting helpers (resolve codes → human labels) ──────────────
+  function actorName(id: string | null): string {
+    if (!id) return "System";
+    const s = liveStaff.find((x) => staffAuthId(x) === id);
+    return s ? staffName(s) : "Unknown user";
+  }
+  function activityFieldLabel(field: string | null): string {
+    const map: Record<string, string> = {
+      title: "title", status: "status", priority: "priority", assignee: "assignee",
+      due_date: "due date", recurring: "recurring", tags: "tags", type: "type",
+      project: "project", description: "description",
+    };
+    return field ? (map[field] ?? field) : "";
+  }
+  function activityValueLabel(field: string | null, v: string | null): string {
+    if (v === null || v === "") return "—";
+    if (field === "status") return statusOptions.find((o) => o.key === v)?.label ?? v;
+    if (field === "priority") { const n = Number(v); return PRIORITY_LABELS[n] ?? v; }
+    if (field === "assignee") return actorName(v);
+    if (field === "project") return projects.find((p) => p.id === v)?.name ?? "another project";
+    if (field === "due_date") { const d = new Date(v); return isNaN(d.getTime()) ? v : d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); }
+    return v;
+  }
+  function activitySentence(a: TaskActivity): string {
+    if (a.action === "created") return "created this task";
+    if (a.action === "deleted") return "deleted this task";
+    if (a.action === "moved") return `moved this task to ${activityValueLabel("project", a.newValue)}`;
+    if (a.field === "description") return "edited the description";
+    if (a.field === "title") return `renamed to “${a.newValue ?? ""}”`;
+    const fl = activityFieldLabel(a.field);
+    const nv = activityValueLabel(a.field, a.newValue);
+    if (!a.oldValue) return `set ${fl} to ${nv}`;
+    return `changed ${fl} from ${activityValueLabel(a.field, a.oldValue)} to ${nv}`;
   }
 
   function handleSaveTitle() {
@@ -1073,7 +1185,7 @@ function TaskPanel({
         {/* Move to another project (admin, top-level task only) */}
         {isAdmin && !task.parentId && (
           <div className="relative">
-            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Project</p>
+            <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Move to another project</p>
             <button
               onClick={() => { setShowMoveMenu(!showMoveMenu); setShowStatusMenu(false); setShowPriorityMenu(false); setShowAssigneeMenu(false); }}
               disabled={moving}
@@ -1357,6 +1469,8 @@ function TaskPanel({
                 const initials = author ? staffInitials(author).charAt(0) : "?";
                 const name = author ? staffName(author) : "Unknown";
                 const canDelete = c.authorId === user?.id || isAdmin;
+                const canEditOwn = c.authorId === user?.id; // only the author may edit their own words
+                const isEditing = editingCommentId === c.id;
                 const isImage = c.attachmentType === "image";
                 return (
                   <div key={c.id} className="flex gap-2.5 px-3 py-2.5 rounded-lg group"
@@ -1368,16 +1482,112 @@ function TaskPanel({
                         <p className="text-xs font-semibold" style={{ color: "#cce4ff" }}>{name}</p>
                         <p className="text-xs" style={{ color: "#8b90a750" }}>
                           {new Date(c.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                      </div>
-                      {c.body && (
-                        <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
-                          {c.body.split(/(@[A-Za-z][A-Za-z0-9_-]*)/g).map((part, i) =>
-                            part.startsWith("@")
-                              ? <span key={i} style={{ color: "#38b6e8", fontWeight: 600 }}>{part}</span>
-                              : <span key={i}>{part}</span>
+                          {c.editedAt && (
+                            (isAdmin || canEditOwn) ? (
+                              <button
+                                onClick={() => toggleCommentVersions(c.id)}
+                                className="inline-flex items-center gap-1 hover:underline align-baseline"
+                                style={{ color: "#8b90a7" }}
+                                title="View edit history"
+                              >
+                                <span> · </span><History size={9} />
+                                edited{openVersionsId === c.id ? " ▴" : ""}
+                              </button>
+                            ) : (
+                              <span title={`Edited ${new Date(c.editedAt).toLocaleString()}`}> · edited</span>
+                            )
                           )}
                         </p>
+                      </div>
+
+                      {/* Comment edit history (admin + author). Prior bodies, oldest first. */}
+                      {openVersionsId === c.id && (
+                        <div className="mb-2 rounded-lg overflow-hidden" style={{ border: "1px solid #1c3248", background: "#0a1626" }}>
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5" style={{ borderBottom: "1px solid #1c3248" }}>
+                            <History size={10} style={{ color: "#4a7090" }} />
+                            <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>EDIT HISTORY</p>
+                          </div>
+                          {loadingVersionsId === c.id && !versionsByComment[c.id] ? (
+                            <p className="text-xs px-2.5 py-2" style={{ color: "#4a7090" }}>Loading…</p>
+                          ) : (versionsByComment[c.id]?.length ?? 0) === 0 ? (
+                            <p className="text-xs px-2.5 py-2" style={{ color: "#4a7090" }}>No earlier versions found.</p>
+                          ) : (
+                            <div className="flex flex-col">
+                              {versionsByComment[c.id]!.map((v, i) => (
+                                <div key={v.id} className="px-2.5 py-2" style={{ borderBottom: "1px solid #12283e" }}>
+                                  <p className="text-[10px] mb-0.5 flex items-center gap-1" style={{ color: "#4a7090" }}>
+                                    <span className="px-1.5 rounded" style={{ background: "#12283e", color: "#8b90a7" }}>
+                                      {i === 0 ? "Original" : `Revision ${i}`}
+                                    </span>
+                                    <Clock size={9} />
+                                    replaced {new Date(v.supersededAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  </p>
+                                  <p className="text-xs whitespace-pre-wrap break-words" style={{ color: "#9fb6cf" }}>
+                                    {v.body || <span style={{ color: "#4a7090", fontStyle: "italic" }}>(empty)</span>}
+                                  </p>
+                                </div>
+                              ))}
+                              <div className="px-2.5 py-2">
+                                <p className="text-[10px] mb-0.5 flex items-center gap-1" style={{ color: "#4a7090" }}>
+                                  <span className="px-1.5 rounded" style={{ background: "#16351f", color: "#4ade80" }}>Current</span>
+                                  {c.editedAt && (<><Clock size={9} />edited {new Date(c.editedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</>)}
+                                </p>
+                                <p className="text-xs whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
+                                  {c.body || <span style={{ color: "#4a7090", fontStyle: "italic" }}>(empty)</span>}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {isEditing ? (
+                        <div className="flex flex-col gap-2">
+                          <textarea
+                            autoFocus
+                            value={editingCommentBody}
+                            onChange={(e) => setEditingCommentBody(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") { e.preventDefault(); cancelEditComment(); }
+                              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSaveCommentEdit(c.id); }
+                            }}
+                            rows={3}
+                            className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-none"
+                            style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff" }}
+                          />
+                          {editCommentError && (
+                            <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {editCommentError}</p>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleSaveCommentEdit(c.id)}
+                              disabled={savingCommentEdit}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                              style={{ background: "#38b6e8", color: "#fff", opacity: savingCommentEdit ? 0.6 : 1 }}
+                            >
+                              {savingCommentEdit ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEditComment}
+                              disabled={savingCommentEdit}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                              style={{ background: "#1c3248", color: "#cce4ff" }}
+                            >
+                              Cancel
+                            </button>
+                            <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>⌘/Ctrl+Enter to save</span>
+                          </div>
+                        </div>
+                      ) : (
+                        c.body && (
+                          <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
+                            {c.body.split(/(@[A-Za-z][A-Za-z0-9_-]*)/g).map((part, i) =>
+                              part.startsWith("@")
+                                ? <span key={i} style={{ color: "#38b6e8", fontWeight: 600 }}>{part}</span>
+                                : <span key={i}>{part}</span>
+                            )}
+                          </p>
+                        )
                       )}
                       {c.attachmentUrl && (
                         <div className="mt-1.5 flex items-center gap-2 px-2 py-1.5 rounded-lg"
@@ -1401,12 +1611,23 @@ function TaskPanel({
                         </div>
                       )}
                     </div>
-                    {canDelete && (
-                      <button onClick={() => setConfirmDeleteCommentId(c.id)}
-                        className="p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity self-start"
-                        style={{ color: "#ef4444" }} title="Delete comment">
-                        <Trash2 size={12} />
-                      </button>
+                    {!isEditing && (canEditOwn || canDelete) && (
+                      <div className="flex items-center gap-0.5 self-start opacity-0 group-hover:opacity-100 transition-opacity">
+                        {canEditOwn && (
+                          <button onClick={() => startEditComment(c)}
+                            className="p-1 rounded-lg hover:opacity-70"
+                            style={{ color: "#4a7090" }} title="Edit comment">
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button onClick={() => setConfirmDeleteCommentId(c.id)}
+                            className="p-1 rounded-lg hover:opacity-70"
+                            style={{ color: "#ef4444" }} title="Delete comment">
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -1533,6 +1754,49 @@ function TaskPanel({
             <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {uploadError}</p>
           )}
         </div>
+
+        {/* Activity log (admin only) — every add/edit is recorded server-side */}
+        {isAdmin && (
+          <div>
+            <button
+              onClick={toggleActivity}
+              className="flex items-center gap-2 w-full mb-2"
+              title="Who changed what, and when"
+            >
+              <History size={13} style={{ color: "#4a7090" }} />
+              <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>
+                ACTIVITY{activityLoaded && activity.length > 0 ? ` · ${activity.length}` : ""}
+              </p>
+              {showActivity ? <ChevronDown size={13} style={{ color: "#4a7090" }} /> : <ChevronRight size={13} style={{ color: "#4a7090" }} />}
+            </button>
+            {showActivity && (
+              activityLoading ? (
+                <p className="text-xs px-1" style={{ color: "#4a7090" }}>Loading activity…</p>
+              ) : activity.length === 0 ? (
+                <p className="text-xs px-1" style={{ color: "#4a7090" }}>No changes recorded yet.</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {activity.map((a) => (
+                    <div key={a.id} className="flex gap-2 px-3 py-2 rounded-lg"
+                      style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+                      <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                        style={{ background: a.action === "created" ? "#22c55e" : a.action === "deleted" ? "#ef4444" : a.action === "moved" ? "#a855f7" : "#38b6e8" }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs" style={{ color: "#cce4ff" }}>
+                          <span className="font-semibold">{actorName(a.actorId)}</span>{" "}
+                          <span style={{ color: "#9fb6cf" }}>{activitySentence(a)}</span>
+                        </p>
+                        <p className="text-[10px] mt-0.5" style={{ color: "#4a7090" }}>
+                          {new Date(a.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
       </div>
 
       {/* Image lightbox */}

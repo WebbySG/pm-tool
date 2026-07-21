@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock, History,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -21,6 +21,7 @@ const ALL_NAV = [
   { href: "/templates",   label: "Templates",     icon: ListChecks,      color: "#a78bfa", adminOnly: true  },
   { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: false },
   { href: "/team",        label: "Team",          icon: Users,           color: "#22d3ee", adminOnly: true  },
+  { href: "/activity",    label: "Activity Log",  icon: History,         color: "#94a3b8", adminOnly: true  },
   { href: "/notifications", label: "Notifications", icon: Bell,          color: "#fb923c", adminOnly: false, badge: true },
 ] as const;
 

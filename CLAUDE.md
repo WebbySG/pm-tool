@@ -391,6 +391,8 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_project_templates`, `pm_task_templates` | templates |
 | `pm_notifications` | `id`, `title`, `body`, `type`, `project_id`, `task_id`, `read`, `created_at`, `user_id` (nullable — NULL = workspace-global; set = targeted), `link` (optional href) |
 | `pm_task_attachments` | file attachments |
+| `pm_task_activity` | `id`, `task_id` (FK → `pm_tasks`, ON DELETE **SET NULL** — so a deleted task's history survives), `project_id`, `task_title` (snapshot), `actor_id` (auth uid of whoever changed it), `action` (created/updated/moved/deleted), `field`, `old_value`, `new_value`, `created_at`. **Audit trail** written ONLY by the `pm_log_task_activity` trigger on `pm_tasks`. RLS: **admin-only** select (`pm_is_admin()`); no client write policy (SECURITY DEFINER trigger is the sole writer → tamper-evident). |
+| `pm_task_comment_versions` | `id`, `comment_id` (FK → `pm_task_comments`, ON DELETE CASCADE), `task_id`, `body` (the PREVIOUS body), `edited_by` (comment author), `superseded_at`, `created_at`. **Comment edit history** written ONLY by the `pm_snapshot_comment_version` BEFORE-UPDATE trigger. RLS: `pm_is_admin() OR edited_by = auth.uid()` (admin **+ the author**). |
 | `pm_chat_conversations` | `id`, `kind` (project/dm/group), `name`, `project_id`, `created_by`, `last_message_at` |
 | `pm_chat_members` | `(conversation_id, user_id)` PK + `joined_at`, `last_read_at`, `pinned` (bool, per-user pin), `category_id` (FK → `pm_chat_categories`, ON DELETE SET NULL — per-user folder assignment) |
 | `pm_chat_categories` | `id`, `user_id`, `name`, `sort_order`, `created_at` — per-user chat folders. Unique `(user_id, lower(name))`, RLS `pm_allow_all` |
@@ -441,11 +443,12 @@ app/(app)/projects/new/page.tsx — Create project (admin only), live staff
 app/(app)/projects/[id]/page.tsx — Project detail, kanban, schedule, files, pinned
 app/(app)/tasks/page.tsx      — All tasks (role filtered). New Task dialog: admin can quick-create a project inline ("New project" → name only; defaults type=webdev, phase=discovery, assignedStaff=[task assignee]). Uses store.addProject which now returns the new project id.
 app/(app)/team/page.tsx       — Team management, invites, content access toggle
+app/(app)/activity/page.tsx   — Global task Activity Log feed (admin only). dbListRecentActivity(300), grouped by day, actor filter, deep-links to /projects/<pid>?task=<tid>. See Task Activity & Comment History Module.
 app/(app)/credentials/page.tsx — Credentials (admin only)
 app/(app)/templates/page.tsx  — Templates (admin only)
 app/(app)/content/            — Content (per-staff access control)
 components/sidebar.tsx        — Navigation, role-filtered
-components/task-drawer.tsx    — Full task edit panel. Description (RichEditor) + comment composer accept images via drag-and-drop AND clipboard paste (screenshots), not just the paperclip picker. Description images insert inline as <img> HTML (uploaded via uploadAttachment → pm-attachments bucket); dropping on the read-only description (editor closed) appends + saves via updateTaskDescription. Comment drop/paste sets the single comment attachment (commentFile). Shared helpers: escapeHtml / plainToHtml / imgHtml.
+components/task-drawer.tsx    — Full task edit panel. Description (RichEditor) + comment composer accept images via drag-and-drop AND clipboard paste (screenshots), not just the paperclip picker. Description images insert inline as <img> HTML (uploaded via uploadAttachment → pm-attachments bucket); dropping on the read-only description (editor closed) appends + saves via updateTaskDescription. Comment drop/paste sets the single comment attachment (commentFile). Shared helpers: escapeHtml / plainToHtml / imgHtml. COMMENTS are editable in-place by their AUTHOR ONLY (pencil button, hover) — dbUpdateTaskComment sets body + edited_at (nullable timestamptz on pm_task_comments; added 2026-07-21); a "· edited" marker shows after the timestamp. Editing does NOT re-fire @mention notifications or touch the attachment. For an edited comment, the "· edited" marker is a clickable **history disclosure** (visible to **admin + the comment's own author**) that lazy-loads `dbListCommentVersions` and shows every prior body (Original / Revision N / Current) with timestamps — see the Task Activity & Comment History Module. The "Move to another project" control (admin, top-level tasks only; subtasks travel with parent) lives in the meta grid ABOVE the description — moveTaskToProject. **Admin-only ACTIVITY section** (collapsible, at the bottom of the scroll area) lazy-loads `dbListTaskActivity(task.id)` and lists this task's audit trail (actor resolved via liveStaff; status/priority/assignee/project codes formatted to labels via `activitySentence`/`activityValueLabel`).
 components/kanban-board.tsx   — Kanban board
 components/schedule-tab.tsx   — Schedule/calendar view
 lib/store.ts                  — Zustand store: init(), refresh(), all CRUD
@@ -471,6 +474,19 @@ lib/mailer.ts                            — Shared Titan/SMTP transport (Nodema
 app/api/renewals/run/route.ts            — Node route: daily renewal-reminder email digest (cron-triggered)
 scripts/renewals-cron.sh                 — VPS cron line that POSTs /api/renewals/run once a day
 ```
+
+### Task Activity & Comment History Module
+
+Gives the admin a tamper-evident record of what staff (and everyone) do to tasks, and preserves prior versions of edited comments. **Migration:** [scripts/task-activity-and-comment-history.sql](scripts/task-activity-and-comment-history.sql) — idempotent; **must be applied to the LIVE project (`tfhzuruaaymfhqmeiusr`)**. It was applied via the `mcp__supabase__*` MCP on 2026-07-21 after verifying `get_project_url` returned `tfhzuruaaymfhqmeiusr` (re-run the .sql if a fresh project is ever spun up).
+
+- **DB-trigger based, not app-level.** Logging is done by Postgres triggers using `auth.uid()` — so EVERY edit path (task drawer, kanban drag, tasks page, schedule, subtasks, `moveTaskToProject`, future code) is captured without threading a user through the ~15 store mutation fns. The store has no current-user context, which is exactly why triggers were chosen.
+  - `pm_log_task_activity()` (AFTER INSERT/UPDATE/DELETE on `pm_tasks`, SECURITY DEFINER): on UPDATE it diffs the tracked columns (title, status, priority, assignee, due_date, type, recurring, tags, project_id→`moved`) and writes **one `pm_task_activity` row per changed field**. `description` changes are logged as field=`description` with NO old/new (the HTML blob is too large). **`sort_order`/`updated_at`-only updates log nothing** (so reordering never spams the log).
+  - `pm_snapshot_comment_version()` (BEFORE UPDATE on `pm_task_comments`, SECURITY DEFINER): when `body` changes, archives the OLD body into `pm_task_comment_versions`.
+- **Everyone is logged** (admin edits too) — a complete audit trail; filter by actor to isolate staff. Actor is `auth.uid()`; resolve to a name via active `staff_members` (`user_id ?? id`). When a service-role/MCP call makes the change, `actor_id` is NULL (renders "System").
+- **Where the admin reviews it:** (1) an admin-only collapsible **ACTIVITY** section at the bottom of the [task drawer](components/task-drawer.tsx) (`dbListTaskActivity`), and (2) a global **Activity Log** page [app/(app)/activity/page.tsx](app/(app)/activity/page.tsx) (sidebar entry `History`, `adminOnly`) via `dbListRecentActivity(300)`, grouped by day with an actor filter and deep-links to the task drawer.
+- **Comment history:** an edited comment's "· edited" marker is a clickable disclosure (admin **+ the author**, per RLS) that lazy-loads `dbListCommentVersions(commentId)` and lists Original / Revision N / Current with timestamps. `handleSaveCommentEdit` refreshes the open history after saving.
+- **DB helpers** (in [lib/db.ts](lib/db.ts)): `dbListTaskActivity(taskId)`, `dbListRecentActivity(limit=200)`, `dbListCommentVersions(commentId)` + types `TaskActivity` / `CommentVersion`. There is intentionally **no** `dbAdd*Activity`/`dbAddCommentVersion` — the triggers are the only writers, so clients can't forge or tamper with log rows.
+- **RLS reuses `pm_is_admin()`** (see Credentials Module). Activity = admin-only read; comment versions = `pm_is_admin() OR edited_by = auth.uid()`.
 
 ### Credentials Module
 
