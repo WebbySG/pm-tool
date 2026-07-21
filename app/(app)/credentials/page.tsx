@@ -4,8 +4,9 @@ import { Topbar } from "@/components/topbar";
 import { type Credential } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
-import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2 } from "lucide-react";
+import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2, Pencil, X, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { errorMessage } from "@/lib/utils";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -16,7 +17,7 @@ function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boo
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential; isLast: boolean; liveStaff: LiveStaff[]; isAdmin: boolean }) {
-  const { updateCredentialAccess, deleteCredential } = useStore();
+  const { updateCredential, updateCredentialAccess, deleteCredential } = useStore();
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState<"user" | "pass" | null>(null);
   const [loginToast, setLoginToast] = useState(false);
@@ -24,6 +25,10 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
   const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const manageBtnRef = useRef<HTMLButtonElement>(null);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({ client: "", label: "", url: "", username: "", password: "", notes: "" });
+  const [editError, setEditError] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const allowedUsers = liveStaff.filter((s) => cred.allowedStaff.includes(staffAuthId(s)));
 
@@ -70,6 +75,39 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
   function handleDelete() {
     if (!confirmDelete) { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); return; }
     deleteCredential(cred.id);
+  }
+
+  function openEdit() {
+    setEditForm({
+      client: cred.client, label: cred.label, url: cred.url,
+      username: cred.username, password: cred.password, notes: cred.notes,
+    });
+    setEditError("");
+    setShowEdit(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!editForm.label.trim()) { setEditError("Label is required."); return; }
+    if (!editForm.username.trim()) { setEditError("Username is required."); return; }
+    if (!editForm.password.trim()) { setEditError("Password is required."); return; }
+    if (savingEdit) return;
+    setSavingEdit(true);
+    setEditError("");
+    try {
+      await updateCredential(cred.id, {
+        client: editForm.client.trim(),
+        label: editForm.label.trim(),
+        url: editForm.url.trim(),
+        username: editForm.username.trim(),
+        password: editForm.password,
+        notes: editForm.notes,
+      });
+      setShowEdit(false);
+    } catch (e) {
+      setEditError(errorMessage(e));
+    } finally {
+      setSavingEdit(false);
+    }
   }
 
   return (
@@ -219,6 +257,17 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
 
       {isAdmin && (
         <button
+          onClick={openEdit}
+          className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
+          style={{ color: "#8b90a750" }}
+          title="Edit credential"
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+
+      {isAdmin && (
+        <button
           onClick={handleDelete}
           className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
           style={{ color: confirmDelete ? "#ef4444" : "#8b90a750" }}
@@ -226,6 +275,123 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
         >
           <Trash2 size={13} />
         </button>
+      )}
+
+      {/* Edit Credential Modal */}
+      {showEdit && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => !savingEdit && setShowEdit(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6 max-h-[85vh] overflow-y-auto" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Edit Credential</h3>
+                <button onClick={() => setShowEdit(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+              </div>
+
+              {/* Client */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Client</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Cemimax Asia, Stone Emperor"
+                  value={editForm.client}
+                  onChange={(e) => setEditForm({ ...editForm, client: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              {/* Label */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Label *</label>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="e.g. WordPress Admin, Google Analytics"
+                  value={editForm.label}
+                  onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              {/* URL / Link */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Login URL / Link</label>
+                <input
+                  type="text"
+                  placeholder="https://example.com/admin"
+                  value={editForm.url}
+                  onChange={(e) => setEditForm({ ...editForm, url: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              {/* Username + Password */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs" style={{ color: "#4a7090" }}>Username / Email *</label>
+                  <input
+                    type="text"
+                    placeholder="username or email"
+                    value={editForm.username}
+                    onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs" style={{ color: "#4a7090" }}>Password *</label>
+                  <input
+                    type="text"
+                    placeholder="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                    style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs" style={{ color: "#4a7090" }}>Notes</label>
+                <textarea
+                  placeholder="Any notes about this credential..."
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  rows={2}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none"
+                  style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                />
+              </div>
+
+              {editError && (
+                <p className="text-sm px-3 py-2 rounded-lg" style={{ background: "#ef444420", color: "#ef4444" }}>{editError}</p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{ background: "#38b6e8", color: "#fff" }}
+                >
+                  {savingEdit ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save Changes</>}
+                </button>
+                <button
+                  onClick={() => setShowEdit(false)}
+                  disabled={savingEdit}
+                  className="px-4 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

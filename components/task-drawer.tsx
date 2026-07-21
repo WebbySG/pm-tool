@@ -9,6 +9,7 @@ import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase, uploadAttachment } from "@/lib/supabase";
+import { errorMessage } from "@/lib/utils";
 import { dbListTaskComments, dbAddTaskComment, dbDeleteTaskComment, type TaskComment } from "@/lib/db";
 
 interface LiveStaff {
@@ -62,6 +63,22 @@ function isHtml(s: string): boolean {
   return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span|img)\b/i.test(s);
 }
 
+// Escape for use in an HTML attribute / text node.
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Convert legacy plain-text to HTML (escape + preserve line breaks) so appended
+// markup (dropped images) renders alongside it without corrupting the old text.
+function plainToHtml(s: string): string {
+  return escapeHtml(s).replace(/\n/g, "<br>");
+}
+
+// Inline <img> markup for an uploaded image, matching the RichEditor's inserted style.
+function imgHtml(url: string, name: string): string {
+  return `<img src="${escapeHtml(url)}" alt="${escapeHtml(name)}" style="max-width:100%;border-radius:8px;margin:6px 0;" />`;
+}
+
 // Font-colour swatches for the description editor. "Default" clears the colour so
 // text falls back to the editor's light theme colour (readable on the dark panel).
 const TEXT_COLORS: { label: string; value: string }[] = [
@@ -88,11 +105,12 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [showColors, setShowColors] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   useEffect(() => {
     if (ref.current) {
       ref.current.innerHTML = isHtml(initialHtml)
         ? sanitizeHtml(initialHtml)
-        : initialHtml.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+        : plainToHtml(initialHtml);
       ref.current.focus();
       // Move cursor to end
       const r = document.createRange();
@@ -156,29 +174,61 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
     }
   }
 
-  async function handleEditorFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !onUploadFile) return;
+  // Place the caret where the file was dropped so the image lands at the drop
+  // point rather than the previous cursor position. Falls back to focus() when
+  // the browser lacks the caret-from-point APIs or the point is outside the editor.
+  function placeCaretFromPoint(x: number, y: number) {
+    const el = ref.current;
+    if (!el) return;
+    let range: Range | null = null;
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    if (doc.caretRangeFromPoint) {
+      range = doc.caretRangeFromPoint(x, y);
+    } else if (doc.caretPositionFromPoint) {
+      const pos = doc.caretPositionFromPoint(x, y);
+      if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); range.collapse(true); }
+    }
+    if (range && el.contains(range.startContainer)) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } else {
+      el.focus();
+    }
+  }
+
+  // Upload one or more files and insert them into the editor — images inline as
+  // <img>, everything else as a link. Shared by the paperclip picker, drag-drop
+  // and clipboard paste.
+  async function insertUploadedFiles(files: File[], caret?: { x: number; y: number }) {
+    if (!onUploadFile || files.length === 0) return;
+    ref.current?.focus();
+    if (caret) placeCaretFromPoint(caret.x, caret.y);
     setUploadingFile(true);
     try {
-      const uploaded = await onUploadFile(file);
-      if (!uploaded) return;
-      if (uploaded.type === "image") {
-        const img = document.createElement("img");
-        img.src = uploaded.url;
-        img.alt = uploaded.name;
-        img.style.maxWidth = "100%";
-        img.style.borderRadius = "8px";
-        img.style.margin = "6px 0";
-        insertNodeAtCursor(img);
-      } else {
-        const link = document.createElement("a");
-        link.href = uploaded.url;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.textContent = `📎 ${uploaded.name}`;
-        insertNodeAtCursor(link);
-        insertNodeAtCursor(document.createElement("br"));
+      for (const file of files) {
+        const uploaded = await onUploadFile(file);
+        if (!uploaded) continue;
+        if (uploaded.type === "image") {
+          const img = document.createElement("img");
+          img.src = uploaded.url;
+          img.alt = uploaded.name;
+          img.style.maxWidth = "100%";
+          img.style.borderRadius = "8px";
+          img.style.margin = "6px 0";
+          insertNodeAtCursor(img);
+        } else {
+          const link = document.createElement("a");
+          link.href = uploaded.url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = `📎 ${uploaded.name}`;
+          insertNodeAtCursor(link);
+          insertNodeAtCursor(document.createElement("br"));
+        }
       }
       if (ref.current) {
         const html = sanitizeHtml(ref.current.innerHTML);
@@ -186,8 +236,46 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
       }
     } finally {
       setUploadingFile(false);
+    }
+  }
+
+  async function handleEditorFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await insertUploadedFiles([file]);
+    } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return; // let the browser handle internal content drags
+    e.preventDefault();
+    setDragActive(false);
+    void insertUploadedFiles(files, { x: e.clientX, y: e.clientY });
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!onUploadFile) return;
+    if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+    e.preventDefault();
+    setDragActive(true);
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    if (!onUploadFile) return;
+    const imgs: File[] = [];
+    for (const item of Array.from(e.clipboardData?.items ?? [])) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) imgs.push(f);
+      }
+    }
+    if (imgs.length === 0) return; // allow normal text/html paste
+    e.preventDefault();
+    void insertUploadedFiles(imgs);
   }
 
   function handleBlur() {
@@ -210,7 +298,21 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
   );
 
   return (
-    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #38b6e8", background: "#0e1e30" }}>
+    <div
+      className="rounded-lg overflow-hidden relative"
+      style={{ border: "1px solid #38b6e8", background: "#0e1e30", boxShadow: dragActive ? "0 0 0 2px #38b6e8 inset" : "none" }}
+      onDragOver={handleDragOver}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={handleDrop}
+    >
+      {dragActive && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none rounded-lg"
+          style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
+          <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
+            <Paperclip size={13} /> Drop image to insert
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-1 px-2 py-1.5 relative" style={{ borderBottom: "1px solid #1c3248" }}>
         {btn(Bold, "bold", "Bold")}
         {btn(Italic, "italic", "Italic")}
@@ -283,7 +385,7 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
               disabled={uploadingFile}
               className="p-1.5 rounded hover:opacity-80 transition-opacity flex items-center gap-1"
               style={{ color: "#9dd8f5" }}
-              title="Insert image or file"
+              title="Insert image or file — or drag & drop / paste a screenshot"
             >
               {uploadingFile ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
             </button>
@@ -298,6 +400,7 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
         ref={ref}
         contentEditable
         onBlur={handleBlur}
+        onPaste={handlePaste}
         className="rich-content text-sm leading-relaxed px-3 py-2.5 outline-none"
         style={{ background: "#0e1e30", color: "#cce4ff", minHeight: 120 }}
         suppressContentEditableWarning
@@ -458,6 +561,9 @@ function TaskPanel({
   const [moveError, setMoveError] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const [descEditing, setDescEditing] = useState(false);
+  const [descDragActive, setDescDragActive] = useState(false);
+  const [descUploading, setDescUploading] = useState(false);
+  const [commentDragActive, setCommentDragActive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -588,6 +694,16 @@ function TaskPanel({
     }
   }
 
+  // Paste an image (e.g. a screenshot) straight into the comment as its attachment.
+  function handleCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    for (const item of Array.from(e.clipboardData?.items ?? [])) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) { setCommentFile(f); e.preventDefault(); return; }
+      }
+    }
+  }
+
   async function handlePostComment() {
     const body = commentBody.trim();
     if (!body && !commentFile) return;
@@ -637,7 +753,7 @@ function TaskPanel({
         });
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       setCommentError(msg || "Failed to post comment.");
     } finally {
       setPostingComment(false);
@@ -702,6 +818,33 @@ function TaskPanel({
     if (canGoBack) onGoBack(); else onClose();
   }
 
+  // Drop files onto the read-only description (editor closed): upload each and
+  // append to the saved description. When the editor is open the RichEditor
+  // handles drops itself (inserting at the cursor), so this path only runs while
+  // not editing — meaning task.description is the source of truth and nothing
+  // unsaved gets clobbered.
+  async function handleDescriptionDropFiles(files: File[]) {
+    if (!canEdit || files.length === 0) return;
+    setDescUploading(true);
+    setUploadError(null);
+    try {
+      let html = task.description
+        ? (isHtml(task.description) ? task.description : plainToHtml(task.description))
+        : "";
+      for (const file of files) {
+        const uploaded = await uploadAttachment(file, task.id);
+        html += uploaded.type === "image"
+          ? imgHtml(uploaded.url, uploaded.name)
+          : `<a href="${escapeHtml(uploaded.url)}" target="_blank" rel="noreferrer">📎 ${escapeHtml(uploaded.name)}</a><br>`;
+      }
+      await updateTaskDescription(projectId, task.id, sanitizeHtml(html));
+    } catch (err: unknown) {
+      setUploadError(errorMessage(err) || "Upload failed. Please try again.");
+    } finally {
+      setDescUploading(false);
+    }
+  }
+
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
@@ -713,7 +856,7 @@ function TaskPanel({
         await uploadTaskAttachment(projectId, task.id, file, uploadedBy);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       setUploadError(msg || "Upload failed. Please try again.");
     } finally {
       setUploading(false);
@@ -963,7 +1106,7 @@ function TaskPanel({
                         await moveTaskToProject(projectId, task.id, p.id);
                         onClose();
                       } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
+                        const msg = errorMessage(err);
                         setMoveError(msg || "Failed to move task.");
                       } finally {
                         setMoving(false);
@@ -1006,15 +1149,48 @@ function TaskPanel({
               }}
             />
           ) : (
-            <div onClick={() => canEdit && setDescEditing(true)} className="rounded-lg p-3 min-h-20"
-              style={{ background: "#0e1e30", border: "1px solid #1c3248", cursor: canEdit ? "text" : "default" }}>
+            <div
+              onClick={() => canEdit && !descUploading && setDescEditing(true)}
+              onDragOver={(e) => {
+                if (!canEdit || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+                e.preventDefault();
+                setDescDragActive(true);
+              }}
+              onDragLeave={() => setDescDragActive(false)}
+              onDrop={(e) => {
+                if (!canEdit) return;
+                const files = Array.from(e.dataTransfer?.files ?? []);
+                if (!files.length) return;
+                e.preventDefault();
+                setDescDragActive(false);
+                void handleDescriptionDropFiles(files);
+              }}
+              className="rounded-lg p-3 min-h-20 relative"
+              style={{
+                background: "#0e1e30",
+                border: `1px ${descDragActive ? "dashed" : "solid"} ${descDragActive ? "#38b6e8" : "#1c3248"}`,
+                cursor: canEdit ? "text" : "default",
+              }}
+            >
               {task.description ? (
                 isHtml(task.description)
                   ? <div className="rich-content text-sm leading-relaxed" style={{ color: "#cce4ff" }}
                       dangerouslySetInnerHTML={{ __html: sanitizeHtml(task.description) }} />
                   : <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#cce4ff" }}>{task.description}</p>
               ) : (
-                <p className="text-sm" style={{ color: "#8b90a750" }}>{canEdit ? "Click to add a description..." : "No description."}</p>
+                <p className="text-sm" style={{ color: "#8b90a750" }}>
+                  {canEdit ? "Click to add a description, or drag & drop / paste an image..." : "No description."}
+                </p>
+              )}
+              {(descDragActive || descUploading) && (
+                <div className="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none"
+                  style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
+                  <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
+                    {descUploading
+                      ? <><Loader2 size={13} className="animate-spin" /> Uploading…</>
+                      : <><Paperclip size={13} /> Drop image to add to description</>}
+                  </span>
+                </div>
               )}
             </div>
           )}
@@ -1239,15 +1415,39 @@ function TaskPanel({
           )}
 
           {/* Composer */}
-          <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg relative"
-            style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
+          <div
+            className="flex flex-col gap-2 px-3 py-2.5 rounded-lg relative"
+            style={{ background: "#0e1e30", border: `1px ${commentDragActive ? "dashed" : "solid"} ${commentDragActive ? "#38b6e8" : "#1c3248"}` }}
+            onDragOver={(e) => {
+              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+              e.preventDefault();
+              setCommentDragActive(true);
+            }}
+            onDragLeave={() => setCommentDragActive(false)}
+            onDrop={(e) => {
+              const files = Array.from(e.dataTransfer?.files ?? []);
+              if (!files.length) return;
+              e.preventDefault();
+              setCommentDragActive(false);
+              setCommentFile(files[0]);
+            }}
+          >
+            {commentDragActive && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg pointer-events-none"
+                style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
+                <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
+                  <Paperclip size={13} /> Drop image to attach
+                </span>
+              </div>
+            )}
             <textarea
               ref={commentTextareaRef}
               value={commentBody}
               onChange={handleCommentChange}
               onKeyDown={handleCommentKeyDown}
+              onPaste={handleCommentPaste}
               onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-              placeholder="Leave a comment, ask a question, or @mention someone..."
+              placeholder="Leave a comment, ask a question, or @mention someone... (drag or paste an image to attach)"
               rows={2}
               className="bg-transparent text-sm outline-none resize-none"
               style={{ color: "#cce4ff" }}

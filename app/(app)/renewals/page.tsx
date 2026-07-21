@@ -4,6 +4,7 @@ import { Topbar } from "@/components/topbar";
 import { AdminOnly } from "@/components/admin-guard";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { errorMessage } from "@/lib/utils";
 import {
   loadBillingReminders, createBillingReminder, updateBillingReminder, deleteBillingReminder,
   setBillingStatus, setBillingPaid, markChased,
@@ -293,7 +294,7 @@ function ReminderForm({
       else await createBillingReminder(draft);
       onSaved();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setSaving(false);
     }
   }

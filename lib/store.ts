@@ -20,6 +20,7 @@ import {
 import * as db from "./db";
 import { uploadAttachment, supabase } from "./supabase";
 import { notifyPush } from "./push";
+import { errorMessage } from "./utils";
 
 interface Store {
   projects: Project[];
@@ -58,6 +59,7 @@ interface Store {
 
   // Credential actions
   addCredential: (cred: Omit<Credential, "id">) => Promise<void>;
+  updateCredential: (credId: string, data: Partial<Pick<Credential, "client" | "label" | "url" | "username" | "password" | "notes">>) => Promise<void>;
   updateCredentialAccess: (credId: string, allowedStaff: string[]) => Promise<void>;
   deleteCredential: (credId: string) => Promise<void>;
 
@@ -83,7 +85,7 @@ interface Store {
 
   // Project actions
   addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<string>;
-  updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "startDate" | "dueDate">>) => Promise<void>;
+  updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "channelId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   assignStaff: (projectId: string, userId: string) => Promise<void>;
   removeStaff: (projectId: string, userId: string) => Promise<void>;
@@ -377,6 +379,11 @@ export const useStore = create<Store>()(
     await db.dbAddCredential(id, credData);
   },
 
+  updateCredential: async (credId, data) => {
+    set((s) => ({ credentials: s.credentials.map((c) => c.id !== credId ? c : { ...c, ...data }) }));
+    await db.dbUpdateCredential(credId, data);
+  },
+
   updateCredentialAccess: async (credId, allowedStaff) => {
     set((s) => ({ credentials: s.credentials.map((c) => c.id !== credId ? c : { ...c, allowedStaff }) }));
     await db.dbUpdateCredential(credId, { allowedStaff });
@@ -500,7 +507,7 @@ export const useStore = create<Store>()(
     try {
       await db.dbAddTask(id, projectId, taskData);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       // FK violation on project_id: project exists in store but not DB. Try to recover.
       if (/foreign key|not present in table/i.test(msg) && /project/i.test(msg)) {
         const project = get().projects.find((p) => p.id === projectId);

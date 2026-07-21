@@ -24,6 +24,7 @@ import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
 import { subscribeToPush, notifyPush } from "@/lib/push";
+import { errorMessage } from "@/lib/utils";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, MessageCircle, Plus, Send, Paperclip, Search,
@@ -1503,7 +1504,7 @@ function Composer({
       if (fileRef.current) fileRef.current.value = "";
       onSent();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setSending(false);
     }
@@ -1860,7 +1861,7 @@ function NewConversationDialog({
       }
       onCreated(id);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setBusy(false);
     }
   }
@@ -2019,7 +2020,7 @@ function MembersDialog({
       await deleteConversation(conversation.id);
       onDeleted();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setBusy(false);
     }
   }
@@ -2035,7 +2036,7 @@ function MembersDialog({
       await leaveConversation(conversation.id, currentUserId);
       onDeleted();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setBusy(false);
     }
   }
@@ -2047,7 +2048,7 @@ function MembersDialog({
       await renameConversation(conversation.id, nameDraft.trim());
       onChanged();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally { setBusy(false); }
   }
 
@@ -2059,7 +2060,7 @@ function MembersDialog({
       setAdding("");
       onChanged();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally { setBusy(false); }
   }
 
@@ -2075,7 +2076,7 @@ function MembersDialog({
       setConfirmRemove(null);
       onChanged();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally { setRemovingId(null); }
   }
 

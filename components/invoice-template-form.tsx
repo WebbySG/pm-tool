@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { LineItemsEditor, type LineItemDraft } from "@/components/invoice-line-items-editor";
 import { createInvoiceTemplate, updateInvoiceTemplate } from "@/lib/invoice-db";
 import { useAuth } from "@/lib/auth-context";
+import { errorMessage } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import type { InvoiceTemplate } from "@/lib/invoice-types";
 
@@ -45,7 +46,7 @@ export function InvoiceTemplateForm({ existing }: Props) {
       }
       router.push("/invoices/templates");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setSaving(false);
     }
   }

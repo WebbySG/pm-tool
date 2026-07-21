@@ -379,9 +379,18 @@ export async function dbAddCredential(id: string, data: Omit<Credential, "id">) 
   if (error) throw new Error(error.message);
 }
 
-export async function dbUpdateCredential(id: string, patch: { allowedStaff?: string[] }) {
-  if (patch.allowedStaff !== undefined)
-    await supabase.from("pm_credentials").update({ allowed_staff: patch.allowedStaff }).eq("id", id);
+export async function dbUpdateCredential(id: string, patch: Partial<Omit<Credential, "id">>) {
+  const update: Record<string, unknown> = {};
+  if (patch.client !== undefined) update.client_name = patch.client;
+  if (patch.label !== undefined) update.label = patch.label;
+  if (patch.url !== undefined) update.url = patch.url;
+  if (patch.username !== undefined) update.username = patch.username;
+  if (patch.password !== undefined) update.password = patch.password;
+  if (patch.notes !== undefined) update.notes = patch.notes;
+  if (patch.allowedStaff !== undefined) update.allowed_staff = patch.allowedStaff;
+  if (Object.keys(update).length === 0) return;
+  const { error } = await supabase.from("pm_credentials").update(update).eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbDeleteCredential(id: string) {

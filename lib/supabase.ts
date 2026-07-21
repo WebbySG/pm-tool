@@ -3,7 +3,20 @@ import { createClient } from "@supabase/supabase-js";
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const supabase = createClient(url, key);
+export const supabase = createClient(url, key, {
+  auth: {
+    // Keep users signed in across tab closes and browser restarts.
+    // supabase-js persists the session to localStorage (which survives a tab
+    // close — unlike sessionStorage) under "sb-<project-ref>-auth-token", and
+    // silently refreshes the access token via the long-lived refresh token.
+    // These are the library defaults; set explicitly so the intent is clear and
+    // can't be lost to a future default change. We deliberately do NOT set
+    // storageKey — overriding it would invalidate every existing saved session.
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 
 // Storage helpers
 export const ATTACHMENTS_BUCKET = "pm-attachments";

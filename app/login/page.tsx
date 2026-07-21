@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { useRouter } from "next/navigation";
 import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 
 const REMEMBER_KEY = "webbyops_remembered_email";
@@ -14,7 +13,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [slowWarning, setSlowWarning] = useState(false);
-  const router = useRouter();
 
   // Restore remembered email on mount
   useEffect(() => {
@@ -48,9 +46,12 @@ export default function LoginPage() {
       setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : error.message);
       setLoading(false);
     } else {
-      router.replace("/dashboard");
-      // Fallback if navigation stalls
-      setTimeout(() => setLoading(false), 8000);
+      // Hard navigation (not router.replace) so the browser registers the
+      // successful form submission and reliably offers to save the password.
+      // A soft SPA navigation frequently suppresses the "Save password?" prompt.
+      // The session is already written to localStorage by signInWithPassword,
+      // so the fresh /dashboard load restores it immediately.
+      window.location.assign("/dashboard");
     }
   }
 

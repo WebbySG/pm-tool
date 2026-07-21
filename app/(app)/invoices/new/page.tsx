@@ -6,6 +6,7 @@ import { AdminOnly } from "@/components/admin-guard";
 import { LineItemsEditor, type LineItemDraft } from "@/components/invoice-line-items-editor";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { errorMessage } from "@/lib/utils";
 import {
   loadInvoices, loadInvoiceTemplates, loadInvoice, loadInvoiceTemplate,
   createInvoice,
@@ -142,7 +143,7 @@ export default function NewInvoicePage() {
       });
       router.push(`/invoices/${id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setSaving(false);
     }
   }

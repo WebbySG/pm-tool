@@ -17,6 +17,7 @@ import type { Invoice, InvoiceLog, DiscountType, QuoteStatus } from "@/lib/invoi
 import {
   computeDerivedStatus, computeInvoiceTotals, computeAmountPaid, computeBalanceDue,
 } from "@/lib/invoice-types";
+import { errorMessage } from "@/lib/utils";
 import {
   Loader2, Save, Trash2, Copy, CheckCircle2, RotateCcw, Send, Mail, Wallet, Plus,
   ArrowRightLeft, Check, X, ExternalLink,
@@ -161,7 +162,7 @@ export default function InvoiceDetailPage() {
       }, user?.id ?? null);
       await reload();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setSaving(false);
     }
   }
@@ -226,7 +227,7 @@ export default function InvoiceDetailPage() {
       });
       router.push(`/invoices/${newId}`);
     } catch (e: unknown) {
-      setConvertError(e instanceof Error ? e.message : String(e));
+      setConvertError(errorMessage(e));
       setConverting(false);
     }
   }
@@ -265,7 +266,7 @@ export default function InvoiceDetailPage() {
       setShowPayDialog(false);
       await reload();
     } catch (e: unknown) {
-      setPayError(e instanceof Error ? e.message : String(e));
+      setPayError(errorMessage(e));
     } finally {
       setSavingPay(false);
     }

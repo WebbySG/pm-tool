@@ -61,7 +61,7 @@ export default function ProjectDetailPage() {
   const taskQueryId = searchParams.get("task");
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, templates, articles, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content" | "reports">("board");
   // ── Weekly reports state ──────────────────────────────────────────────────
@@ -80,7 +80,7 @@ export default function ProjectDetailPage() {
   const [newTaskFiles, setNewTaskFiles] = useState<File[]>([]);
   const [showAddPin, setShowAddPin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", startDate: "", dueDate: "" });
+  const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", channelId: null as string | null, startDate: "", dueDate: "" });
   const [showApplyTemplate, setShowApplyTemplate] = useState(false);
   const [applyTemplateIds, setApplyTemplateIds] = useState<string[]>([]);
   const [applyTemplateExpanded, setApplyTemplateExpanded] = useState<string | null>(null);
@@ -257,6 +257,7 @@ export default function ProjectDetailPage() {
       name: project.name,
       description: project.description,
       type: project.type as "webdev" | "seo" | "both",
+      channelId: project.channelId ?? null,
       startDate: project.startDate ?? "",
       dueDate: project.dueDate ?? "",
     });
@@ -269,6 +270,7 @@ export default function ProjectDetailPage() {
       name: editForm.name.trim(),
       description: editForm.description,
       type: editForm.type,
+      channelId: editForm.channelId,
       startDate: editForm.startDate,
       dueDate: editForm.dueDate,
     });
@@ -1099,6 +1101,22 @@ export default function ProjectDetailPage() {
                     <option value="both">Web + SEO</option>
                   </select>
                 </div>
+
+                {/* Channel */}
+                {channels.length > 0 && (
+                  <div className="flex flex-col gap-1.5 col-span-2">
+                    <label className="text-xs" style={{ color: "#4a7090" }}>Channel</label>
+                    <select
+                      value={editForm.channelId ?? ""}
+                      onChange={(e) => setEditForm({ ...editForm, channelId: e.target.value || null })}
+                      className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                      style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+                    >
+                      <option value="">— No channel —</option>
+                      {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
 
                 {/* Start Date */}
                 <div className="flex flex-col gap-1.5">
