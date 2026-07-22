@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useAuth } from "@/lib/auth-context";
-import { useStore } from "@/lib/store";
+import { useStore, uuid } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
+import { dbAddAttachment } from "@/lib/db";
 import {
   loadConversationsForUser, loadMessages, sendMessage, markRead,
   findOrCreateDM, createGroup, ensureProjectChannel,
@@ -497,6 +498,8 @@ function MessageView({
   const [showMembers, setShowMembers] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
   const [pendingTaskInsert, setPendingTaskInsert] = useState<string | null>(null);
+  // "Create task from message" dialog target
+  const [taskFromMsg, setTaskFromMsg] = useState<ChatMessage | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Threading
@@ -907,6 +910,7 @@ function MessageView({
                     onQuote={() => setReplyingTo(msg)}
                     quotedMessage={msg.quotedMessageId ? (messagesById.get(msg.quotedMessageId) ?? null) : undefined}
                     onJumpToQuote={(id) => scrollToMessage(id)}
+                    onCreateTask={() => setTaskFromMsg(msg)}
                     onSaved={() => { /* realtime will update */ }}
                     onOpenTask={onOpenTask}
                   />
@@ -946,6 +950,7 @@ function MessageView({
           reactions={reactions}
           onToggleReaction={handleToggleReaction}
           onOpenTask={onOpenTask}
+          onCreateTask={(m) => setTaskFromMsg(m)}
           onClose={() => setThreadRoot(null)}
         />
       )}
@@ -987,6 +992,24 @@ function MessageView({
           onDeleted={onDeleted}
         />
       )}
+
+      {/* Create task from a chat message */}
+      {taskFromMsg && (
+        <CreateTaskFromMessageDialog
+          message={taskFromMsg}
+          conversation={conversation}
+          projects={projects}
+          liveStaff={liveStaff}
+          currentUserId={currentUserId}
+          onClose={() => setTaskFromMsg(null)}
+          onCreated={(taskId) => {
+            setTaskFromMsg(null);
+            // Drop a [task:id] reference into the composer so the task can be
+            // shared in the conversation with one Enter.
+            setPendingTaskInsert(taskId);
+          }}
+        />
+      )}
       <style jsx global>{`
         .msg-flash {
           animation: msgFlash 1.6s ease;
@@ -1022,7 +1045,7 @@ const REACTION_CHOICES = ["👍", "❤️", "✅", "😂", "🎉", "👀", "🙏
 function MessageItem({
   msg, grouped, liveStaff, projects, isOwn, isPinned, replyMeta, inThread,
   reactions, currentUserId, onToggleReaction,
-  onReply, onOpenThread, onTogglePin, onQuote, quotedMessage, onJumpToQuote, onSaved, onOpenTask,
+  onReply, onOpenThread, onTogglePin, onQuote, quotedMessage, onJumpToQuote, onCreateTask, onSaved, onOpenTask,
 }: {
   msg: ChatMessage;
   grouped: boolean;
@@ -1041,6 +1064,7 @@ function MessageItem({
   onQuote?: () => void;
   quotedMessage?: ChatMessage | null;
   onJumpToQuote?: (messageId: string) => void;
+  onCreateTask?: () => void;
   onSaved: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -1244,6 +1268,13 @@ function MessageItem({
               className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
               style={{ color: isPinned ? "var(--accent)" : "var(--text-muted)" }}>
               {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
+            </button>
+          )}
+          {onCreateTask && (
+            <button onClick={onCreateTask} title="Create task from this message"
+              className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+              style={{ color: "var(--text-muted)" }}>
+              <ListTodo size={12} />
             </button>
           )}
           {isOwn && (
@@ -1664,7 +1695,7 @@ function Composer({
 
 function ThreadPanel({
   root, replies, loading, liveStaff, projects, currentUserId, currentUserName,
-  reactions, onToggleReaction, onOpenTask, onClose,
+  reactions, onToggleReaction, onOpenTask, onCreateTask, onClose,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -1676,6 +1707,7 @@ function ThreadPanel({
   reactions: Map<string, ChatReaction[]>;
   onToggleReaction: (messageId: string, emoji: string) => void;
   onOpenTask: (taskId: string) => void;
+  onCreateTask?: (msg: ChatMessage) => void;
   onClose: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1699,6 +1731,7 @@ function ThreadPanel({
           isOwn={root.authorId === currentUserId} inThread
           reactions={reactions.get(root.id)} currentUserId={currentUserId}
           onToggleReaction={(emoji) => onToggleReaction(root.id, emoji)}
+          onCreateTask={onCreateTask ? () => onCreateTask(root) : undefined}
           onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
         />
         <div className="flex items-center gap-3 my-2 px-2">
@@ -1720,6 +1753,7 @@ function ThreadPanel({
                 isOwn={r.authorId === currentUserId} inThread
                 reactions={reactions.get(r.id)} currentUserId={currentUserId}
                 onToggleReaction={(emoji) => onToggleReaction(r.id, emoji)}
+                onCreateTask={onCreateTask ? () => onCreateTask(r) : undefined}
                 onSaved={() => { /* realtime */ }} onOpenTask={onOpenTask}
               />
             ))}
@@ -1841,6 +1875,157 @@ function PinnedPanel({
         )}
       </div>
     </aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Create task from a chat message
+// ────────────────────────────────────────────────────────────────────────────
+
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function CreateTaskFromMessageDialog({
+  message, conversation, projects, liveStaff, currentUserId, onClose, onCreated,
+}: {
+  message: ChatMessage;
+  conversation: ConversationWithUnread;
+  projects: Project[];
+  liveStaff: LiveStaff[];
+  currentUserId: string;
+  onClose: () => void;
+  onCreated: (taskId: string) => void;
+}) {
+  const { addTask, refresh } = useStore();
+  const author = liveStaff.find((s) => staffAuthId(s) === message.authorId);
+  const cleanedBody = (message.body || "").replace(TASK_REF_REGEX, "").replace(/\s+/g, " ").trim();
+  // If the message @mentions someone, they're the natural assignee.
+  const defaultAssignee = (() => {
+    const mentioned = resolveMentions(message.body || "", liveStaff.map((s) => ({ id: staffAuthId(s), firstName: s.first_name })));
+    return mentioned[0] ?? currentUserId;
+  })();
+  const [title, setTitle] = useState(
+    cleanedBody.slice(0, 120) || (message.attachmentName ? `Review: ${message.attachmentName}` : "Task from chat"));
+  const [projectId, setProjectId] = useState(conversation.kind === "project" ? (conversation.projectId ?? "") : "");
+  const [assigneeId, setAssigneeId] = useState(defaultAssignee);
+  const [priority, setPriority] = useState(5);
+  const [dueDate, setDueDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    if (!projectId || !title.trim() || saving) return;
+    setSaving(true); setError(null);
+    try {
+      const when = new Date(message.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      const description = message.body?.trim()
+        ? `<p><em>From chat — ${escapeHtmlText(author ? staffName(author) : "Unknown")}, ${escapeHtmlText(when)}:</em></p><p>${escapeHtmlText(message.body.trim()).replace(/\n/g, "<br>")}</p>`
+        : "";
+      const taskId = await addTask(projectId, {
+        projectId, title: title.trim(), description, type: "webdev", status: "todo",
+        priority, assigneeId, dueDate, tags: [], recurring: null,
+      });
+      // Carry the message's attachment over as a task attachment (same storage URL).
+      if (message.attachmentUrl) {
+        await dbAddAttachment(uuid(), taskId, {
+          name: message.attachmentName ?? "attachment",
+          type: message.attachmentType ?? "document",
+          url: message.attachmentUrl,
+          size: "",
+          uploadedBy: currentUserId,
+          uploadedAt: new Date().toISOString(),
+        });
+        await refresh();
+      }
+      onCreated(taskId);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#000a" }} onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl p-5 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2">
+          <ListTodo size={15} style={{ color: "var(--accent)" }} />
+          <p className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>Create task from message</p>
+          <button onClick={onClose} style={{ color: "var(--text-muted)" }}><X size={14} /></button>
+        </div>
+
+        {/* The source message */}
+        <div className="px-3 py-2 rounded-lg text-xs" style={{ background: "var(--bg-surface)", borderLeft: "3px solid var(--accent)" }}>
+          <span className="font-semibold" style={{ color: "var(--accent)" }}>{author ? staffName(author) : "Unknown"}: </span>
+          <span style={{ color: "var(--text-muted)" }}>{pinnedSnippet(message)}</span>
+        </div>
+
+        <div>
+          <p className="text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Task title *</p>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }} />
+        </div>
+
+        <div>
+          <p className="text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Project *</p>
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <option value="">— Select project —</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Assignee</p>
+            <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+              <option value="">Unassigned</option>
+              {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
+            </select>
+          </div>
+          <div>
+            <p className="text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Priority</p>
+            <select value={priority} onChange={(e) => setPriority(Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((p) => <option key={p} value={p}>P{p}</option>)}
+            </select>
+          </div>
+          <div className="col-span-2">
+            <p className="text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Due date</p>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }} />
+          </div>
+        </div>
+
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          The message text goes into the task description{message.attachmentUrl ? " and its attachment is carried over" : ""}.
+          A task reference is placed in the composer so you can share it in this chat.
+        </p>
+
+        {error && <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {error}</p>}
+
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm"
+            style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+            Cancel
+          </button>
+          <button onClick={handleCreate} disabled={!projectId || !title.trim() || saving}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
+            style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}>
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <ListTodo size={13} />}
+            Create task
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
