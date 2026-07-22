@@ -28,7 +28,7 @@ import { errorMessage } from "@/lib/utils";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, MessageCircle, Plus, Send, Paperclip, Search,
-  X, Loader2, AtSign, Pencil, Trash2, Image as ImageIcon, FileText,
+  X, Loader2, AtSign, Pencil, Trash2, FileText,
   Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut, CornerUpLeft,
   Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
   Volume2, VolumeX, BellRing, Smile, Reply,
@@ -1009,7 +1009,7 @@ function quoteAuthorName(authorId: string, liveStaff: LiveStaff[]): string {
 function pinnedSnippet(msg: ChatMessage): string {
   const body = (msg.body || "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").trim();
   if (body) return body;
-  if (msg.attachmentName) return `📎 ${msg.attachmentName}`;
+  if (msg.attachmentName) return msg.attachmentType === "image" ? "📷 Photo" : `📎 ${msg.attachmentName}`;
   return "Pinned message";
 }
 
@@ -1555,18 +1555,29 @@ function Composer({
         </div>
       )}
       {file && (
-        <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs"
-          style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>
-          {filePreview ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={filePreview} alt={file.name} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} />
-          ) : (
+        filePreview ? (
+          // Pasted/attached image → show it as the image it will appear as in chat,
+          // not as a file chip. X badge removes it.
+          <div className="relative w-fit mb-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={filePreview} alt={file.name}
+              style={{ maxWidth: 240, maxHeight: 170, borderRadius: 10, border: "1px solid var(--border)", display: "block" }} />
+            <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}
+              title="Remove image"
+              className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center shadow"
+              style={{ background: "#ef4444", color: "#fff" }}>
+              <X size={11} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs"
+            style={{ background: "var(--bg-surface)", color: "var(--text-muted)" }}>
             <Paperclip size={11} />
-          )}
-          <span className="flex-1 truncate">{file.name}</span>
-          <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}
-            style={{ color: "#ef4444" }}><X size={11} /></button>
-        </div>
+            <span className="flex-1 truncate">{file.name}</span>
+            <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}
+              style={{ color: "#ef4444" }}><X size={11} /></button>
+          </div>
+        )
       )}
 
       {taskMenu && taskMatches.length > 0 && (
@@ -1624,6 +1635,11 @@ function Composer({
           </div>
         </label>
         <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={onKeyDown} onPaste={onPaste}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+          onDrop={(e) => {
+            const dropped = e.dataTransfer.files?.[0];
+            if (dropped) { e.preventDefault(); setFile(dropped); }
+          }}
           autoFocus={autoFocus}
           rows={5} placeholder={placeholder ?? "Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."}
           className="flex-1 bg-transparent text-sm outline-none px-3 py-2 rounded-lg resize-y leading-relaxed"
@@ -1800,12 +1816,20 @@ function PinnedPanel({
                       </div>
                     )}
                     {msg.attachmentUrl && (
-                      <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 mt-1.5 px-2.5 py-1.5 rounded-lg text-xs hover:opacity-80"
-                        style={{ background: "var(--bg-base)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                        {msg.attachmentType === "image" ? <ImageIcon size={12} /> : <FileText size={12} />}
-                        {msg.attachmentName}
-                      </a>
+                      msg.attachmentType === "image" ? (
+                        <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className="block mt-1.5 w-fit">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={msg.attachmentUrl} alt={msg.attachmentName ?? "image"}
+                            style={{ maxWidth: 200, maxHeight: 150, borderRadius: 8, border: "1px solid var(--border)", objectFit: "contain", display: "block" }} />
+                        </a>
+                      ) : (
+                        <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 mt-1.5 px-2.5 py-1.5 rounded-lg text-xs hover:opacity-80"
+                          style={{ background: "var(--bg-base)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                          <FileText size={12} />
+                          {msg.attachmentName}
+                        </a>
+                      )
                     )}
                   </>
                 ) : (
