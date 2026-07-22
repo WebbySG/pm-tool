@@ -352,7 +352,7 @@ export async function dbUpdateTaskComment(commentId: string, input: {
     .eq("id", commentId)
     .select("*")
     .single();
-  if (error) { console.error("dbUpdateTaskComment", error); return null; }
+  if (error) { console.error("dbUpdateTaskComment", error); throw error; }
   return rowToTaskComment(data as Row);
 }
 

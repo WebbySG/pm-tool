@@ -180,6 +180,16 @@ create trigger pm_task_comments_snapshot
   before update on public.pm_task_comments
   for each row execute function public.pm_snapshot_comment_version();
 
+-- The comment-edit feature PATCHes pm_task_comments — but RLS is DEFAULT-DENY,
+-- and the table only had SELECT / INSERT / DELETE policies. Without this UPDATE
+-- policy every in-place comment edit silently matched 0 rows and the UI showed
+-- "Failed to save changes" (2026-07-22 incident; policy applied to live same day).
+drop policy if exists pm_task_comments_update_own on public.pm_task_comments;
+create policy pm_task_comments_update_own on public.pm_task_comments
+  for update to authenticated
+  using (auth.uid() = author_id)
+  with check (auth.uid() = author_id);
+
 -- RLS: admin sees every comment's history; a staff author sees their own.
 alter table public.pm_task_comment_versions enable row level security;
 drop policy if exists pm_task_comment_versions_select on public.pm_task_comment_versions;
