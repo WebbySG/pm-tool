@@ -67,6 +67,10 @@ interface Store {
   requestTaskApproval: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
   approveTaskCompletion: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   rejectTask: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
+  // Staff request deletion of a task they created; an admin must approve/reject.
+  requestTaskDeletion: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
+  approveTaskDeletion: (projectId: string, taskId: string, taskTitle: string, requesterId: string | null) => Promise<void>;
+  rejectTaskDeletion: (projectId: string, taskId: string, taskTitle: string, requesterId: string | null) => Promise<void>;
   updateTaskStatus: (projectId: string, taskId: string, status: TaskStatus) => Promise<void>;
   updateTaskPriority: (projectId: string, taskId: string, priority: TaskPriority) => Promise<void>;
   updateTaskAssignee: (projectId: string, taskId: string, assigneeId: string) => Promise<void>;
@@ -185,6 +189,17 @@ let pinCounter = 100;
 async function clearTaskApprovalRequests(get: () => Store, taskId: string) {
   const pending = get().notifications.filter(
     (n) => n.type === "approval_request" && n.taskId === taskId && !n.read
+  );
+  for (const n of pending) await get().markNotificationRead(n.id);
+}
+
+// Mark the admin deletion-request notification(s) for a task as read once an
+// admin has approved or rejected the request. Kept separate from
+// clearTaskApprovalRequests so a plain status change never cancels a pending
+// deletion request.
+async function clearTaskDeletionRequests(get: () => Store, taskId: string) {
+  const pending = get().notifications.filter(
+    (n) => n.type === "deletion_request" && n.taskId === taskId && !n.read
   );
   for (const n of pending) await get().markNotificationRead(n.id);
 }
@@ -455,6 +470,58 @@ export const useStore = create<Store>()(
     });
   },
 
+  requestTaskDeletion: async (projectId, taskId, staffName, taskTitle) => {
+    const at = new Date().toISOString();
+    const { data: { session } } = await supabase.auth.getSession();
+    const requesterId = session?.user?.id ?? null;
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { deletionRequestedBy: requesterId, deletionRequestedAt: at }) })) }));
+    await db.dbUpdateTask(taskId, { deletion_requested_by: requesterId, deletion_requested_at: at });
+    // Distinct `deletion_request` type so admin surfaces show it, but it never
+    // triggers the completion "Approve" action bound to `approval_request`.
+    await get().addNotification({
+      title: "Task Deletion Requested",
+      body: `${staffName} requested to delete "${taskTitle}". Review and approve or reject.`,
+      type: "deletion_request",
+      projectId,
+      taskId,
+      link: `/projects/${projectId}?task=${taskId}`,
+    });
+  },
+
+  approveTaskDeletion: async (projectId, taskId, taskTitle, requesterId) => {
+    // Clear the pending admin notifications for this task first, then hard-delete.
+    await clearTaskDeletionRequests(get, taskId);
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: removeTaskFromTree(p.tasks, taskId) })) }));
+    await db.dbDeleteTask(taskId);
+    if (requesterId) {
+      await get().addNotification({
+        title: "Deletion Approved",
+        body: `Your request to delete "${taskTitle}" was approved and the task was removed.`,
+        type: "task_assigned",
+        projectId,
+        taskId: null,
+        userId: requesterId,
+      });
+    }
+  },
+
+  rejectTaskDeletion: async (projectId, taskId, taskTitle, requesterId) => {
+    await clearTaskDeletionRequests(get, taskId);
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { deletionRequestedBy: null, deletionRequestedAt: null }) })) }));
+    await db.dbUpdateTask(taskId, { deletion_requested_by: null, deletion_requested_at: null });
+    if (requesterId) {
+      await get().addNotification({
+        title: "Deletion Declined",
+        body: `Your request to delete "${taskTitle}" was declined by an admin.`,
+        type: "task_assigned",
+        projectId,
+        taskId,
+        userId: requesterId,
+        link: `/projects/${projectId}?task=${taskId}`,
+      });
+    }
+  },
+
   updateTaskStatus: async (projectId, taskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
     await db.dbUpdateTask(taskId, { status });
@@ -493,6 +560,10 @@ export const useStore = create<Store>()(
 
   addTask: async (projectId, taskData) => {
     const id = uuid();
+    // Optimistically stamp the creator so the UI can gate "request deletion"
+    // immediately; the DB DEFAULT auth.uid() is the authoritative value.
+    const { data: { session } } = await supabase.auth.getSession();
+    const creatorId = session?.user?.id ?? null;
     const newTask: Task = {
       id, projectId,
       parentId: taskData.parentId ?? null,
@@ -510,6 +581,9 @@ export const useStore = create<Store>()(
       attachments: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      createdBy: creatorId,
+      deletionRequestedBy: null,
+      deletionRequestedAt: null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -555,6 +629,8 @@ export const useStore = create<Store>()(
       parentTaskId
     );
     const id = uuid();
+    const { data: { session } } = await supabase.auth.getSession();
+    const creatorId = session?.user?.id ?? null;
     const newTask: Task = {
       id, projectId, parentId: parentTaskId,
       title: subtaskData.title, description: "",
@@ -564,6 +640,9 @@ export const useStore = create<Store>()(
       dueDate: subtaskData.dueDate,
       tags: [], recurring: null, subtasks: [], attachments: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      createdBy: creatorId,
+      deletionRequestedBy: null,
+      deletionRequestedAt: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({

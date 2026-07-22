@@ -544,6 +544,7 @@ function TaskPanel({
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
+    requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
     moveTaskToProject, projects,
   } = useStore();
   const { user } = useAuth();
@@ -551,6 +552,9 @@ function TaskPanel({
   const isAdmin = user?.pmRole === "admin";
   const isMyTask = task.assigneeId === user?.id;
   const canEdit = isAdmin || isMyTask;
+  // Staff may only request deletion of tasks THEY created (created_by = their uid).
+  const isCreator = !!task.createdBy && task.createdBy === user?.id;
+  const deletionPending = !!task.deletionRequestedBy;
 
   const [newSubtask, setNewSubtask] = useState("");
   const [newSubtaskAssignee, setNewSubtaskAssignee] = useState(task.assigneeId);
@@ -569,6 +573,8 @@ function TaskPanel({
   const [descUploading, setDescUploading] = useState(false);
   const [commentDragActive, setCommentDragActive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeleteRequest, setConfirmDeleteRequest] = useState(false);
+  const [deletionLoading, setDeletionLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [approvalLoading, setApprovalLoading] = useState(false);
@@ -930,6 +936,40 @@ function TaskPanel({
     if (canGoBack) onGoBack(); else onClose();
   }
 
+  // Staff (creator) asks an admin to delete this task. Two-click confirm.
+  async function handleRequestDeletion() {
+    if (!confirmDeleteRequest) { setConfirmDeleteRequest(true); return; }
+    setDeletionLoading(true);
+    try {
+      await requestTaskDeletion(projectId, task.id, user?.name ?? "A staff member", task.title);
+      setConfirmDeleteRequest(false);
+      if (canGoBack) onGoBack(); else onClose();
+    } finally {
+      setDeletionLoading(false);
+    }
+  }
+
+  // Admin approves a pending deletion → the task is permanently removed.
+  async function handleApproveDeletion() {
+    setDeletionLoading(true);
+    try {
+      await approveTaskDeletion(projectId, task.id, task.title, task.deletionRequestedBy);
+      if (canGoBack) onGoBack(); else onClose();
+    } finally {
+      setDeletionLoading(false);
+    }
+  }
+
+  // Admin declines → clear the pending request, task stays.
+  async function handleRejectDeletion() {
+    setDeletionLoading(true);
+    try {
+      await rejectTaskDeletion(projectId, task.id, task.title, task.deletionRequestedBy);
+    } finally {
+      setDeletionLoading(false);
+    }
+  }
+
   // Drop files onto the read-only description (editor closed): upload each and
   // append to the saved description. When the editor is open the RichEditor
   // handles drops itself (inserting at the cursor), so this path only runs while
@@ -1013,6 +1053,23 @@ function TaskPanel({
               <button onClick={handleDelete} className="p-1.5 rounded-lg hover:opacity-70 text-xs flex items-center gap-1" style={{ color: confirmDelete ? "#ef4444" : "#4a7090" }}>
                 <Trash2 size={14} /> {confirmDelete ? "Confirm?" : ""}
               </button>
+            )}
+            {/* Staff who created the task: request deletion (needs admin approval) */}
+            {!isAdmin && isCreator && !deletionPending && (
+              <button
+                onClick={handleRequestDeletion}
+                disabled={deletionLoading}
+                title="Request deletion — an admin must approve"
+                className="p-1.5 rounded-lg hover:opacity-70 text-xs flex items-center gap-1"
+                style={{ color: confirmDeleteRequest ? "#ef4444" : "#4a7090", opacity: deletionLoading ? 0.6 : 1 }}
+              >
+                <Trash2 size={14} /> {confirmDeleteRequest ? "Request?" : ""}
+              </button>
+            )}
+            {!isAdmin && deletionPending && (
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-lg" style={{ background: "#ef444418", border: "1px solid #ef444440", color: "#f87171" }} title="Awaiting admin approval">
+                Deletion requested
+              </span>
             )}
             <button onClick={onClose} className="p-1.5 rounded-lg hover:opacity-70" style={{ color: "#4a7090" }}>
               <X size={16} />
@@ -1879,6 +1936,37 @@ function TaskPanel({
 
       {/* Footer */}
       <div className="flex flex-col gap-2 px-6 py-4 shrink-0" style={{ borderTop: "1px solid #1c3248" }}>
+        {/* Admin: approve or reject a staff deletion request */}
+        {isAdmin && deletionPending && (
+          <div className="flex flex-col gap-2 p-3 rounded-lg" style={{ background: "#ef444414", border: "1px solid #ef444440" }}>
+            <p className="text-xs" style={{ color: "#f87171" }}>
+              <span className="font-semibold">
+                {(() => { const r = liveStaff.find((s) => staffAuthId(s) === task.deletionRequestedBy); return r ? staffName(r) : "A staff member"; })()}
+              </span>{" "}
+              requested to delete this task. Approving permanently removes it.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleRejectDeletion}
+                disabled={deletionLoading}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                style={{ background: "#1c3248", color: "#cce4ff", opacity: deletionLoading ? 0.7 : 1 }}
+              >
+                {deletionLoading ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+                Reject
+              </button>
+              <button
+                onClick={handleApproveDeletion}
+                disabled={deletionLoading}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                style={{ background: "#ef4444", color: "#fff", opacity: deletionLoading ? 0.7 : 1 }}
+              >
+                {deletionLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Approve deletion
+              </button>
+            </div>
+          </div>
+        )}
         {/* Admin: approve + reject when pending review */}
         {isAdmin && task.status === "pending_review" && (
           <div className="flex gap-2">

@@ -127,6 +127,14 @@ export interface Task {
   attachments: TaskAttachment[];
   recurring: RecurringFrequency;
   recurringDay?: string;
+  // Auth uid of whoever created the task (DB DEFAULT auth.uid()). Staff may only
+  // request deletion of tasks they created. NULL for service-role/MCP inserts and
+  // tasks created before the created_by column existed.
+  createdBy: string | null;
+  // Set when a staff member has requested this task be deleted; a non-null value
+  // means the deletion is awaiting admin approval.
+  deletionRequestedBy: string | null;
+  deletionRequestedAt: string | null;
 }
 
 export interface ProjectMedia {

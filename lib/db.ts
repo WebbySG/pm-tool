@@ -28,6 +28,9 @@ function rowToTask(row: Row): Task {
     subtasks: [],
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    createdBy: (row.created_by as string | null) ?? null,
+    deletionRequestedBy: (row.deletion_requested_by as string | null) ?? null,
+    deletionRequestedAt: (row.deletion_requested_at as string | null) ?? null,
   };
 }
 

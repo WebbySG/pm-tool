@@ -353,7 +353,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 ### Role System
 
 - **Admin:** Full access to all features, all projects, all tasks, all management pages
-- **Staff:** View only assigned projects; create/edit/delete own tasks only; no templates or team pages. **Credentials:** staff now see the Credentials tab but ONLY the credentials an admin has explicitly granted them (via `pm_credentials.allowed_staff`); they cannot add, manage access, or delete. See the Credentials Module section below.
+- **Staff:** View only assigned projects; create/edit own tasks only; no templates or team pages. **Task deletion is request-and-approve** — staff cannot delete directly; they may *request* deletion of tasks **they created** (`pm_tasks.created_by = their auth uid`), and an admin must approve. See the Task Deletion Approval Module. **Credentials:** staff now see the Credentials tab but ONLY the credentials an admin has explicitly granted them (via `pm_credentials.allowed_staff`); they cannot add, manage access, or delete. See the Credentials Module section below.
 - **Content Access:** Controlled per-staff via `can_access_content` boolean in `staff_members`
 - Role resolved by: `user_roles` table first (owner/admin → admin role), then `staff_members.pm_role`
 - **Critical:** Staff must NOT have rows in `user_roles`, or they will incorrectly receive admin role
@@ -384,7 +384,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `staff_members` | `id`, `user_id` (auth UUID), `email`, `first_name`, `last_name`, `avatar_initials`, `pm_role`, `status`, `can_access_content` |
 | `user_roles` | `user_id`, `role` (owner/admin = admin) |
 | `pm_projects` | `id`, `name`, `description`, `type`, `phase`, `client_id`, `channel_id`, `start_date`, `due_date`, `assigned_staff` (uuid[]) |
-| `pm_tasks` | `id`, `project_id`, `parent_id`, `title`, `description`, `status`, `priority`, `type`, `assignee_id`, `due_date`, `tags`, `recurring`, `recurring_day`, `sort_order` |
+| `pm_tasks` | `id`, `project_id`, `parent_id`, `title`, `description`, `status`, `priority`, `type`, `assignee_id`, `due_date`, `tags`, `recurring`, `recurring_day`, `sort_order`, `created_by` (auth uid, DB `DEFAULT auth.uid()` — who created the task; NULL for service-role/MCP inserts & pre-migration tasks), `deletion_requested_by` (auth uid; non-NULL ⇒ deletion awaiting admin approval), `deletion_requested_at` |
 | `pm_channels` | `id`, `name`, `color`, `order` |
 | `pm_clients` | `id`, `name`, `website`, `industry` |
 | `pm_credentials` | credentials with `allowed_staff` array |
@@ -487,6 +487,18 @@ Gives the admin a tamper-evident record of what staff (and everyone) do to tasks
 - **Comment history:** an edited comment's "· edited" marker is a clickable disclosure (admin **+ the author**, per RLS) that lazy-loads `dbListCommentVersions(commentId)` and lists Original / Revision N / Current with timestamps. `handleSaveCommentEdit` refreshes the open history after saving.
 - **DB helpers** (in [lib/db.ts](lib/db.ts)): `dbListTaskActivity(taskId)`, `dbListRecentActivity(limit=200)`, `dbListCommentVersions(commentId)` + types `TaskActivity` / `CommentVersion`. There is intentionally **no** `dbAdd*Activity`/`dbAddCommentVersion` — the triggers are the only writers, so clients can't forge or tamper with log rows.
 - **RLS reuses `pm_is_admin()`** (see Credentials Module). Activity = admin-only read; comment versions = `pm_is_admin() OR edited_by = auth.uid()`.
+
+### Task Deletion Approval Module
+
+Staff can no longer delete tasks directly. A staff member may **request deletion of a task they created**, and an admin must approve before the row is removed. Admins still delete instantly (unchanged trash button).
+
+- **Creator tracking:** `pm_tasks.created_by uuid DEFAULT auth.uid()` — auto-stamped by Postgres on every insert (PostgREST runs in the caller's auth context), so all creation paths (task drawer subtasks, tasks page, project seed, templates) record the creator **without threading a user through the store**. `rowToTask` maps it to `Task.createdBy`; `addTask`/`addSubtask` also stamp it optimistically via `supabase.auth.getSession()`. NULL for service-role/MCP inserts and pre-migration tasks (those can never be staff-deletion-requested).
+- **Pending state:** `deletion_requested_by` (auth uid) + `deletion_requested_at` on `pm_tasks`. Non-NULL `deletion_requested_by` ⇒ a deletion is awaiting admin approval. These are NOT tracked by the `pm_log_task_activity` trigger (no audit-log spam on request/clear).
+- **Store actions** ([lib/store.ts](lib/store.ts)): `requestTaskDeletion` (staff — sets the pending columns + fires a `deletion_request` notification), `approveTaskDeletion` (admin — clears the notification, hard-deletes via `deleteTask`, notifies the requester), `rejectTaskDeletion` (admin — clears the pending columns + notification, notifies the requester). `clearTaskDeletionRequests` is a dedicated helper (kept separate from `clearTaskApprovalRequests` so a plain status change never cancels a pending deletion).
+- **UI** ([components/task-drawer.tsx](components/task-drawer.tsx)): the header shows a **Request deletion** trash button (two-click confirm) only for `!isAdmin && isCreator && !deletionPending`, and a **"Deletion requested"** badge while pending. The footer shows an admin **Approve deletion / Reject** block when `isAdmin && deletionPending`. Gated to top-level tasks (`isTop`), like the admin delete.
+- **Notifications — new `deletion_request` type** (distinct from `approval_request` so it never triggers the notifications-page "Approve Completion" button, which is bound to `approval_request`). Wired into every admin surface: bell counts ([components/topbar.tsx](components/topbar.tsx), [components/sidebar.tsx](components/sidebar.tsx)), the Slack-style popup + `typeConfig` ([components/notification-toast-container.tsx](components/notification-toast-container.tsx)), and the notifications page filter/`typeConfig`/no-auto-mark-read ([app/(app)/notifications/page.tsx](app/(app)/notifications/page.tsx)). The notification links to `/projects/<pid>?task=<tid>` — clicking opens the drawer where the admin approves/rejects. Like `approval_request`, it's workspace-global (`user_id` NULL) so the push route does **not** OS-push it.
+- **Enforcement is app-level.** `pm_tasks` uses a blanket `pm_allow_all` RLS policy (same as the existing "Submit for Review" flow), so the request-and-approve gate is enforced in the UI/store, not the DB. A determined staffer could still delete via the raw API — matching the app's existing trust model. Tighten with RLS + `pm_is_admin()` if that ever matters.
+- **Migration:** [scripts/task-deletion-requests.sql](scripts/task-deletion-requests.sql) — idempotent (`add column if not exists` + `notify pgrst`). **Applied to the LIVE project (`tfhzuruaaymfhqmeiusr`) on 2026-07-22** via the `mcp__supabase__*` MCP after verifying `get_project_url` returned `tfhzuruaaymfhqmeiusr` and an identity check (108 tasks / 21 projects present). Re-run it if a fresh project is ever spun up.
 
 ### Credentials Module
 

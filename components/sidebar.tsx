@@ -36,7 +36,7 @@ export function Sidebar() {
   // Admin tray shows only approval requests; staff see workspace-global + their own targeted.
   const unreadCount = notifications.filter((n) => {
     if (n.read) return false;
-    if (isAdmin) return n.type === "approval_request" || n.userId === user?.id;
+    if (isAdmin) return n.type === "approval_request" || n.type === "deletion_request" || n.userId === user?.id;
     return !n.userId || n.userId === user?.id;
   }).length;
   const NAV = ALL_NAV.filter((item) => {

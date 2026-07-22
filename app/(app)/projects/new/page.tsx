@@ -114,6 +114,11 @@ export default function NewProjectPage() {
         attachments: [],
         recurring: tt.recurring,
         recurringDay: tt.recurringDay,
+        // Creator is stamped authoritatively by the DB DEFAULT auth.uid() on insert
+        // (these admin-seeded tasks aren't part of the staff request-deletion flow).
+        createdBy: null,
+        deletionRequestedBy: null,
+        deletionRequestedAt: null,
       }));
     });
 
