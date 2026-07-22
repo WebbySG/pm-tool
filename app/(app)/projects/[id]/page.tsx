@@ -556,10 +556,11 @@ export default function ProjectDetailPage() {
                             <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{file.name}</p>
                             <div className="flex items-center justify-between mt-0.5">
                               <p className="text-xs" style={{ color: "#4a7090" }}>{file.size}</p>
-                              <p className="text-xs" style={{ color: "#4a7090" }}>
-                                {uploader ? staffName(uploader).split(" ")[0] : "—"} · {new Date(file.uploadedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
-                              </p>
+                              <p className="text-xs" style={{ color: "#4a7090" }}>{uploader ? staffName(uploader).split(" ")[0] : "—"}</p>
                             </div>
+                            <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
+                              {new Date(file.uploadedAt).toLocaleString("en-SG", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </p>
                           </div>
                         </div>
                       );
@@ -783,7 +784,7 @@ export default function ProjectDetailPage() {
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-semibold" style={{ color: "#cce4ff" }}>Week of {weekRange(r.weekStarting)}</p>
                                 <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
-                                  {doneTasks}/{totalTasks} tasks · Created {fmtDate(r.createdAt.slice(0, 10))}
+                                  {doneTasks}/{totalTasks} tasks · Created {new Date(r.createdAt).toLocaleString("en-SG", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">

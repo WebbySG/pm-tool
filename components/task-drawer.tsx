@@ -1214,7 +1214,7 @@ function TaskPanel({
               <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Added</p>
               <p className="w-full px-3 py-2 rounded-lg text-sm"
                 style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#8b90a7" }}>
-                {new Date(task.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                {new Date(task.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
           )}
@@ -1477,7 +1477,7 @@ function TaskPanel({
                       <p className="text-sm truncate" style={{ color: "#cce4ff" }}>{att.name}</p>
                       <p className="text-xs" style={{ color: "#4a7090" }}>
                         {att.size}
-                        {att.uploadedAt && ` · ${new Date(att.uploadedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`}
+                        {att.uploadedAt && ` · ${new Date(att.uploadedAt).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}`}
                         {isImage ? " · click to preview" : ""}
                       </p>
                     </div>
