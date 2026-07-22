@@ -1,11 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 import { Zap, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 
 const REMEMBER_KEY = "webbyops_remembered_email";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -13,6 +17,32 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [slowWarning, setSlowWarning] = useState(false);
+  // Start by checking for an existing session so we never flash the form to a
+  // user who is already signed in. Stays true (loader shown) until we confirm
+  // there is NO session; a session triggers a redirect while the loader holds.
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  // Already authenticated? Bounce to the dashboard instead of showing the form.
+  // The session lives in localStorage under "sb-<ref>-auth-token", which is
+  // shared across every same-origin tab — so opening /login in a second tab
+  // (or landing on "/", which server-redirects here) while signed in elsewhere
+  // must forward to the app, not re-prompt for credentials.
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active) return;
+      if (session) router.replace("/dashboard");
+      else setCheckingSession(false);
+    });
+    return () => { active = false; };
+  }, [router]);
+
+  // Live cross-tab: if another tab signs in while this form is open, the
+  // AuthProvider's onAuthStateChange resolves `user` here (supabase-js syncs
+  // sessions across tabs via the storage event) — follow it to the dashboard.
+  useEffect(() => {
+    if (user) router.replace("/dashboard");
+  }, [user, router]);
 
   // Restore remembered email on mount
   useEffect(() => {
@@ -53,6 +83,24 @@ export default function LoginPage() {
       // so the fresh /dashboard load restores it immediately.
       window.location.assign("/dashboard");
     }
+  }
+
+  // While resolving an existing session (or redirecting an authenticated user),
+  // show a minimal loader rather than the sign-in form.
+  if (checkingSession) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "var(--bg-base)" }}
+      >
+        <div
+          className="w-12 h-12 rounded-2xl flex items-center justify-center anim-float"
+          style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}
+        >
+          <Zap size={20} color="#fff" fill="#fff" />
+        </div>
+      </div>
+    );
   }
 
   return (
