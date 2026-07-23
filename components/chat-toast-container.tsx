@@ -79,7 +79,11 @@ export function ChatToastContainer() {
         if (pathname && pathname.startsWith("/chat")) return;
 
         const author = staffByIdRef.current.get(m.author_id);
-        const body = (m.body && m.body.trim()) || (m.attachment_name ? `📎 ${m.attachment_name}` : "");
+        const cleaned = (m.body ?? "")
+          .replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task")
+          .replace(/\[img:[^\]\s]+\]/g, "📷")
+          .trim();
+        const body = cleaned || (m.attachment_name ? `📎 ${m.attachment_name}` : "");
         if (!body) return;
 
         // Audible chime for new messages while you're elsewhere in the app

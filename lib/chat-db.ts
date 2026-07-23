@@ -98,7 +98,7 @@ export async function loadConversationsForUser(userId: string): Promise<Conversa
     if (row.deleted_at) continue;
     const cid = row.conversation_id as string;
     if (previewByConv.has(cid)) continue; // first non-deleted is latest (already ordered desc)
-    const body = (row.body as string) ?? "";
+    const body = chatSnippet((row.body as string) ?? "");
     const attachment = (row.attachment_name as string | null) ?? null;
     const preview = body || (attachment ? `📎 ${attachment}` : "");
     previewByConv.set(cid, { preview, authorId: row.author_id as string });
@@ -350,12 +350,22 @@ export async function loadMessages(conversationId: string, limit = 200): Promise
   return attachMentions(msgs);
 }
 
+// One-line preview text for lists/toasts: task/img tokens → compact markers.
+export function chatSnippet(body: string): string {
+  return (body ?? "")
+    .replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task")
+    .replace(/\[img:[^\]\s]+\]/g, "📷")
+    .trim();
+}
+
 // All image messages in a conversation (incl. thread replies), newest first —
-// feeds the chat Media panel's Images tab.
+// feeds the chat Media panel's Images tab. Covers BOTH attachment images and
+// inline [img:url] tokens pasted into message bodies.
 export async function loadConversationImages(conversationId: string, limit = 200): Promise<ChatMessage[]> {
   const { data: rows, error } = await supabase.from("pm_chat_messages")
     .select("*").eq("conversation_id", conversationId)
-    .eq("attachment_type", "image").is("deleted_at", null)
+    .or("attachment_type.eq.image,body.ilike.*[img:*")
+    .is("deleted_at", null)
     .order("created_at", { ascending: false }).limit(limit);
   if (error) throw error;
   return (rows ?? []).map((r) => rowToMessage(r as Row));

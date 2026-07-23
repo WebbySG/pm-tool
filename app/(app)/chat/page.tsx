@@ -1087,7 +1087,10 @@ function quoteAuthorName(authorId: string, liveStaff: LiveStaff[]): string {
 
 // Short one-line preview of a (possibly attachment-only) message for the pinned bar.
 function pinnedSnippet(msg: ChatMessage): string {
-  const body = (msg.body || "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").trim();
+  const body = (msg.body || "")
+    .replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task")
+    .replace(/\[img:[^\]\s]+\]/g, "📷")
+    .trim();
   if (body) return body;
   if (msg.attachmentName) return msg.attachmentType === "image" ? "📷 Photo" : `📎 ${msg.attachmentName}`;
   return "Pinned message";
@@ -1369,8 +1372,8 @@ function MessageItem({
 }
 
 function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; liveStaff: LiveStaff[]; projects: Project[]; onOpenTask: (taskId: string) => void }) {
-  // Combined regex: @mentions OR [task:UUID]
-  const combined = /(@[a-zA-Z][a-zA-Z0-9_-]{1,30})|(\[task:[0-9a-fA-F-]{36}\])/g;
+  // Combined regex: @mentions OR [task:UUID] OR [img:URL] (inline images)
+  const combined = /(@[a-zA-Z][a-zA-Z0-9_-]{1,30})|(\[task:[0-9a-fA-F-]{36}\])|(\[img:[^\]\s]+\])/g;
   const firstNames = new Set(liveStaff.filter((s) => s.first_name).map((s) => s.first_name!.toLowerCase()));
   const parts: React.ReactNode[] = [];
   let lastIdx = 0; let m: RegExpExecArray | null; let key = 0;
@@ -1408,6 +1411,16 @@ function RenderBody({ body, liveStaff, projects, onOpenTask }: { body: string; l
       } else {
         parts.push(<span key={`t${key++}`} className="text-xs italic" style={{ color: "var(--text-muted)" }}>[task unavailable]</span>);
       }
+    } else if (m[3]) {
+      // Inline image — pasted into the flow of the message; click opens full size
+      const url = m[3].slice(5, -1);
+      parts.push(
+        <a key={`img${key++}`} href={url} target="_blank" rel="noopener noreferrer" className="block my-1.5 w-fit">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={url} alt="" loading="lazy"
+            style={{ maxWidth: 340, maxHeight: 300, borderRadius: 10, border: "1px solid var(--border)", display: "block" }} />
+        </a>,
+      );
     }
     lastIdx = m.index + m[0].length;
   }
@@ -1567,6 +1580,7 @@ function Composer({
 
   async function handleSend() {
     if (!text.trim() && !file) return;
+    if (uploadingImgs > 0) return; // wait until pasted images finish uploading
     setSending(true); setError(null);
     try {
       let attachment = null;
@@ -1593,7 +1607,7 @@ function Composer({
             user_id: uid,
             type: "mention",
             title: `${currentUserName} mentioned you in chat`,
-            body: text.slice(0, 200),
+            body: text.replace(/\[img:[^\]\s]+\]/g, "📷").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").slice(0, 200),
             link: `/chat?c=${conversationId}&m=${newMsg.id}`,
           }));
         if (notes.length > 0) await supabase.from("pm_notifications").insert(notes);
@@ -1640,22 +1654,53 @@ function Composer({
     if (e.key === "Escape") { setMentionMenu(null); setTaskMenu(null); }
   }
 
-  // Ctrl/Cmd+V of a screenshot/image → auto-attach it.
+  // Pasted/dropped images go INLINE into the message body as [img:url] tokens
+  // (uploaded immediately), so text and images can be interleaved freely —
+  // sentence, image, more text, another image. No limit on count.
+  const [uploadingImgs, setUploadingImgs] = useState(0);
+
+  async function insertInlineImages(files: File[]) {
+    setUploadingImgs((n) => n + files.length);
+    for (const f of files) {
+      try {
+        const up = await uploadChatAttachment(f, conversationId);
+        setText((prev) => {
+          const el = textareaRef.current;
+          const caret = el?.selectionStart ?? prev.length;
+          const before = prev.slice(0, caret);
+          const after = prev.slice(caret);
+          const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+          const insert = `${sep}[img:${up.url}]\n`;
+          const pos = (before + insert).length;
+          setTimeout(() => { const t = textareaRef.current; if (t) { t.focus(); t.setSelectionRange(pos, pos); } }, 0);
+          return before + insert + after;
+        });
+      } catch (err) {
+        setError(errorMessage(err));
+      } finally {
+        setUploadingImgs((n) => n - 1);
+      }
+    }
+  }
+
+  // Ctrl/Cmd+V of screenshots/images → insert inline where the cursor is.
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const items = e.clipboardData?.items;
     if (!items) return;
+    const imgs: File[] = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (it.kind === "file" && it.type.startsWith("image/")) {
         const blob = it.getAsFile();
         if (blob) {
           const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
-          const named = new File([blob], blob.name || `pasted-${Date.now()}.${ext}`, { type: blob.type });
-          setFile(named);
-          e.preventDefault();
+          imgs.push(new File([blob], blob.name || `pasted-${Date.now()}-${i}.${ext}`, { type: blob.type }));
         }
-        return;
       }
+    }
+    if (imgs.length) {
+      e.preventDefault();
+      void insertInlineImages(imgs);
     }
   }
 
@@ -1748,9 +1793,16 @@ function Composer({
 
       <div className="flex items-end gap-2">
         <label className="cursor-pointer">
-          <input ref={fileRef} type="file" className="hidden"
+          <input ref={fileRef} type="file" className="hidden" multiple
             accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              const imgs = picked.filter((f) => f.type.startsWith("image/"));
+              if (imgs.length) void insertInlineImages(imgs);
+              const other = picked.find((f) => !f.type.startsWith("image/"));
+              if (other) setFile(other);
+              e.target.value = "";
+            }} />
           <div className="w-9 h-9 rounded-lg flex items-center justify-center"
             style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
             <Paperclip size={14} />
@@ -1759,22 +1811,32 @@ function Composer({
         <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={onKeyDown} onPaste={onPaste}
           onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
           onDrop={(e) => {
-            const dropped = e.dataTransfer.files?.[0];
-            if (dropped) { e.preventDefault(); setFile(dropped); }
+            const dropped = Array.from(e.dataTransfer.files ?? []);
+            if (!dropped.length) return;
+            e.preventDefault();
+            const imgs = dropped.filter((f) => f.type.startsWith("image/"));
+            if (imgs.length) void insertInlineImages(imgs);
+            const other = dropped.find((f) => !f.type.startsWith("image/"));
+            if (other) setFile(other);
           }}
           autoFocus={autoFocus}
           rows={5} placeholder={placeholder ?? "Type a message — Enter to send, Shift+Enter for newline. @ to mention, # to reference a task."}
           className="flex-1 bg-transparent text-sm outline-none px-3 py-2 rounded-lg resize-y leading-relaxed"
           style={{ color: "var(--text)", border: "1px solid var(--border)", minHeight: 120, maxHeight: 260, background: "var(--bg-surface)" }} />
-        <button onClick={handleSend} disabled={sending || (!text.trim() && !file)}
+        <button onClick={handleSend} disabled={sending || uploadingImgs > 0 || (!text.trim() && !file)}
           className="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0"
           style={{
             background: "linear-gradient(135deg, var(--accent), var(--accent-2))",
-            opacity: sending || (!text.trim() && !file) ? 0.5 : 1,
+            opacity: sending || uploadingImgs > 0 || (!text.trim() && !file) ? 0.5 : 1,
           }}>
           {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
         </button>
       </div>
+      {uploadingImgs > 0 && (
+        <p className="text-xs mt-1.5 flex items-center gap-1.5" style={{ color: "var(--accent)" }}>
+          <Loader2 size={11} className="animate-spin" /> Uploading image{uploadingImgs > 1 ? "s" : ""}…
+        </p>
+      )}
       {error && <p className="text-xs mt-1.5" style={{ color: "#ef4444" }}>⚠ {error}</p>}
     </div>
   );
@@ -2025,10 +2087,22 @@ function MediaPanel({
     return out.sort((x, y) => (y.date || "").localeCompare(x.date || ""));
   }, [conversation.kind, conversation.projectId, projects]);
 
+  // Attachment images + inline [img:url] tokens, newest first.
+  const chatImages = useMemo(() => {
+    const out: { url: string; msg: ChatMessage }[] = [];
+    for (const m of imgMsgs) {
+      if (m.attachmentType === "image" && m.attachmentUrl) out.push({ url: m.attachmentUrl, msg: m });
+      for (const t of (m.body || "").match(/\[img:[^\]\s]+\]/g) ?? []) out.push({ url: t.slice(5, -1), msg: m });
+    }
+    return out;
+  }, [imgMsgs]);
+
   const links = useMemo(() => {
     const out: { url: string; msg: ChatMessage }[] = [];
     for (const m of linkMsgs) {
-      for (const u of (m.body || "").match(MEDIA_URL_RE) ?? []) out.push({ url: u, msg: m });
+      // Inline-image URLs are pictures, not shared links — keep them out of this tab.
+      const body = (m.body || "").replace(/\[img:[^\]\s]+\]/g, "");
+      for (const u of body.match(MEDIA_URL_RE) ?? []) out.push({ url: u, msg: m });
     }
     return out;
   }, [linkMsgs]);
@@ -2054,7 +2128,7 @@ function MediaPanel({
       </div>
 
       <div className="flex shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
-        {tabBtn("images", <ImageIcon size={12} />, "Images", imgMsgs.length + taskImages.length)}
+        {tabBtn("images", <ImageIcon size={12} />, "Images", chatImages.length + taskImages.length)}
         {tabBtn("links", <Link2 size={12} />, "Links", links.length)}
       </div>
 
@@ -2064,28 +2138,28 @@ function MediaPanel({
             <Loader2 size={13} className="animate-spin" /> Loading…
           </p>
         ) : tab === "images" ? (
-          imgMsgs.length === 0 && taskImages.length === 0 ? (
+          chatImages.length === 0 && taskImages.length === 0 ? (
             <div className="text-center py-10 px-4">
               <ImageIcon size={20} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2 opacity-50" />
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>No images shared here yet.</p>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {imgMsgs.length > 0 && (
+              {chatImages.length > 0 && (
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>From chat</p>
                   <div className="grid grid-cols-3 gap-1.5">
-                    {imgMsgs.map((m) => {
+                    {chatImages.map(({ url, msg: m }, i) => {
                       const author = liveStaff.find((s) => staffAuthId(s) === m.authorId);
                       return (
-                        <div key={m.id} className="group relative">
+                        <div key={`${m.id}-${i}`} className="group relative">
                           <button onClick={() => onJump(m.id)} title={`${author ? staffName(author) : "Unknown"} · ${formatTime(m.createdAt)} — click to jump to message`}
                             className="block w-full rounded-lg overflow-hidden hover:opacity-90"
                             style={{ border: "1px solid var(--border)", aspectRatio: "1 / 1" }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={m.attachmentUrl!} alt={m.attachmentName ?? ""} className="w-full h-full object-cover" />
+                            <img src={url} alt="" loading="lazy" className="w-full h-full object-cover" />
                           </button>
-                          <a href={m.attachmentUrl!} target="_blank" rel="noopener noreferrer" title="Open full size"
+                          <a href={url} target="_blank" rel="noopener noreferrer" title="Open full size"
                             className="absolute top-1 right-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100"
                             style={{ background: "#000000a0", color: "#fff" }}>
                             <ExternalLink size={10} />
@@ -2182,7 +2256,7 @@ function CreateTaskFromMessageDialog({
 }) {
   const { addTask, refresh } = useStore();
   const author = liveStaff.find((s) => staffAuthId(s) === message.authorId);
-  const cleanedBody = (message.body || "").replace(TASK_REF_REGEX, "").replace(/\s+/g, " ").trim();
+  const cleanedBody = (message.body || "").replace(TASK_REF_REGEX, "").replace(/\[img:[^\]\s]+\]/g, "").replace(/\s+/g, " ").trim();
   // If the message @mentions someone, they're the natural assignee.
   const defaultAssignee = (() => {
     const mentioned = resolveMentions(message.body || "", liveStaff.map((s) => ({ id: staffAuthId(s), firstName: s.first_name })));
@@ -2202,8 +2276,15 @@ function CreateTaskFromMessageDialog({
     setSaving(true); setError(null);
     try {
       const when = new Date(message.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-      const description = message.body?.trim()
-        ? `<p><em>From chat — ${escapeHtmlText(author ? staffName(author) : "Unknown")}, ${escapeHtmlText(when)}:</em></p><p>${escapeHtmlText(message.body.trim()).replace(/\n/g, "<br>")}</p>`
+      // Inline [img:url] tokens become real <img> tags in the task description
+      // (escapeHtmlText doesn't touch [ ] : / so the token survives escaping).
+      const escapedBody = message.body?.trim()
+        ? escapeHtmlText(message.body.trim())
+            .replace(/\[img:([^\]\s]+)\]/g, '<img src="$1" style="max-width:340px;border-radius:8px;display:block;margin:6px 0;" />')
+            .replace(/\n/g, "<br>")
+        : "";
+      const description = escapedBody
+        ? `<p><em>From chat — ${escapeHtmlText(author ? staffName(author) : "Unknown")}, ${escapeHtmlText(when)}:</em></p><p>${escapedBody}</p>`
         : "";
       const taskId = await addTask(projectId, {
         projectId, title: title.trim(), description, type: "webdev", status: "todo",

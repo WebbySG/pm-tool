@@ -16,7 +16,7 @@ const VAPID_SUBJECT = process.env.VAPID_SUBJECT ?? "mailto:webdwebbysg@gmail.com
 type Payload = { title: string; body: string; url: string; tag?: string };
 
 function preview(body: string | null, attachmentName: string | null): string {
-  const b = (body ?? "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").trim();
+  const b = (body ?? "").replace(/\[task:[0-9a-fA-F-]{36}\]/g, "🔗 task").replace(/\[img:[^\]\s]+\]/g, "📷").trim();
   if (b) return b.slice(0, 140);
   if (attachmentName) return `📎 ${attachmentName}`;
   return "Sent a message";
