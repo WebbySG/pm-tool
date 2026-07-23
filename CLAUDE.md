@@ -459,7 +459,7 @@ app/(app)/projects/new/page.tsx — Create project (admin only), live staff
 app/(app)/projects/[id]/page.tsx — Project detail, kanban, schedule, files (session-only blobs), pinned, content, weekly reports (pm_weekly_reports)
 app/(app)/tasks/page.tsx      — All tasks (role filtered). New Task dialog: admin can quick-create a project inline ("New project" → name only; defaults type=webdev, phase=discovery, assignedStaff=[task assignee]). Uses store.addProject which now returns the new project id.
 app/(app)/team/page.tsx       — Team management, invites, content access toggle
-app/(app)/activity/page.tsx   — Global task Activity Log feed (admin only). dbListRecentActivity(300), grouped by day, actor filter, deep-links to /projects/<pid>?task=<tid>. See Task Activity & Comment History Module.
+app/(app)/activity/page.tsx   — UNIFIED Activity Log (admin only): merges FOUR streams into one per-person timeline — task audit rows (dbListRecentActivity 300), task comments (dbListRecentComments 200), chat messages across ALL conversations (loadRecentChatMessages 200, labeled #Project / group name / "Direct message", deep-links /chat?c=<id>&m=<mid>), and file uploads (dbListRecentUploads 120). Person dropdown + per-type filter chips with counts (Task changes / Comments / Chat / Files), grouped by day, task deep-links via slug. Comment/upload context resolved client-side from the store task tree (archived/deleted tasks → "archived or deleted task").
 app/(app)/credentials/page.tsx — Credentials (admin only)
 app/(app)/templates/page.tsx  — Templates (admin only)
 app/(app)/content/            — Content (per-staff access control)

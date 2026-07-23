@@ -382,6 +382,45 @@ export async function loadConversationLinkMessages(conversationId: string, limit
   return (rows ?? []).map((r) => rowToMessage(r as Row));
 }
 
+// Recent messages across ALL conversations (admin Activity Log feed), newest
+// first, with each conversation's kind/name/project for labeling.
+export type RecentChatMessage = {
+  id: string; conversationId: string; authorId: string; body: string; createdAt: string;
+  attachmentName: string | null; attachmentType: string | null;
+  convKind: string; convName: string | null; convProjectId: string | null;
+};
+
+export async function loadRecentChatMessages(limit = 200): Promise<RecentChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("id,conversation_id,author_id,body,created_at,attachment_name,attachment_type")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) { console.error("loadRecentChatMessages", error); return []; }
+  const msgs = (rows ?? []) as Row[];
+  const convIds = [...new Set(msgs.map((r) => r.conversation_id as string))];
+  const convMap = new Map<string, Row>();
+  if (convIds.length) {
+    const { data: convs } = await supabase.from("pm_chat_conversations")
+      .select("id,kind,name,project_id").in("id", convIds);
+    for (const c of (convs ?? []) as Row[]) convMap.set(c.id as string, c);
+  }
+  return msgs.map((r) => {
+    const conv = convMap.get(r.conversation_id as string);
+    return {
+      id: r.id as string,
+      conversationId: r.conversation_id as string,
+      authorId: r.author_id as string,
+      body: (r.body as string) ?? "",
+      createdAt: r.created_at as string,
+      attachmentName: (r.attachment_name as string | null) ?? null,
+      attachmentType: (r.attachment_type as string | null) ?? null,
+      convKind: (conv?.kind as string) ?? "dm",
+      convName: (conv?.name as string | null) ?? null,
+      convProjectId: (conv?.project_id as string | null) ?? null,
+    };
+  });
+}
+
 // Load all replies for a thread root, oldest first.
 export async function loadThreadReplies(rootId: string): Promise<ChatMessage[]> {
   const { data: rows, error } = await supabase.from("pm_chat_messages")

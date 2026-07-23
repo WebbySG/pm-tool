@@ -307,6 +307,41 @@ export async function dbDeleteAttachment(attachmentId: string) {
   await supabase.from("pm_task_attachments").delete().eq("id", attachmentId);
 }
 
+// ─── Recent-activity feeds (admin Activity Log page) ─────────────────────────
+
+export type RecentComment = { id: string; taskId: string; authorId: string; body: string; createdAt: string; hasAttachment: boolean };
+
+export async function dbListRecentComments(limit = 200): Promise<RecentComment[]> {
+  const { data, error } = await supabase.from("pm_task_comments")
+    .select("id,task_id,author_id,body,created_at,attachments,attachment_url")
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) { console.error("dbListRecentComments", error); return []; }
+  return (data ?? []).map((r: Row) => ({
+    id: r.id as string,
+    taskId: r.task_id as string,
+    authorId: r.author_id as string,
+    body: (r.body as string) ?? "",
+    createdAt: r.created_at as string,
+    hasAttachment: (Array.isArray(r.attachments) && (r.attachments as unknown[]).length > 0) || !!r.attachment_url,
+  }));
+}
+
+export type RecentUpload = { id: string; taskId: string; name: string; uploadedBy: string; uploadedAt: string };
+
+export async function dbListRecentUploads(limit = 120): Promise<RecentUpload[]> {
+  const { data, error } = await supabase.from("pm_task_attachments")
+    .select("id,task_id,name,uploaded_by,uploaded_at")
+    .order("uploaded_at", { ascending: false }).limit(limit);
+  if (error) { console.error("dbListRecentUploads", error); return []; }
+  return (data ?? []).map((r: Row) => ({
+    id: r.id as string,
+    taskId: r.task_id as string,
+    name: (r.name as string) ?? "file",
+    uploadedBy: (r.uploaded_by as string) ?? "",
+    uploadedAt: r.uploaded_at as string,
+  }));
+}
+
 // ─── Task Comments ────────────────────────────────────────────────────────────
 
 export type CommentAttachment = {
