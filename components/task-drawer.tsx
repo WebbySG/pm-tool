@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
@@ -13,6 +14,7 @@ import { supabase, uploadAttachment } from "@/lib/supabase";
 import { errorMessage } from "@/lib/utils";
 import {
   dbListTaskComments, dbAddTaskComment, dbUpdateTaskComment, dbDeleteTaskComment, type TaskComment,
+  type CommentAttachment,
   dbListTaskActivity, type TaskActivity, dbListCommentVersions, type CommentVersion,
 } from "@/lib/db";
 
@@ -622,7 +624,7 @@ function TaskPanel({
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentBody, setCommentBody] = useState("");
-  const [commentFile, setCommentFile] = useState<File | null>(null);
+  const [commentFiles, setCommentFiles] = useState<File[]>([]);
   const [postingComment, setPostingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
@@ -630,6 +632,8 @@ function TaskPanel({
   const [editingCommentBody, setEditingCommentBody] = useState("");
   const [savingCommentEdit, setSavingCommentEdit] = useState(false);
   const [editCommentError, setEditCommentError] = useState<string | null>(null);
+  const [openingChat, setOpeningChat] = useState(false);
+  const router = useRouter();
   // Comment edit history (admin + the comment's own author). Loaded on demand.
   const [openVersionsId, setOpenVersionsId] = useState<string | null>(null);
   const [versionsByComment, setVersionsByComment] = useState<Record<string, CommentVersion[]>>({});
@@ -824,46 +828,45 @@ function TaskPanel({
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSaveCommentEdit(commentId); }
   }
 
-  // Paste an image (e.g. a screenshot) straight into the comment as its attachment.
+  // Paste images (e.g. screenshots) straight into the comment as attachments.
   function handleCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted: File[] = [];
     for (const item of Array.from(e.clipboardData?.items ?? [])) {
       if (item.kind === "file" && item.type.startsWith("image/")) {
         const f = item.getAsFile();
-        if (f) { setCommentFile(f); e.preventDefault(); return; }
+        if (f) pasted.push(f);
       }
+    }
+    if (pasted.length) {
+      e.preventDefault();
+      setCommentFiles((prev) => [...prev, ...pasted]);
     }
   }
 
   async function handlePostComment() {
     const body = commentBody.trim();
-    if (!body && !commentFile) return;
+    if (!body && commentFiles.length === 0) return;
     if (!user?.id) { setCommentError("You must be signed in to comment."); return; }
     setPostingComment(true);
     setCommentError(null);
     try {
-      let attachmentUrl: string | null = null;
-      let attachmentName: string | null = null;
-      let attachmentSize: number | null = null;
-      let attachmentType: string | null = null;
-      if (commentFile) {
-        const uploaded = await uploadAttachment(commentFile, task.id);
-        attachmentUrl = uploaded.url;
-        attachmentName = uploaded.name;
-        attachmentSize = commentFile.size;
-        attachmentType = uploaded.type;
+      const attachments: CommentAttachment[] = [];
+      for (const f of commentFiles) {
+        const uploaded = await uploadAttachment(f, task.id);
+        attachments.push({ url: uploaded.url, name: uploaded.name, size: f.size, type: uploaded.type });
       }
       // Keep only mentions whose label is still present in the body
       const activeMentions = pendingMentions.filter((m) => body.includes(`@${m.label}`));
 
       const inserted = await dbAddTaskComment({
         taskId: task.id, authorId: user.id, body,
-        attachmentUrl, attachmentName, attachmentSize, attachmentType,
+        attachments,
         mentionedUserIds: activeMentions.map((m) => m.id),
       });
       if (!inserted) { setCommentError("Failed to post comment."); return; }
       setComments((prev) => [...prev, inserted]);
       setCommentBody("");
-      setCommentFile(null);
+      setCommentFiles([]);
       setPendingMentions([]);
       if (commentFileRef.current) commentFileRef.current.value = "";
 
@@ -874,7 +877,7 @@ function TaskPanel({
         if (m.id === user.id) continue;
         await addNotification({
           title: `${authorName} mentioned you in "${task.title}"`,
-          body: body || (attachmentName ? `Attached: ${attachmentName}` : ""),
+          body: body || (attachments.length ? `Attached: ${attachments.map((a) => a.name).filter(Boolean).join(", ")}` : ""),
           type: "mention",
           projectId,
           taskId: task.id,
@@ -894,6 +897,25 @@ function TaskPanel({
     await dbDeleteTaskComment(id);
     setComments((prev) => prev.filter((c) => c.id !== id));
     setConfirmDeleteCommentId(null);
+  }
+
+  // Jump to this project's chat channel with the task pre-referenced in the
+  // composer (/chat?c=<conv>&ref=<taskId>) — keeps long discussions in Chat
+  // instead of piling up as task comments.
+  async function handleDiscussInChat() {
+    setOpeningChat(true);
+    try {
+      const { data } = await supabase
+        .from("pm_chat_conversations")
+        .select("id")
+        .eq("kind", "project")
+        .eq("project_id", projectId)
+        .limit(1)
+        .maybeSingle();
+      router.push(data?.id ? `/chat?c=${data.id}&ref=${task.id}` : "/chat");
+    } finally {
+      setOpeningChat(false);
+    }
   }
 
   function startEditComment(c: TaskComment) {
@@ -926,8 +948,8 @@ function TaskPanel({
   async function handleSaveCommentEdit(id: string) {
     const body = editingCommentBody.trim();
     const target = comments.find((c) => c.id === id);
-    // Allow an empty body only when the comment still carries an attachment.
-    if (!body && !target?.attachmentUrl) { setEditCommentError("Comment can't be empty."); return; }
+    // Allow an empty body only when the comment still carries attachments.
+    if (!body && !target?.attachments.length) { setEditCommentError("Comment can't be empty."); return; }
     if (savingCommentEdit) return;
     setSavingCommentEdit(true);
     setEditCommentError(null);
@@ -1657,6 +1679,17 @@ function TaskPanel({
             <p className="text-xs font-semibold" style={{ color: "#4a7090" }}>
               COMMENTS{comments.length > 0 ? ` · ${comments.length}` : ""}
             </p>
+            <div className="flex-1" />
+            <button
+              onClick={handleDiscussInChat}
+              disabled={openingChat}
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg hover:opacity-80 transition-opacity"
+              style={{ background: "#f472b615", color: "#f472b6", border: "1px solid #f472b635", opacity: openingChat ? 0.6 : 1 }}
+              title="Open the project chat with this task referenced — keeps discussion in one place"
+            >
+              {openingChat ? <Loader2 size={11} className="animate-spin" /> : <MessageSquare size={11} />}
+              Discuss in Chat →
+            </button>
           </div>
 
           {commentsLoading && comments.length === 0 && (
@@ -1672,7 +1705,8 @@ function TaskPanel({
                 const canDelete = c.authorId === user?.id || isAdmin;
                 const canEditOwn = c.authorId === user?.id; // only the author may edit their own words
                 const isEditing = editingCommentId === c.id;
-                const isImage = c.attachmentType === "image";
+                const imageAtts = c.attachments.filter((a) => a.type === "image");
+                const fileAtts = c.attachments.filter((a) => a.type !== "image");
                 return (
                   <div key={c.id} className="flex gap-2.5 px-3 py-2.5 rounded-lg group"
                     style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
@@ -1800,27 +1834,37 @@ function TaskPanel({
                           </p>
                         )
                       )}
-                      {c.attachmentUrl && (
-                        <div className="mt-1.5 flex items-center gap-2 px-2 py-1.5 rounded-lg"
-                          style={{ background: "#0a1626", border: "1px solid #1c3248" }}>
-                          {isImage ? (
-                            <button onClick={() => setImagePreviewUrl(c.attachmentUrl)} className="shrink-0">
-                              <img src={c.attachmentUrl} alt={c.attachmentName ?? ""} className="w-10 h-10 rounded object-cover" />
+                      {/* Image attachments — thumbnails, click to enlarge */}
+                      {imageAtts.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {imageAtts.map((a, ai) => (
+                            <button key={ai} onClick={() => setImagePreviewUrl(a.url)}
+                              className="rounded-lg overflow-hidden hover:opacity-90 transition-opacity"
+                              style={{ border: "1px solid #1c3248" }}
+                              title={a.name ? `${a.name} — click to enlarge` : "Click to enlarge"}>
+                              <img src={a.url} alt={a.name ?? ""}
+                                className="object-cover"
+                                style={{ width: imageAtts.length === 1 ? 220 : 108, height: imageAtts.length === 1 ? 150 : 108 }} />
                             </button>
-                          ) : (
-                            <FileText size={13} style={{ color: "#38b6e8" }} />
-                          )}
-                          <p className="text-xs flex-1 truncate" style={{ color: "#cce4ff" }}>{c.attachmentName}</p>
-                          <a href={c.attachmentUrl} target="_blank" rel="noreferrer"
+                          ))}
+                        </div>
+                      )}
+                      {/* Non-image attachments — file chips */}
+                      {fileAtts.map((a, ai) => (
+                        <div key={ai} className="mt-1.5 flex items-center gap-2 px-2 py-1.5 rounded-lg"
+                          style={{ background: "#0a1626", border: "1px solid #1c3248" }}>
+                          <FileText size={13} style={{ color: "#38b6e8" }} />
+                          <p className="text-xs flex-1 truncate" style={{ color: "#cce4ff" }}>{a.name}</p>
+                          <a href={a.url} target="_blank" rel="noreferrer"
                             className="p-1 rounded hover:opacity-70" style={{ color: "#4a7090" }} title="Open">
                             <ExternalLink size={11} />
                           </a>
-                          <a href={c.attachmentUrl} download={c.attachmentName ?? "file"}
+                          <a href={a.url} download={a.name ?? "file"}
                             className="p-1 rounded hover:opacity-70" style={{ color: "#38b6e8" }} title="Download">
                             <Download size={11} />
                           </a>
                         </div>
-                      )}
+                      ))}
                     </div>
                     {!isEditing && (canEditOwn || canDelete) && (
                       <div className="flex items-center gap-0.5 self-start opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1861,14 +1905,14 @@ function TaskPanel({
               if (!files.length) return;
               e.preventDefault();
               setCommentDragActive(false);
-              setCommentFile(files[0]);
+              setCommentFiles((prev) => [...prev, ...files]);
             }}
           >
             {commentDragActive && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg pointer-events-none"
                 style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
                 <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
-                  <Paperclip size={13} /> Drop image to attach
+                  <Paperclip size={13} /> Drop images to attach
                 </span>
               </div>
             )}
@@ -1892,31 +1936,52 @@ function TaskPanel({
                 className="absolute left-2 bottom-full mb-1"
               />
             )}
-            {commentFile && (
-              <div className="flex items-center gap-2 px-2 py-1 rounded text-xs"
-                style={{ background: "#0a1626", color: "#cce4ff" }}>
-                <Paperclip size={11} style={{ color: "#38b6e8" }} />
-                <span className="flex-1 truncate">{commentFile.name}</span>
-                <button onClick={() => { setCommentFile(null); if (commentFileRef.current) commentFileRef.current.value = ""; }}
-                  style={{ color: "#ef4444" }}><X size={11} /></button>
+            {commentFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {commentFiles.map((f, fi) => {
+                  const isImg = f.type.startsWith("image/");
+                  return isImg ? (
+                    <div key={fi} className="relative rounded-lg overflow-hidden" style={{ border: "1px solid #1c3248" }}>
+                      <img src={window.URL.createObjectURL(f)} alt={f.name} className="object-cover" style={{ width: 72, height: 72 }} />
+                      <button
+                        onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
+                        className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{ background: "#000000a0", color: "#fff" }} title="Remove">
+                        <X size={9} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div key={fi} className="flex items-center gap-2 px-2 py-1 rounded text-xs"
+                      style={{ background: "#0a1626", color: "#cce4ff", border: "1px solid #1c3248" }}>
+                      <Paperclip size={11} style={{ color: "#38b6e8" }} />
+                      <span className="truncate max-w-[160px]">{f.name}</span>
+                      <button onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
+                        style={{ color: "#ef4444" }} title="Remove"><X size={11} /></button>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs cursor-pointer hover:opacity-80"
                 style={{ color: "#4a7090" }}>
                 <Paperclip size={12} />
-                Attach file
-                <input ref={commentFileRef} type="file" className="hidden"
+                Attach files
+                <input ref={commentFileRef} type="file" className="hidden" multiple
                   accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
-                  onChange={(e) => setCommentFile(e.target.files?.[0] ?? null)} />
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    if (picked.length) setCommentFiles((prev) => [...prev, ...picked]);
+                    e.target.value = "";
+                  }} />
               </label>
               <div className="flex-1" />
               <button onClick={handlePostComment}
-                disabled={postingComment || (!commentBody.trim() && !commentFile)}
+                disabled={postingComment || (!commentBody.trim() && commentFiles.length === 0)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
                 style={{
                   background: "#38b6e8", color: "#fff",
-                  opacity: postingComment || (!commentBody.trim() && !commentFile) ? 0.5 : 1,
+                  opacity: postingComment || (!commentBody.trim() && commentFiles.length === 0) ? 0.5 : 1,
                 }}>
                 {postingComment ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
                 Post

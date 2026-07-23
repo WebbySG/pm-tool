@@ -302,30 +302,44 @@ export async function dbDeleteAttachment(attachmentId: string) {
 
 // ─── Task Comments ────────────────────────────────────────────────────────────
 
+export type CommentAttachment = {
+  url: string;
+  name: string | null;
+  size: number | null;
+  type: string | null; // "image" | "video" | "document" (from uploadAttachment)
+};
+
 export type TaskComment = {
   id: string;
   taskId: string;
   authorId: string;
   body: string;
-  attachmentUrl: string | null;
-  attachmentName: string | null;
-  attachmentSize: number | null;
-  attachmentType: string | null;
+  // All of this comment's files. Legacy single-attachment rows (pre multi-
+  // attachment, stored in attachment_url/name/size/type) are merged in here
+  // at read time, so the UI only ever deals with this array.
+  attachments: CommentAttachment[];
   mentionedUserIds: string[];
   createdAt: string;
   editedAt: string | null;
 };
 
 function rowToTaskComment(row: Row): TaskComment {
+  const arr = Array.isArray(row.attachments) ? (row.attachments as CommentAttachment[]) : [];
+  const attachments = arr.filter((a) => a && typeof a.url === "string" && a.url);
+  if (attachments.length === 0 && row.attachment_url) {
+    attachments.push({
+      url: row.attachment_url as string,
+      name: (row.attachment_name as string | null) ?? null,
+      size: (row.attachment_size as number | null) ?? null,
+      type: (row.attachment_type as string | null) ?? null,
+    });
+  }
   return {
     id: row.id as string,
     taskId: row.task_id as string,
     authorId: row.author_id as string,
     body: (row.body as string) ?? "",
-    attachmentUrl: (row.attachment_url as string | null) ?? null,
-    attachmentName: (row.attachment_name as string | null) ?? null,
-    attachmentSize: (row.attachment_size as number | null) ?? null,
-    attachmentType: (row.attachment_type as string | null) ?? null,
+    attachments,
     mentionedUserIds: (row.mentioned_user_ids as string[] | null) ?? [],
     createdAt: row.created_at as string,
     editedAt: (row.edited_at as string | null) ?? null,
@@ -346,10 +360,7 @@ export async function dbAddTaskComment(input: {
   taskId: string;
   authorId: string;
   body: string;
-  attachmentUrl?: string | null;
-  attachmentName?: string | null;
-  attachmentSize?: number | null;
-  attachmentType?: string | null;
+  attachments?: CommentAttachment[];
   mentionedUserIds?: string[];
 }): Promise<TaskComment | null> {
   const { data, error } = await supabase
@@ -358,10 +369,7 @@ export async function dbAddTaskComment(input: {
       task_id: input.taskId,
       author_id: input.authorId,
       body: input.body,
-      attachment_url: input.attachmentUrl ?? null,
-      attachment_name: input.attachmentName ?? null,
-      attachment_size: input.attachmentSize ?? null,
-      attachment_type: input.attachmentType ?? null,
+      attachments: input.attachments ?? [],
       mentioned_user_ids: input.mentionedUserIds ?? [],
     })
     .select("*")

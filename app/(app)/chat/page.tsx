@@ -112,11 +112,15 @@ export default function ChatPage() {
   const [newCatInput, setNewCatInput] = useState(false);
   const [newCatName, setNewCatName] = useState("");
 
-  // Deep-link: /chat?c=<id> opens that conversation; &m=<msgId> scrolls to a message.
+  // Deep-link: /chat?c=<id> opens that conversation; &m=<msgId> scrolls to a message;
+  // &ref=<taskId> pre-inserts a [task:<id>] reference into the composer (used by
+  // the task drawer's "Discuss in Chat" button).
   const searchParams = useSearchParams();
   const deepLinkRef = useRef<string | null>(null);
   useEffect(() => { const c = searchParams.get("c"); if (c) deepLinkRef.current = c; }, [searchParams]);
   const focusMessageId = searchParams.get("m");
+  const [refTaskInsert, setRefTaskInsert] = useState<string | null>(null);
+  useEffect(() => { const r = searchParams.get("ref"); if (r) setRefTaskInsert(r); }, [searchParams]);
 
   // Resolve the open task drawer (live from store)
   const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
@@ -435,6 +439,8 @@ export default function ChatPage() {
               currentUserName={user?.name ?? ""}
               isAdmin={user?.pmRole === "admin"}
               focusMessageId={focusMessageId}
+              initialTaskInsert={refTaskInsert}
+              onInitialTaskInsertConsumed={() => setRefTaskInsert(null)}
               onAfterChange={() => reloadConvs(true)}
               onDeleted={() => { setSelectedId(null); reloadConvs(true); }}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
@@ -480,7 +486,7 @@ export default function ChatPage() {
 // ────────────────────────────────────────────────────────────────────────────
 
 function MessageView({
-  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, focusMessageId, onAfterChange, onDeleted, onOpenTask,
+  conversation, displayName, liveStaff, projects, currentUserId, currentUserName, isAdmin, focusMessageId, initialTaskInsert, onInitialTaskInsertConsumed, onAfterChange, onDeleted, onOpenTask,
 }: {
   conversation: ConversationWithUnread;
   displayName: string;
@@ -490,6 +496,8 @@ function MessageView({
   currentUserName: string;
   isAdmin: boolean;
   focusMessageId?: string | null;
+  initialTaskInsert?: string | null;
+  onInitialTaskInsertConsumed?: () => void;
   onAfterChange: () => void;
   onDeleted: () => void;
   onOpenTask: (taskId: string) => void;
@@ -499,6 +507,15 @@ function MessageView({
   const [showMembers, setShowMembers] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
   const [pendingTaskInsert, setPendingTaskInsert] = useState<string | null>(null);
+
+  // "Discuss in Chat" deep link (/chat?c=<conv>&ref=<taskId>): drop the task
+  // reference into the composer once, so the first message links back to the task.
+  useEffect(() => {
+    if (!initialTaskInsert) return;
+    setPendingTaskInsert(initialTaskInsert);
+    onInitialTaskInsertConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTaskInsert]);
   // "Create task from message" dialog target
   const [taskFromMsg, setTaskFromMsg] = useState<ChatMessage | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
