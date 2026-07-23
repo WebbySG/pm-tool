@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Bell, BellRing, Search, Plus, ChevronLeft } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Bell, BellRing, Search, Plus, ChevronLeft, FolderKanban, CheckSquare } from "lucide-react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { type Task } from "@/lib/mock-data";
 import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
@@ -17,9 +19,50 @@ interface TopbarProps {
 }
 
 export function Topbar({ title, back, action }: TopbarProps) {
-  const { notifications } = useStore();
+  const { notifications, projects } = useStore();
   const { user } = useAuth();
+  const router = useRouter();
   const isAdmin = user?.pmRole === "admin";
+
+  // ── Global quick-search: matches project names + task titles, jump on click ──
+  const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const q = query.trim().toLowerCase();
+
+  const results = useMemo(() => {
+    if (!q) return { projects: [], tasks: [] as { task: Task; projectName: string; href: string }[] };
+    const visibleProjects = isAdmin
+      ? projects
+      : projects.filter((p) => !!user?.id && p.assignedStaff.includes(user.id));
+    const projHits = visibleProjects
+      .filter((p) => p.name.toLowerCase().includes(q))
+      .slice(0, 6);
+    const taskHits: { task: Task; projectName: string; href: string }[] = [];
+    for (const p of visibleProjects) {
+      const base = `/projects/${p.slug || p.id}`;
+      const walk = (ts: Task[]) => {
+        for (const t of ts) {
+          if (taskHits.length >= 8) return;
+          if (t.title.toLowerCase().includes(q) && (isAdmin || t.assigneeId === user?.id || !t.assigneeId)) {
+            taskHits.push({ task: t, projectName: p.name, href: `${base}?task=${t.id}` });
+          }
+          walk(t.subtasks);
+        }
+      };
+      walk(p.tasks);
+      if (taskHits.length >= 8) break;
+    }
+    return { projects: projHits, tasks: taskHits };
+  }, [q, projects, isAdmin, user?.id]);
+
+  const hasResults = results.projects.length > 0 || results.tasks.length > 0;
+  const searchOpen = searchFocused && q.length > 0;
+
+  function goTo(href: string) {
+    setQuery("");
+    setSearchFocused(false);
+    router.push(href);
+  }
   // Admin bell only counts approval requests; staff see their full stream.
   const unreadCount = notifications.filter((n) => {
     if (n.read) return false;
@@ -66,18 +109,81 @@ export function Topbar({ title, back, action }: TopbarProps) {
         {title}
       </h1>
 
-      {/* Search */}
-      <div
-        className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1 max-w-xs"
-        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-      >
-        <Search size={13} style={{ color: "var(--text-muted)" }} />
-        <input
-          type="text"
-          placeholder="Search..."
-          className="bg-transparent text-sm outline-none flex-1"
-          style={{ color: "var(--text)" }}
-        />
+      {/* Search — matches projects + tasks, click a result to jump there */}
+      <div className="relative flex-1 max-w-xs">
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-xl"
+          style={{ background: "var(--bg-surface)", border: `1px solid ${searchOpen ? "var(--accent)" : "var(--border)"}` }}
+        >
+          <Search size={13} style={{ color: "var(--text-muted)" }} />
+          <input
+            type="text"
+            placeholder="Search projects & tasks..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setQuery(""); setSearchFocused(false); (e.target as HTMLInputElement).blur(); }
+              if (e.key === "Enter") {
+                const first = results.projects[0]
+                  ? `/projects/${results.projects[0].slug || results.projects[0].id}`
+                  : results.tasks[0]?.href;
+                if (first) goTo(first);
+              }
+            }}
+            className="bg-transparent text-sm outline-none flex-1"
+            style={{ color: "var(--text)" }}
+          />
+          {query && (
+            <button onMouseDown={(e) => { e.preventDefault(); setQuery(""); }} style={{ color: "var(--text-muted)" }} title="Clear">✕</button>
+          )}
+        </div>
+
+        {searchOpen && (
+          <div
+            className="absolute top-full left-0 right-0 mt-1.5 rounded-xl overflow-hidden z-50"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", boxShadow: "0 12px 32px #00000070", maxHeight: "60vh", overflowY: "auto" }}
+          >
+            {!hasResults && (
+              <p className="text-xs px-3 py-3" style={{ color: "var(--text-muted)" }}>No projects or tasks match “{query.trim()}”.</p>
+            )}
+            {results.projects.length > 0 && (
+              <>
+                <p className="text-[10px] font-bold uppercase tracking-widest px-3 pt-2.5 pb-1" style={{ color: "var(--text-muted)" }}>Projects</p>
+                {results.projects.map((p) => (
+                  <button
+                    key={p.id}
+                    onMouseDown={(e) => { e.preventDefault(); goTo(`/projects/${p.slug || p.id}`); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:opacity-80"
+                    style={{ color: "var(--text)" }}
+                  >
+                    <FolderKanban size={14} style={{ color: "var(--accent)" }} className="shrink-0" />
+                    <span className="text-sm font-medium truncate flex-1">{p.name}</span>
+                    <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{p.type === "webdev" ? "Web" : p.type === "seo" ? "SEO" : "Web + SEO"}</span>
+                  </button>
+                ))}
+              </>
+            )}
+            {results.tasks.length > 0 && (
+              <>
+                <p className="text-[10px] font-bold uppercase tracking-widest px-3 pt-2.5 pb-1" style={{ color: "var(--text-muted)" }}>Tasks</p>
+                {results.tasks.map(({ task, projectName, href }) => (
+                  <button
+                    key={task.id}
+                    onMouseDown={(e) => { e.preventDefault(); goTo(href); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:opacity-80"
+                    style={{ color: "var(--text)" }}
+                  >
+                    <CheckSquare size={14} style={{ color: task.status === "done" ? "#22c55e" : "var(--text-muted)" }} className="shrink-0" />
+                    <span className="text-sm truncate flex-1" style={{ textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</span>
+                    <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{projectName}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Enable desktop alerts (only when not yet granted) */}
