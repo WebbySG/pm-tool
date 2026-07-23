@@ -1479,6 +1479,8 @@ function Composer({
   const [error, setError] = useState<string | null>(null);
   const [mentionMenu, setMentionMenu] = useState<{ query: string; startIdx: number } | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ query: string; startIdx: number } | null>(null);
+  // Highlighted row in whichever suggestion menu is open (arrow keys + Enter).
+  const [menuIndex, setMenuIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -1507,11 +1509,13 @@ function Composer({
     if (mention) {
       setMentionMenu({ query: mention[1].toLowerCase(), startIdx: caret - mention[0].length });
       setTaskMenu(null);
+      setMenuIndex(0);
     } else if (taskTrigger) {
       // startIdx points at the '#' character (skip the leading space/start)
       const hashOffset = taskTrigger[0].startsWith("#") ? 0 : 1;
       setTaskMenu({ query: taskTrigger[1].toLowerCase(), startIdx: caret - taskTrigger[0].length + hashOffset });
       setMentionMenu(null);
+      setMenuIndex(0);
     } else {
       setMentionMenu(null);
       setTaskMenu(null);
@@ -1612,7 +1616,24 @@ function Composer({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey && !mentionMenu && !taskMenu) {
+    // While a suggestion menu is showing, the keyboard drives the menu:
+    // ↑/↓ move, Enter/Tab insert the highlighted item, Escape closes.
+    const mentionActive = !!mentionMenu && mentionMatches.length > 0;
+    const taskActive = !!taskMenu && taskMatches.length > 0;
+    if (mentionActive || taskActive) {
+      const count = mentionActive ? mentionMatches.length : taskMatches.length;
+      if (e.key === "ArrowDown") { e.preventDefault(); setMenuIndex((i) => (i + 1) % count); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setMenuIndex((i) => (i - 1 + count) % count); return; }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const idx = Math.min(menuIndex, count - 1);
+        if (mentionActive) pickMention(mentionMatches[idx]);
+        else pickTask(taskMatches[idx].id);
+        return;
+      }
+      if (e.key === "Escape") { setMentionMenu(null); setTaskMenu(null); return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
@@ -1688,12 +1709,12 @@ function Composer({
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             <CheckSquare size={10} /> reference a task
           </div>
-          {taskMatches.map((t) => {
+          {taskMatches.map((t, i) => {
             const c = taskStatusColor[t.status] ?? "#64748b";
             return (
-              <button key={t.id} onClick={() => pickTask(t.id)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:opacity-80"
-                style={{ color: "var(--text)" }}>
+              <button key={t.id} onClick={() => pickTask(t.id)} onMouseEnter={() => setMenuIndex(i)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm"
+                style={{ color: "var(--text)", background: i === menuIndex ? "var(--accent)18" : "transparent" }}>
                 <CircleDashed size={11} style={{ color: c }} />
                 <span className="truncate flex-1">{t.title}</span>
                 <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{t.projectName}</span>
@@ -1710,10 +1731,10 @@ function Composer({
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             <AtSign size={10} /> mention
           </div>
-          {mentionMatches.map((s) => (
-            <button key={s.id} onClick={() => pickMention(s)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:opacity-80"
-              style={{ color: "var(--text)" }}>
+          {mentionMatches.map((s, i) => (
+            <button key={s.id} onClick={() => pickMention(s)} onMouseEnter={() => setMenuIndex(i)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm"
+              style={{ color: "var(--text)", background: i === menuIndex ? "var(--accent)18" : "transparent" }}>
               <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                 style={{ background: avatarColor(s, liveStaff), color: "#fff" }}>
                 {staffInitials(s)}
