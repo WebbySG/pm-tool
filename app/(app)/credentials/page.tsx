@@ -4,7 +4,7 @@ import { Topbar } from "@/components/topbar";
 import { type Credential } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
-import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2, Pencil, X, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2, Pencil, X, Loader2, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { errorMessage } from "@/lib/utils";
 
@@ -137,11 +137,15 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
           <p className="text-sm font-mono" style={{ color: "#cce4ff" }}>{cred.username}</p>
           <button
             onClick={() => copyToClipboard(cred.username, "user")}
-            className="p-1 rounded hover:opacity-70 transition-opacity"
-            style={{ color: copied === "user" ? "#22c55e" : "#4a7090" }}
+            className="p-1.5 rounded-md hover:opacity-80 transition-opacity"
+            style={{
+              color: copied === "user" ? "#22c55e" : "#9fb6cf",
+              background: "#0e1e30",
+              border: `1px solid ${copied === "user" ? "#22c55e40" : "#2a4a6a"}`,
+            }}
             title="Copy username"
           >
-            {copied === "user" ? <Check size={12} /> : <Copy size={12} />}
+            {copied === "user" ? <Check size={13} /> : <Copy size={13} />}
           </button>
         </div>
       </div>
@@ -155,19 +159,23 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
           </p>
           <button
             onClick={() => setShowPassword(!showPassword)}
-            className="p-1 rounded hover:opacity-70 transition-opacity"
-            style={{ color: "#4a7090" }}
-            title={showPassword ? "Hide" : "Show"}
+            className="p-1.5 rounded-md hover:opacity-80 transition-opacity"
+            style={{ color: "#9fb6cf", background: "#0e1e30", border: "1px solid #2a4a6a" }}
+            title={showPassword ? "Hide password" : "Show password"}
           >
-            {showPassword ? <EyeOff size={12} /> : <Eye size={12} />}
+            {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
           <button
             onClick={() => copyToClipboard(cred.password, "pass")}
-            className="p-1 rounded hover:opacity-70 transition-opacity"
-            style={{ color: copied === "pass" ? "#22c55e" : "#4a7090" }}
+            className="p-1.5 rounded-md hover:opacity-80 transition-opacity"
+            style={{
+              color: copied === "pass" ? "#22c55e" : "#9fb6cf",
+              background: "#0e1e30",
+              border: `1px solid ${copied === "pass" ? "#22c55e40" : "#2a4a6a"}`,
+            }}
             title="Copy password"
           >
-            {copied === "pass" ? <Check size={12} /> : <Copy size={12} />}
+            {copied === "pass" ? <Check size={13} /> : <Copy size={13} />}
           </button>
         </div>
       </div>
@@ -212,10 +220,11 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
           <button
             ref={manageBtnRef}
             onClick={toggleAccessMenu}
-            className="text-xs px-2 py-0.5 rounded-lg hover:opacity-80 transition-opacity"
-            style={{ background: "#1c3248", color: "#4a7090" }}
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg hover:opacity-80 transition-opacity"
+            style={{ background: "#1c3248", color: "#cce4ff", border: "1px solid #2a4a6a" }}
+            title="Choose which staff can see this credential"
           >
-            Manage
+            <Users size={12} /> Manage
           </button>
 
           {showAccessMenu && menuPos && (
@@ -258,22 +267,24 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
       {isAdmin && (
         <button
           onClick={openEdit}
-          className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
-          style={{ color: "#8b90a750" }}
-          title="Edit credential"
+          className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg hover:opacity-80 transition-opacity shrink-0"
+          style={{ background: "#0e1e30", color: "#9fb6cf", border: "1px solid #2a4a6a" }}
+          title="Edit this credential's details"
         >
-          <Pencil size={13} />
+          <Pencil size={12} /> Edit
         </button>
       )}
 
       {isAdmin && (
         <button
           onClick={handleDelete}
-          className="p-1.5 rounded-lg hover:opacity-70 transition-opacity shrink-0"
-          style={{ color: confirmDelete ? "#ef4444" : "#8b90a750" }}
-          title={confirmDelete ? "Click again to confirm" : "Delete"}
+          className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg hover:opacity-90 transition-all shrink-0"
+          style={confirmDelete
+            ? { background: "#ef4444", color: "#fff", border: "1px solid #ef4444" }
+            : { background: "#ef444412", color: "#ef4444", border: "1px solid #ef444435" }}
+          title={confirmDelete ? "Click again to permanently delete" : "Delete this credential"}
         >
-          <Trash2 size={13} />
+          <Trash2 size={12} /> {confirmDelete ? "Confirm?" : "Delete"}
         </button>
       )}
 
