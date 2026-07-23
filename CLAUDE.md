@@ -413,6 +413,17 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_invoice_logs` | `id`, `invoice_id`, `event`, `detail`, `actor` — invoice activity audit trail |
 | `pm_clients` extension | added `billing_email`, `billing_address` (nullable) for invoice prefill |
 
+### Review Workflow Roll-up & Completion Cascade (2026-07-23)
+
+Children/grandchildren at ANY depth have the full submit-for-review / approve / request-revision workflow (each drawer child panel carries the same footer controls). Two automatic rules in [lib/store.ts](lib/store.ts) (`rollupTopStatus`, `cascadeDescendantsDone`, wired into `updateTaskStatus`/`updateSubtaskStatus`/`requestTaskApproval`/`approveTaskCompletion`/`rejectTask`):
+- **Roll-up (descendant → TOP-level task):** any descendant `revision_required` ⇒ top becomes `revision_required` (even reopening a done top); else any descendant `pending_review` ⇒ top becomes `pending_review` (unless top is done); when the last pending/revision descendant resolves, an auto-rolled top drops back to `in_progress`. Only fires for descendant changes — changing a top-level task directly never rolls onto itself. Purpose: the kanban/tasks board always shows that something under a parent needs attention.
+- **Completion cascade (parent → descendants):** marking any task `done` (incl. admin Approve) marks every incomplete descendant done (one bulk `dbUpdateTasksBulk`); `missed` tombstones are never touched.
+- Notification `?task=` deep links may target SUBTASKS — the project page searches the whole tree (`findDeep`) when opening the drawer from a link.
+
+### Readable URLs (project slugs, 2026-07-23)
+
+`pm_projects.slug` (unique, e.g. `asc-racking`) is maintained by DB trigger `pm_projects_set_slug` (insert + rename; `-2`/`-3` suffixes on collision; backfilled live). `/projects/[id]` resolves **slug OR uuid** (resolve early → use the real UUID for DB calls like weekly reports); nav links prefer slug (`projectPath()` in [lib/utils.ts](lib/utils.ts), or inline `p.slug || p.id`). Chat `?c=` accepts a conversation id OR a project slug/id (resolves to the project channel), and the chat page scrubs consumed deep-link params from the address bar (`router.replace("/chat")`, kept when `&m=` needs the scroll). Task references stay UUIDs on purpose — titles repeat (9× "Backlinks" weekly) and change (`— carried over`), so they can't be URL identity. Stored notification `link`s keep UUIDs (always resolvable).
+
 ### Key Development Patterns
 
 - **Live staff:** Always fetch from `staff_members` where `status = 'active'`. Auth ID = `s.user_id ?? s.id`

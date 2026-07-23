@@ -173,7 +173,17 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (!taskQueryId || !projectRaw) return;
-    const t = projectRaw.tasks.find((x) => x.id === taskQueryId);
+    // Search the whole tree — notification links may point at a subtask
+    // (e.g. a child article submitted for review).
+    const findDeep = (ts: Task[]): Task | null => {
+      for (const x of ts) {
+        if (x.id === taskQueryId) return x;
+        const hit = findDeep(x.subtasks);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const t = findDeep(projectRaw.tasks);
     if (t) setSelectedTask(t);
   }, [taskQueryId, projectRaw?.id, projectRaw?.tasks.length]);
 

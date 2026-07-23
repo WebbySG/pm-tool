@@ -251,6 +251,12 @@ export async function dbUpdateTask(taskId: string, patch: Row) {
   await supabase.from("pm_tasks").update(patch).eq("id", taskId);
 }
 
+export async function dbUpdateTasksBulk(taskIds: string[], patch: Row) {
+  if (taskIds.length === 0) return;
+  const { error } = await supabase.from("pm_tasks").update(patch).in("id", taskIds);
+  if (error) console.error("dbUpdateTasksBulk", error);
+}
+
 export async function dbDeleteTask(taskId: string) {
   await supabase.from("pm_tasks").delete().eq("id", taskId);
 }

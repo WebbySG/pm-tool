@@ -208,6 +208,74 @@ async function clearTaskDeletionRequests(get: () => Store, taskId: string) {
   for (const n of pending) await get().markNotificationRead(n.id);
 }
 
+type StoreSet = (fn: (s: Store) => Partial<Store>) => void;
+
+// ── Review-workflow helpers (children at any depth) ──────────────────────────
+
+// "Completing the parent completes everything under it": mark every incomplete
+// descendant done, locally + in the DB. 'missed' tombstones are a permanent
+// record of unposted weekly articles and are never touched.
+async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId: string, taskId: string) {
+  const proj = get().projects.find((p) => p.id === projectId);
+  if (!proj) return;
+  const t = findTaskInTree(proj.tasks, taskId);
+  if (!t) return;
+  const ids: string[] = [];
+  const walk = (x: Task) => {
+    for (const s of x.subtasks) {
+      if (s.status !== "done" && s.status !== "missed") ids.push(s.id);
+      walk(s);
+    }
+  };
+  walk(t);
+  if (ids.length === 0) return;
+  set((s) => ({
+    projects: patchProject(s.projects, projectId, (p) => {
+      let tasks = p.tasks;
+      for (const id of ids) tasks = patchTaskInTree(tasks, id, { status: "done" });
+      return { ...p, tasks };
+    }),
+  }));
+  await db.dbUpdateTasksBulk(ids, { status: "done" });
+}
+
+// Roll a child's review state up to its TOP-LEVEL task so pending work is
+// impossible to miss at board level:
+//   any descendant revision_required → top revision_required (reopens a done top)
+//   else any descendant pending_review → top pending_review (unless top is done)
+//   else top sat in pending/revision → top in_progress (auto-resolve)
+// Only descendant changes trigger this — changing a top-level task directly
+// never rolls (so submitting/approving the top task itself is untouched).
+async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: string, changedTaskId: string) {
+  const proj = get().projects.find((p) => p.id === projectId);
+  if (!proj) return;
+  const byId = new Map<string, Task>();
+  const index = (ts: Task[]) => { for (const t of ts) { byId.set(t.id, t); index(t.subtasks); } };
+  index(proj.tasks);
+  const changed = byId.get(changedTaskId);
+  if (!changed || !changed.parentId) return;
+  let top = changed;
+  while (top.parentId && byId.get(top.parentId)) top = byId.get(top.parentId)!;
+  let rev = false, pend = false;
+  const walk = (x: Task) => {
+    for (const s of x.subtasks) {
+      if (s.status === "revision_required") rev = true;
+      else if (s.status === "pending_review") pend = true;
+      walk(s);
+    }
+  };
+  walk(top);
+  let desired: TaskStatus | null = null;
+  if (rev) desired = "revision_required";
+  else if (pend) desired = top.status === "done" ? null : "pending_review";
+  else if (top.status === "pending_review" || top.status === "revision_required") desired = "in_progress";
+  if (!desired || desired === top.status) return;
+  const topId = top.id;
+  const status = desired;
+  set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, topId, { status }) })) }));
+  await db.dbUpdateTask(topId, { status });
+}
+
 export const useStore = create<Store>()(
   persist(
   (set, get) => ({
@@ -431,6 +499,7 @@ export const useStore = create<Store>()(
   requestTaskApproval: async (projectId, taskId, staffName, taskTitle) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "pending_review" }) })) }));
     await db.dbUpdateTask(taskId, { status: "pending_review" });
+    await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Task Approval Requested",
       body: `${staffName} has completed "${taskTitle}" and is requesting your approval.`,
@@ -445,7 +514,9 @@ export const useStore = create<Store>()(
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
+    await cascadeDescendantsDone(set, get, projectId, taskId);
     await clearTaskApprovalRequests(get, taskId);
+    await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Task Approved",
       body: `"${taskTitle}" has been approved and marked as complete.`,
@@ -463,6 +534,7 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "revision_required" }) })) }));
     await db.dbUpdateTask(taskId, { status: "revision_required" });
     await clearTaskApprovalRequests(get, taskId);
+    await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Revision Required",
       body: `"${taskTitle}" requires revisions before it can be approved.`,
@@ -530,6 +602,8 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
     await db.dbUpdateTask(taskId, { status });
     if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
+    if (status === "done") await cascadeDescendantsDone(set, get, projectId, taskId);
+    await rollupTopStatus(set, get, projectId, taskId);
   },
 
   updateTaskPriority: async (projectId, taskId, priority) => {
@@ -671,6 +745,8 @@ export const useStore = create<Store>()(
   updateSubtaskStatus: async (projectId, _parentTaskId, subtaskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, { status }) })) }));
     await db.dbUpdateTask(subtaskId, { status });
+    if (status === "done") await cascadeDescendantsDone(set, get, projectId, subtaskId);
+    await rollupTopStatus(set, get, projectId, subtaskId);
   },
 
   deleteTask: async (projectId, taskId) => {
