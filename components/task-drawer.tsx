@@ -30,6 +30,34 @@ function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
+// Comment body renderer: highlights @mentions and renders inline [img:url]
+// tokens as images on their own line (click → lightbox). Mirrors chat's
+// RenderBody but scoped to what comments support.
+function CommentBody({ body, onOpenImage }: { body: string; onOpenImage: (url: string) => void }) {
+  const combined = /(@[A-Za-z][A-Za-z0-9_-]*)|(\[img:[^\]\s]+\])/g;
+  const parts: React.ReactNode[] = [];
+  let lastIdx = 0; let m: RegExpExecArray | null; let key = 0;
+  while ((m = combined.exec(body)) !== null) {
+    if (m.index > lastIdx) parts.push(<span key={`t${key++}`}>{body.slice(lastIdx, m.index)}</span>);
+    if (m[1]) {
+      parts.push(<span key={`m${key++}`} style={{ color: "#38b6e8", fontWeight: 600 }}>{m[1]}</span>);
+    } else if (m[2]) {
+      const url = m[2].slice(5, -1);
+      parts.push(
+        <button key={`i${key++}`} type="button" onClick={() => onOpenImage(url)}
+          className="block my-1.5 w-fit hover:opacity-90" title="Click to enlarge">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={url} alt="" loading="lazy"
+            style={{ maxWidth: 280, maxHeight: 240, borderRadius: 10, border: "1px solid #1c3248", display: "block" }} />
+        </button>,
+      );
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < body.length) parts.push(<span key={`t${key++}`}>{body.slice(lastIdx)}</span>);
+  return <>{parts}</>;
+}
+
 // @-mention autocomplete list, shared by the comment composer and the in-place
 // comment edit box. Parent positions it (absolute) via className.
 function MentionDropdown({ candidates, activeIndex, onPick, className }: {
@@ -828,24 +856,69 @@ function TaskPanel({
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSaveCommentEdit(commentId); }
   }
 
-  // Paste images (e.g. screenshots) straight into the comment as attachments.
-  function handleCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const pasted: File[] = [];
+  // ── Inline comment images ──────────────────────────────────────────────────
+  // Pasted/dropped images upload immediately and insert an [img:url] token at
+  // the caret, so text and images interleave line-by-line (like chat).
+  const [uploadingCommentImgs, setUploadingCommentImgs] = useState(0);
+
+  async function insertCommentInlineImages(files: File[], target: "new" | "edit") {
+    setUploadingCommentImgs((n) => n + files.length);
+    for (const f of files) {
+      try {
+        const up = await uploadAttachment(f, task.id);
+        const setBody = target === "new" ? setCommentBody : setEditingCommentBody;
+        const ref = target === "new" ? commentTextareaRef : editTextareaRef;
+        setBody((prev) => {
+          const el = ref.current;
+          const caret = el?.selectionStart ?? prev.length;
+          const before = prev.slice(0, caret);
+          const after = prev.slice(caret);
+          const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+          const insert = `${sep}[img:${up.url}]\n`;
+          const pos = (before + insert).length;
+          requestAnimationFrame(() => { const t = ref.current; if (t) { t.focus(); t.setSelectionRange(pos, pos); } });
+          return before + insert + after;
+        });
+      } catch (err) {
+        setCommentError(errorMessage(err));
+      } finally {
+        setUploadingCommentImgs((n) => n - 1);
+      }
+    }
+  }
+
+  function pastedImages(e: React.ClipboardEvent<HTMLTextAreaElement>): File[] {
+    const out: File[] = [];
     for (const item of Array.from(e.clipboardData?.items ?? [])) {
       if (item.kind === "file" && item.type.startsWith("image/")) {
         const f = item.getAsFile();
-        if (f) pasted.push(f);
+        if (f) out.push(f);
       }
     }
+    return out;
+  }
+
+  // Paste images (e.g. screenshots) straight into the comment, inline at the caret.
+  function handleCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = pastedImages(e);
     if (pasted.length) {
       e.preventDefault();
-      setCommentFiles((prev) => [...prev, ...pasted]);
+      void insertCommentInlineImages(pasted, "new");
+    }
+  }
+
+  function handleEditCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = pastedImages(e);
+    if (pasted.length) {
+      e.preventDefault();
+      void insertCommentInlineImages(pasted, "edit");
     }
   }
 
   async function handlePostComment() {
     const body = commentBody.trim();
     if (!body && commentFiles.length === 0) return;
+    if (uploadingCommentImgs > 0) return; // wait for pasted images to finish uploading
     if (!user?.id) { setCommentError("You must be signed in to comment."); return; }
     setPostingComment(true);
     setCommentError(null);
@@ -877,7 +950,7 @@ function TaskPanel({
         if (m.id === user.id) continue;
         await addNotification({
           title: `${authorName} mentioned you in "${task.title}"`,
-          body: body || (attachments.length ? `Attached: ${attachments.map((a) => a.name).filter(Boolean).join(", ")}` : ""),
+          body: body.replace(/\[img:[^\]\s]+\]/g, "📷").trim() || (attachments.length ? `Attached: ${attachments.map((a) => a.name).filter(Boolean).join(", ")}` : ""),
           type: "mention",
           projectId,
           taskId: task.id,
@@ -974,7 +1047,7 @@ function TaskPanel({
         if (m.id === user?.id || prevMentionIds.has(m.id)) continue;
         await addNotification({
           title: `${authorName} mentioned you in "${task.title}"`,
-          body,
+          body: body.replace(/\[img:[^\]\s]+\]/g, "📷").trim(),
           type: "mention",
           projectId,
           taskId: task.id,
@@ -1791,8 +1864,9 @@ function TaskPanel({
                               value={editingCommentBody}
                               onChange={handleEditCommentChange}
                               onKeyDown={(e) => handleEditCommentKeyDown(e, c.id)}
+                              onPaste={handleEditCommentPaste}
                               onBlur={() => setTimeout(() => setEditMentionQuery(null), 150)}
-                              placeholder="Edit your comment... type @ to mention someone"
+                              placeholder="Edit your comment... type @ to mention someone, paste images inline"
                               rows={3}
                               className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-none block"
                               style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff" }}
@@ -1832,13 +1906,9 @@ function TaskPanel({
                         </div>
                       ) : (
                         c.body && (
-                          <p className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
-                            {c.body.split(/(@[A-Za-z][A-Za-z0-9_-]*)/g).map((part, i) =>
-                              part.startsWith("@")
-                                ? <span key={i} style={{ color: "#38b6e8", fontWeight: 600 }}>{part}</span>
-                                : <span key={i}>{part}</span>
-                            )}
-                          </p>
+                          <div className="text-sm whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>
+                            <CommentBody body={c.body} onOpenImage={(url) => setImagePreviewUrl(url)} />
+                          </div>
                         )
                       )}
                       {/* Image attachments — thumbnails, click to enlarge */}
@@ -1912,7 +1982,10 @@ function TaskPanel({
               if (!files.length) return;
               e.preventDefault();
               setCommentDragActive(false);
-              setCommentFiles((prev) => [...prev, ...files]);
+              const imgs = files.filter((f) => f.type.startsWith("image/"));
+              if (imgs.length) void insertCommentInlineImages(imgs, "new");
+              const others = files.filter((f) => !f.type.startsWith("image/"));
+              if (others.length) setCommentFiles((prev) => [...prev, ...others]);
             }}
           >
             {commentDragActive && (
@@ -1930,7 +2003,7 @@ function TaskPanel({
               onKeyDown={handleCommentKeyDown}
               onPaste={handleCommentPaste}
               onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-              placeholder="Leave a comment, ask a question, or @mention someone... (drag or paste an image to attach)"
+              placeholder="Leave a comment, ask a question, or @mention someone... (paste images anywhere — they appear inline)"
               rows={2}
               className="bg-transparent text-sm outline-none resize-none"
               style={{ color: "#cce4ff" }}
@@ -1969,6 +2042,11 @@ function TaskPanel({
                 })}
               </div>
             )}
+            {uploadingCommentImgs > 0 && (
+              <p className="text-xs flex items-center gap-1.5" style={{ color: "#38b6e8" }}>
+                <Loader2 size={11} className="animate-spin" /> Uploading image{uploadingCommentImgs > 1 ? "s" : ""}…
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs cursor-pointer hover:opacity-80"
                 style={{ color: "#4a7090" }}>
@@ -1978,17 +2056,20 @@ function TaskPanel({
                   accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
                   onChange={(e) => {
                     const picked = Array.from(e.target.files ?? []);
-                    if (picked.length) setCommentFiles((prev) => [...prev, ...picked]);
+                    const imgs = picked.filter((f) => f.type.startsWith("image/"));
+                    if (imgs.length) void insertCommentInlineImages(imgs, "new");
+                    const others = picked.filter((f) => !f.type.startsWith("image/"));
+                    if (others.length) setCommentFiles((prev) => [...prev, ...others]);
                     e.target.value = "";
                   }} />
               </label>
               <div className="flex-1" />
               <button onClick={handlePostComment}
-                disabled={postingComment || (!commentBody.trim() && commentFiles.length === 0)}
+                disabled={postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
                 style={{
                   background: "#38b6e8", color: "#fff",
-                  opacity: postingComment || (!commentBody.trim() && commentFiles.length === 0) ? 0.5 : 1,
+                  opacity: postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0) ? 0.5 : 1,
                 }}>
                 {postingComment ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
                 Post
