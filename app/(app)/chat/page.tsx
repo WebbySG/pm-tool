@@ -1148,6 +1148,19 @@ function MessageItem({
     if (!editBody.trim()) return;
     const mentions = resolveMentions(editBody, liveStaff.map((s) => ({ id: staffAuthId(s), firstName: s.first_name })));
     await editMessage(msg.id, editBody, mentions);
+    // Notify ONLY people newly tagged by this edit — existing mentions never re-fire.
+    const prev = new Set(msg.mentionedUserIds ?? []);
+    const fresh = mentions.filter((uid) => uid !== currentUserId && !prev.has(uid));
+    if (fresh.length > 0) {
+      const me = liveStaff.find((s) => staffAuthId(s) === currentUserId);
+      await supabase.from("pm_notifications").insert(fresh.map((uid) => ({
+        user_id: uid,
+        type: "mention",
+        title: `${me ? staffName(me) : "Someone"} mentioned you in chat`,
+        body: editBody.slice(0, 200),
+        link: `/chat?c=${msg.conversationId}&m=${msg.id}`,
+      })));
+    }
     setEditing(false);
     onSaved();
   }
