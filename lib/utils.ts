@@ -14,6 +14,14 @@ export function cn(...inputs: ClassValue[]) {
  * `String(e)` → "[object Object]", hiding the real cause. Route user-facing
  * error displays through this helper instead.
  */
+/**
+ * URL for a project page — prefers the human-readable slug ("/projects/asc-racking")
+ * and falls back to the UUID. The /projects/[id] route resolves both.
+ */
+export function projectPath(p: { id: string; slug?: string | null }): string {
+  return `/projects/${p.slug || p.id}`;
+}
+
 export function errorMessage(e: unknown): string {
   if (e == null) return "Unknown error";
   if (typeof e === "string") return e;

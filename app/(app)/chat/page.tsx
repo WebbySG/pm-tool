@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useAuth } from "@/lib/auth-context";
 import { useStore, uuid } from "@/lib/store";
@@ -126,13 +126,24 @@ export default function ChatPage() {
   const openTaskRef = useMemo(() => openTaskId ? findTaskById(projects, openTaskId) : null, [openTaskId, projects]);
 
   // Apply the deep link once the target conversation is present in the list.
+  // `c` may be a conversation id OR a project slug/id (resolves to that
+  // project's channel). Once applied, scrub the raw ids from the address bar
+  // (unless &m= needs to stay for the scroll-to-message flow).
+  const router = useRouter();
   useEffect(() => {
     const target = deepLinkRef.current;
-    if (target && convs.some((c) => c.id === target)) {
-      setSelectedId(target);
-      deepLinkRef.current = null;
+    if (!target) return;
+    let conv = convs.find((c) => c.id === target);
+    if (!conv) {
+      const proj = projects.find((p) => p.slug === target || p.id === target);
+      if (proj) conv = convs.find((c) => c.projectId === proj.id);
     }
-  }, [convs]);
+    if (conv) {
+      setSelectedId(conv.id);
+      deepLinkRef.current = null;
+      if (!searchParams.get("m")) router.replace("/chat", { scroll: false });
+    }
+  }, [convs, projects, router, searchParams]);
 
   // Load staff + conversations
   useEffect(() => {
@@ -506,10 +517,10 @@ function MessageView({
   const [loading, setLoading] = useState(true);
   const [showMembers, setShowMembers] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
-  const [pendingTaskInsert, setPendingTaskInsert] = useState<string | null>(null);
-
-  // "Discuss in Chat" deep link (/chat?c=<conv>&ref=<taskId>): drop the task
-  // reference into the composer once, so the first message links back to the task.
+  // "Discuss in Chat" deep link (/chat?c=<conv>&ref=<taskId>): seed the task
+  // reference straight into the composer at mount (state initializer — no
+  // effect-timing dependence), so the first message links back to the task.
+  const [pendingTaskInsert, setPendingTaskInsert] = useState<string | null>(initialTaskInsert ?? null);
   useEffect(() => {
     if (!initialTaskInsert) return;
     setPendingTaskInsert(initialTaskInsert);

@@ -121,7 +121,7 @@ function ClientCard({ client }: { client: Client }) {
             {clientProjects.map((p) => (
               <Link
                 key={p.id}
-                href={`/projects/${p.id}`}
+                href={`/projects/${p.slug || p.id}`}
                 className="flex items-center gap-2 text-sm hover:opacity-70 transition-opacity"
                 style={{ color: "#cce4ff" }}
               >

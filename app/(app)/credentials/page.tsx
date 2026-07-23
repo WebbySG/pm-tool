@@ -130,11 +130,11 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
         {cred.notes && <p className="text-xs mt-0.5 truncate" style={{ color: "#8b90a750" }}>{cred.notes}</p>}
       </div>
 
-      {/* Username */}
+      {/* Username — amber, so it reads differently from password/project at a glance */}
       <div className="shrink-0">
-        <p className="text-xs mb-0.5" style={{ color: "#4a7090" }}>Username</p>
+        <p className="text-xs mb-0.5 font-medium" style={{ color: "#fbbf2499" }}>Username</p>
         <div className="flex items-center gap-1.5">
-          <p className="text-sm font-mono" style={{ color: "#cce4ff" }}>{cred.username}</p>
+          <p className="text-sm font-mono" style={{ color: "#fbbf24" }}>{cred.username}</p>
           <button
             onClick={() => copyToClipboard(cred.username, "user")}
             className="p-1.5 rounded-md hover:opacity-80 transition-opacity"
@@ -150,11 +150,11 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
         </div>
       </div>
 
-      {/* Password */}
+      {/* Password — purple, distinct from the amber username */}
       <div className="shrink-0">
-        <p className="text-xs mb-0.5" style={{ color: "#4a7090" }}>Password</p>
+        <p className="text-xs mb-0.5 font-medium" style={{ color: "#c084fc99" }}>Password</p>
         <div className="flex items-center gap-1.5">
-          <p className="text-sm font-mono" style={{ color: "#cce4ff" }}>
+          <p className="text-sm font-mono" style={{ color: "#c084fc" }}>
             {showPassword ? cred.password : "••••••••"}
           </p>
           <button
@@ -474,7 +474,7 @@ export default function CredentialsPage() {
               <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "#38b6e820", color: "#38b6e8" }}>
                 {name ? name[0].toUpperCase() : "?"}
               </div>
-              <h2 className="font-semibold text-sm" style={{ color: "#cce4ff" }}>{name || "No client"}</h2>
+              <h2 className="font-semibold text-sm" style={{ color: "#38b6e8" }}>{name || "No client"}</h2>
               <span className="text-xs ml-1" style={{ color: "#4a7090" }}>· {creds.length} credential{creds.length !== 1 ? "s" : ""}</span>
             </div>
             <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>

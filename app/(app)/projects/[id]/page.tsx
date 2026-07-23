@@ -62,6 +62,10 @@ export default function ProjectDetailPage() {
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const { projects, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  // The URL segment may be the readable slug ("asc-racking") or the UUID —
+  // resolve once and use the real UUID for every DB call below.
+  const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
+  const projectId = projectRaw?.id ?? params.id;
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content" | "reports">("board");
   // ── Weekly reports state ──────────────────────────────────────────────────
@@ -95,7 +99,7 @@ export default function ProjectDetailPage() {
     recurring: null, recurringDay: "", tags: "",
   };
   const [newTask, setNewTask, clearTaskDraft, taskRestored] = useDraft(
-    `add-task:${params.id}`, initialTask
+    `add-task:${projectId}`, initialTask
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -113,8 +117,8 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (activeTab !== "reports") return;
     setReportsLoading(true);
-    dbGetWeeklyReports(params.id).then((data) => { setReports(data); setReportsLoading(false); });
-  }, [activeTab, params.id]);
+    dbGetWeeklyReports(projectId).then((data) => { setReports(data); setReportsLoading(false); });
+  }, [activeTab, projectId]);
 
   // Default the new-report week to Monday of the current week
   useEffect(() => {
@@ -142,7 +146,7 @@ export default function ProjectDetailPage() {
         const assignee = liveStaff.find((s) => staffAuthId(s) === t.assigneeId);
         return { id: t.id, title: t.title, status: t.status, assigneeName: assignee ? staffName(assignee) : "", dueDate: t.dueDate ?? "" };
       });
-    const report = await dbCreateWeeklyReport(params.id, newReportWeek, newReportNotes, snap, user?.id ?? null);
+    const report = await dbCreateWeeklyReport(projectId, newReportWeek, newReportNotes, snap, user?.id ?? null);
     if (report) setReports((prev) => [report, ...prev]);
     setShowNewReport(false);
     setNewReportNotes("");
@@ -166,8 +170,6 @@ export default function ProjectDetailPage() {
     await dbDeleteWeeklyReport(id);
     setReports((prev) => prev.filter((r) => r.id !== id));
   }
-
-  const projectRaw = projects.find((p) => p.id === params.id);
 
   useEffect(() => {
     if (!taskQueryId || !projectRaw) return;

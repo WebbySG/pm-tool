@@ -147,7 +147,7 @@ export default function DashboardPage() {
                   return (
                     <Link
                       key={project.id}
-                      href={`/projects/${project.id}`}
+                      href={`/projects/${project.slug || project.id}`}
                       className="flex items-center gap-4 px-5 py-4 group transition-all"
                       style={{ borderBottom: pi < projects.slice(0, 5).length - 1 ? "1px solid #1c2030" : "none" }}
                       onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#12151f")}

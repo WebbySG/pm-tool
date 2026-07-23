@@ -38,6 +38,7 @@ function rowToTask(row: Row): Task {
 function rowToProject(row: Row, tasks: Task[] = []): Project {
   return {
     id: row.id as string,
+    slug: (row.slug as string | null) ?? null,
     name: row.name as string,
     description: (row.description as string) ?? "",
     type: row.type as "seo" | "webdev" | "both",

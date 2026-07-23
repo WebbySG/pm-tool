@@ -165,6 +165,9 @@ export interface PinnedItem {
 
 export interface Project {
   id: string;
+  // Human-readable URL slug (e.g. "asc-racking"), maintained by a DB trigger
+  // from the name. Routes accept slug OR id; links prefer the slug.
+  slug?: string | null;
   clientId: string | null;
   channelId: string | null;
   name: string;

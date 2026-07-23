@@ -53,7 +53,7 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
       </div>
 
       <Link
-        href={`/projects/${project.id}`}
+        href={`/projects/${project.slug || project.id}`}
         className="rounded-xl pl-7 flex flex-col hover:shadow-lg transition-all block overflow-hidden"
         style={{
           background: "var(--bg-card)",

@@ -903,6 +903,13 @@ function TaskPanel({
   // composer (/chat?c=<conv>&ref=<taskId>) — keeps long discussions in Chat
   // instead of piling up as task comments.
   async function handleDiscussInChat() {
+    // Prefer the readable project slug — the chat page resolves it to the
+    // project's channel, keeping the URL human-friendly.
+    const proj = projects.find((p) => p.id === projectId);
+    if (proj?.slug) {
+      router.push(`/chat?c=${proj.slug}&ref=${task.id}`);
+      return;
+    }
     setOpeningChat(true);
     try {
       const { data } = await supabase
