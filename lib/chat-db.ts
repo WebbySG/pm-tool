@@ -350,6 +350,28 @@ export async function loadMessages(conversationId: string, limit = 200): Promise
   return attachMentions(msgs);
 }
 
+// All image messages in a conversation (incl. thread replies), newest first —
+// feeds the chat Media panel's Images tab.
+export async function loadConversationImages(conversationId: string, limit = 200): Promise<ChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("*").eq("conversation_id", conversationId)
+    .eq("attachment_type", "image").is("deleted_at", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return (rows ?? []).map((r) => rowToMessage(r as Row));
+}
+
+// Messages containing http(s) URLs, newest first (URLs extracted client-side) —
+// feeds the chat Media panel's Links tab.
+export async function loadConversationLinkMessages(conversationId: string, limit = 300): Promise<ChatMessage[]> {
+  const { data: rows, error } = await supabase.from("pm_chat_messages")
+    .select("*").eq("conversation_id", conversationId)
+    .ilike("body", "%http%").is("deleted_at", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return (rows ?? []).map((r) => rowToMessage(r as Row));
+}
+
 // Load all replies for a thread root, oldest first.
 export async function loadThreadReplies(rootId: string): Promise<ChatMessage[]> {
   const { data: rows, error } = await supabase.from("pm_chat_messages")

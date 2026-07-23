@@ -17,6 +17,7 @@ import {
   setConversationPinned, setConversationCategory,
   loadThreadReplies, loadThreadMeta, loadPinnedMessages, pinMessage, unpinMessage, subscribeToPinned,
   loadReactions, addReaction, removeReaction, subscribeToReactions,
+  loadConversationImages, loadConversationLinkMessages,
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
 import type { Project, Task } from "@/lib/mock-data";
@@ -32,7 +33,7 @@ import {
   X, Loader2, AtSign, Pencil, Trash2, FileText,
   Settings, UserPlus, CheckSquare, CircleDashed, ListTodo, LogOut, CornerUpLeft,
   Pin, PinOff, MoreVertical, Folder, FolderPlus, ChevronDown, ChevronRight, Check,
-  Volume2, VolumeX, BellRing, Smile, Reply,
+  Volume2, VolumeX, BellRing, Smile, Reply, Image as ImageIcon, Link2, ExternalLink,
 } from "lucide-react";
 
 // Walk projects to find a task by ID (top-level or subtask)
@@ -612,9 +613,13 @@ function MessageView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Jump from the pinned panel to a message in the timeline (flash highlight)
+  // Media gallery panel (all images + links shared in this conversation)
+  const [showMedia, setShowMedia] = useState(false);
+
+  // Jump from the pinned/media panel to a message in the timeline (flash highlight)
   function scrollToMessage(messageId: string) {
     setShowPinned(false);
+    setShowMedia(false);
     setSearchOpen(false); setSearch("");
     setTimeout(() => {
       const el = scrollRef.current?.querySelector(`[data-mid="${messageId}"]`) as HTMLElement | null;
@@ -631,8 +636,9 @@ function MessageView({
     setThreadRoot(root); setThreadLoading(true); setThreadReplies([]);
     loadThreadReplies(root.id).then((r) => { setThreadReplies(r); setThreadLoading(false); });
   }
-  function togglePinnedPanel() { setThreadRoot(null); setShowTasks(false); setShowPinned((v) => !v); }
-  function toggleTasksPanel() { setThreadRoot(null); setShowPinned(false); setShowTasks((v) => !v); }
+  function togglePinnedPanel() { setThreadRoot(null); setShowTasks(false); setShowMedia(false); setShowPinned((v) => !v); }
+  function toggleTasksPanel() { setThreadRoot(null); setShowPinned(false); setShowMedia(false); setShowTasks((v) => !v); }
+  function toggleMediaPanel() { setThreadRoot(null); setShowPinned(false); setShowTasks(false); setShowMedia((v) => !v); }
 
   function toggleMute() {
     const next = !muted;
@@ -829,6 +835,16 @@ function MessageView({
           }}>
           <Pin size={12} /> Pinned{pinned.length > 0 ? ` · ${pinned.length}` : ""}
         </button>
+        <button onClick={toggleMediaPanel}
+          title="All images and links shared in this conversation"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+          style={{
+            background: showMedia ? "var(--accent)25" : "var(--bg-surface)",
+            color: showMedia ? "var(--accent)" : "var(--text-muted)",
+            border: `1px solid ${showMedia ? "var(--accent)" : "var(--border)"}`,
+          }}>
+          <ImageIcon size={12} /> Media
+        </button>
         <button onClick={toggleTasksPanel}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
           style={{
@@ -994,6 +1010,18 @@ function MessageView({
           onJump={(messageId) => scrollToMessage(messageId)}
           onOpenTask={onOpenTask}
           onClose={() => setShowPinned(false)}
+        />
+      )}
+
+      {/* Right side panel: Media (all images + links) */}
+      {showMedia && (
+        <MediaPanel
+          conversation={conversation}
+          liveStaff={liveStaff}
+          projects={projects}
+          onJump={(messageId) => scrollToMessage(messageId)}
+          onOpenTask={onOpenTask}
+          onClose={() => setShowMedia(false)}
         />
       )}
 
@@ -1901,6 +1929,198 @@ function PinnedPanel({
               </div>
             );
           })
+        )}
+      </div>
+    </aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Media side panel — every image and link shared in the conversation, dated;
+// click jumps to the message (chat items) or opens the task (task images).
+// ────────────────────────────────────────────────────────────────────────────
+
+const MEDIA_URL_RE = /https?:\/\/[^\s<>"'\)\]]+/g;
+
+function MediaPanel({
+  conversation, liveStaff, projects, onJump, onOpenTask, onClose,
+}: {
+  conversation: ConversationWithUnread;
+  liveStaff: LiveStaff[];
+  projects: Project[];
+  onJump: (messageId: string) => void;
+  onOpenTask: (taskId: string) => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"images" | "links">("images");
+  const [imgMsgs, setImgMsgs] = useState<ChatMessage[]>([]);
+  const [linkMsgs, setLinkMsgs] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      loadConversationImages(conversation.id),
+      loadConversationLinkMessages(conversation.id),
+    ]).then(([imgs, links]) => {
+      if (cancelled) return;
+      setImgMsgs(imgs);
+      setLinkMsgs(links);
+    }).catch(() => { /* panel just shows empty states */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [conversation.id]);
+
+  // Project channels also list images attached to that project's tasks
+  // (already in the store — no extra query).
+  const taskImages = useMemo(() => {
+    if (conversation.kind !== "project" || !conversation.projectId) return [];
+    const proj = projects.find((p) => p.id === conversation.projectId);
+    if (!proj) return [];
+    const out: { url: string; name: string; date: string; taskId: string; taskTitle: string }[] = [];
+    const walk = (ts: Task[]) => {
+      for (const t of ts) {
+        for (const a of t.attachments) {
+          if (a.type === "image") out.push({ url: a.url, name: a.name, date: a.uploadedAt, taskId: t.id, taskTitle: t.title });
+        }
+        walk(t.subtasks);
+      }
+    };
+    walk(proj.tasks);
+    return out.sort((x, y) => (y.date || "").localeCompare(x.date || ""));
+  }, [conversation.kind, conversation.projectId, projects]);
+
+  const links = useMemo(() => {
+    const out: { url: string; msg: ChatMessage }[] = [];
+    for (const m of linkMsgs) {
+      for (const u of (m.body || "").match(MEDIA_URL_RE) ?? []) out.push({ url: u, msg: m });
+    }
+    return out;
+  }, [linkMsgs]);
+
+  const tabBtn = (key: "images" | "links", icon: React.ReactNode, label: string, count: number) => (
+    <button onClick={() => setTab(key)}
+      className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold"
+      style={{
+        color: tab === key ? "var(--accent)" : "var(--text-muted)",
+        borderBottom: `2px solid ${tab === key ? "var(--accent)" : "transparent"}`,
+      }}>
+      {icon} {label}{count > 0 ? ` · ${count}` : ""}
+    </button>
+  );
+
+  return (
+    <aside className="flex flex-col shrink-0" style={{ width: 360, borderLeft: "1px solid var(--border)", background: "var(--bg-base)" }}>
+      <div className="flex items-center gap-2 px-4 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        <ImageIcon size={14} style={{ color: "var(--accent)" }} />
+        <p className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>Shared media</p>
+        <button onClick={onClose} className="w-7 h-7 rounded flex items-center justify-center hover:opacity-70"
+          style={{ color: "var(--text-muted)" }}><X size={14} /></button>
+      </div>
+
+      <div className="flex shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        {tabBtn("images", <ImageIcon size={12} />, "Images", imgMsgs.length + taskImages.length)}
+        {tabBtn("links", <Link2 size={12} />, "Links", links.length)}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        {loading ? (
+          <p className="text-xs flex items-center gap-2 justify-center py-8" style={{ color: "var(--text-muted)" }}>
+            <Loader2 size={13} className="animate-spin" /> Loading…
+          </p>
+        ) : tab === "images" ? (
+          imgMsgs.length === 0 && taskImages.length === 0 ? (
+            <div className="text-center py-10 px-4">
+              <ImageIcon size={20} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2 opacity-50" />
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>No images shared here yet.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {imgMsgs.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>From chat</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {imgMsgs.map((m) => {
+                      const author = liveStaff.find((s) => staffAuthId(s) === m.authorId);
+                      return (
+                        <div key={m.id} className="group relative">
+                          <button onClick={() => onJump(m.id)} title={`${author ? staffName(author) : "Unknown"} · ${formatTime(m.createdAt)} — click to jump to message`}
+                            className="block w-full rounded-lg overflow-hidden hover:opacity-90"
+                            style={{ border: "1px solid var(--border)", aspectRatio: "1 / 1" }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={m.attachmentUrl!} alt={m.attachmentName ?? ""} className="w-full h-full object-cover" />
+                          </button>
+                          <a href={m.attachmentUrl!} target="_blank" rel="noopener noreferrer" title="Open full size"
+                            className="absolute top-1 right-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100"
+                            style={{ background: "#000000a0", color: "#fff" }}>
+                            <ExternalLink size={10} />
+                          </a>
+                          <p className="text-[10px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>{formatTime(m.createdAt)}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {taskImages.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>From tasks</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {taskImages.map((a, i) => (
+                      <div key={`${a.taskId}-${i}`} className="group relative">
+                        <button onClick={() => onOpenTask(a.taskId)} title={`${a.taskTitle} · ${a.date ? formatTime(a.date) : ""} — click to open task`}
+                          className="block w-full rounded-lg overflow-hidden hover:opacity-90"
+                          style={{ border: "1px solid var(--border)", aspectRatio: "1 / 1" }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+                        </button>
+                        <a href={a.url} target="_blank" rel="noopener noreferrer" title="Open full size"
+                          className="absolute top-1 right-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100"
+                          style={{ background: "#000000a0", color: "#fff" }}>
+                          <ExternalLink size={10} />
+                        </a>
+                        <p className="text-[10px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
+                          {a.taskTitle}{a.date ? ` · ${formatTime(a.date)}` : ""}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        ) : links.length === 0 ? (
+          <div className="text-center py-10 px-4">
+            <Link2 size={20} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2 opacity-50" />
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>No links shared here yet.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {links.map(({ url, msg }, i) => {
+              const author = liveStaff.find((s) => staffAuthId(s) === msg.authorId);
+              return (
+                <div key={`${msg.id}-${i}`} className="rounded-lg p-2.5 group"
+                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+                  <div className="flex items-center gap-2">
+                    <Link2 size={12} className="shrink-0" style={{ color: "var(--accent)" }} />
+                    <a href={url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-medium truncate flex-1 hover:underline" style={{ color: "var(--accent)" }}>
+                      {url.replace(/^https?:\/\//, "")}
+                    </a>
+                    <button onClick={() => onJump(msg.id)} title="Jump to message"
+                      className="text-xs font-semibold px-1.5 py-0.5 rounded shrink-0 opacity-0 group-hover:opacity-100"
+                      style={{ color: "var(--accent)", background: "var(--accent)15" }}>
+                      Jump →
+                    </button>
+                  </div>
+                  <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+                    {author ? staffName(author) : "Unknown"} · {formatTime(msg.createdAt)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </aside>
