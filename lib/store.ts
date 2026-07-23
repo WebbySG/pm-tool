@@ -83,6 +83,10 @@ interface Store {
   updateSubtask: (projectId: string, taskId: string, subtaskId: string, data: Partial<Task>) => Promise<void>;
   updateSubtaskStatus: (projectId: string, taskId: string, subtaskId: string, status: TaskStatus) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
+  // Admin-only: archive hides a completed top-level task (and its subtasks) from
+  // all active views; unarchive restores it. Browsable from the Archive page.
+  archiveTask: (projectId: string, taskId: string) => Promise<void>;
+  unarchiveTask: (taskId: string) => Promise<void>;
   moveTaskToProject: (fromProjectId: string, taskId: string, toProjectId: string) => Promise<void>;
   uploadTaskAttachment: (projectId: string, taskId: string, file: File, uploadedBy: string) => Promise<void>;
   deleteAttachment: (projectId: string, taskId: string, attachmentId: string) => Promise<void>;
@@ -584,6 +588,7 @@ export const useStore = create<Store>()(
       createdBy: creatorId,
       deletionRequestedBy: null,
       deletionRequestedAt: null,
+      archivedAt: null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -643,6 +648,7 @@ export const useStore = create<Store>()(
       createdBy: creatorId,
       deletionRequestedBy: null,
       deletionRequestedAt: null,
+      archivedAt: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
@@ -670,6 +676,16 @@ export const useStore = create<Store>()(
   deleteTask: async (projectId, taskId) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: removeTaskFromTree(p.tasks, taskId) })) }));
     await db.dbDeleteTask(taskId);
+  },
+
+  archiveTask: async (projectId, taskId) => {
+    await db.dbSetTaskArchived(taskId, true);
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: removeTaskFromTree(p.tasks, taskId) })) }));
+  },
+
+  unarchiveTask: async (taskId) => {
+    await db.dbSetTaskArchived(taskId, false);
+    await get().refresh();
   },
 
   moveTaskToProject: async (fromProjectId, taskId, toProjectId) => {

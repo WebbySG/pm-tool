@@ -33,6 +33,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   pending_review:    { label: "Pending Review",    color: "#a855f7", bg: "#a855f720" },
   revision_required: { label: "Revision Required", color: "#f59e0b", bg: "#f59e0b20" },
   done:              { label: "Done",              color: "#22c55e", bg: "#22c55e20" },
+  missed:            { label: "Missed",            color: "#ef4444", bg: "#ef444420" },
 };
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
@@ -182,7 +183,8 @@ export default function TasksPage() {
       .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   );
 
-  const activeTasks = allTasks.filter((t) => t.status !== "done");
+  // "missed" is a closed state (weekly SEO tombstone) — never an active task.
+  const activeTasks = allTasks.filter((t) => t.status !== "done" && t.status !== "missed");
   const doneCount = allTasks.filter((t) => t.status === "done").length;
 
   const filtered = activeTasks.filter((t) => {

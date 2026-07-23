@@ -33,7 +33,9 @@ export interface ArticleComment {
   resolved: boolean;
   createdAt: string;
 }
-export type TaskStatus = "todo" | "in_progress" | "pending_review" | "revision_required" | "done";
+// "missed" = a weekly SEO article slot that was never posted (tombstone written by
+// the weekly generator when an unfinished article is carried to the next week).
+export type TaskStatus = "todo" | "in_progress" | "pending_review" | "revision_required" | "done" | "missed";
 export type TaskPriority = number; // 1 (highest) – 10 (lowest)
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";
@@ -135,6 +137,9 @@ export interface Task {
   // means the deletion is awaiting admin approval.
   deletionRequestedBy: string | null;
   deletionRequestedAt: string | null;
+  // Set when an admin archives a completed task (hidden from all active views;
+  // browsable/unarchivable from the Archive page).
+  archivedAt: string | null;
 }
 
 export interface ProjectMedia {

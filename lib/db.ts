@@ -31,6 +31,7 @@ function rowToTask(row: Row): Task {
     createdBy: (row.created_by as string | null) ?? null,
     deletionRequestedBy: (row.deletion_requested_by as string | null) ?? null,
     deletionRequestedAt: (row.deletion_requested_at as string | null) ?? null,
+    archivedAt: (row.archived_at as string | null) ?? null,
   };
 }
 
@@ -70,7 +71,7 @@ export async function loadAll() {
     supabase.from("pm_clients").select("*"),
     supabase.from("pm_channels").select("*").order("order"),
     supabase.from("pm_projects").select("*"),
-    supabase.from("pm_tasks").select("*").order("sort_order").order("created_at"),
+    supabase.from("pm_tasks").select("*").is("archived_at", null).order("sort_order").order("created_at"),
     supabase.from("pm_task_attachments").select("*"),
     supabase.from("pm_credentials").select("*"),
     supabase.from("pm_project_templates").select("*"),
@@ -251,6 +252,38 @@ export async function dbUpdateTask(taskId: string, patch: Row) {
 
 export async function dbDeleteTask(taskId: string) {
   await supabase.from("pm_tasks").delete().eq("id", taskId);
+}
+
+// ─── Archive (admin) ─────────────────────────────────────────────────────────
+// Archiving is top-level-task only; children are stamped with the same
+// archived_at so the whole subtree disappears from loadAll (which filters
+// archived_at IS NULL) and reappears together on unarchive.
+
+export async function dbSetTaskArchived(taskId: string, archived: boolean) {
+  const stamp = archived ? new Date().toISOString() : null;
+  const { error } = await supabase.from("pm_tasks").update({ archived_at: stamp }).eq("id", taskId);
+  if (error) throw error;
+  const { error: childErr } = await supabase.from("pm_tasks").update({ archived_at: stamp }).eq("parent_id", taskId);
+  if (childErr) throw childErr;
+}
+
+/** Archived top-level tasks (subtasks nested), most recently archived first. */
+export async function dbListArchivedTasks(): Promise<Task[]> {
+  const { data, error } = await supabase
+    .from("pm_tasks")
+    .select("*")
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false });
+  if (error) { console.error("dbListArchivedTasks", error); return []; }
+  const rows = (data ?? []) as Row[];
+  const map = new Map<string, Task>();
+  for (const r of rows) map.set(r.id as string, rowToTask(r));
+  const top: Task[] = [];
+  for (const t of map.values()) {
+    if (t.parentId && map.has(t.parentId)) map.get(t.parentId)!.subtasks.push(t);
+    else top.push(t);
+  }
+  return top;
 }
 
 // ─── Attachments ──────────────────────────────────────────────────────────────

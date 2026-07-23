@@ -55,10 +55,11 @@ const taskStatusColor: Record<string, string> = {
   pending_review: "#a855f7",
   revision_required: "#f59e0b",
   done: "#22c55e",
+  missed: "#ef4444",
 };
 const taskStatusLabel: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", pending_review: "Pending Review",
-  revision_required: "Revision Required", done: "Done",
+  revision_required: "Revision Required", done: "Done", missed: "Missed",
 };
 
 interface LiveStaff {

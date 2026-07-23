@@ -4,7 +4,7 @@ import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
   Image, FileText, Link2, Video, ChevronRight, Loader2, ExternalLink, Download,
   Bold, Italic, List, Heading, MessageSquare, Send, Palette, Eraser, Pencil,
-  History, Clock,
+  History, Clock, Archive,
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
@@ -28,12 +28,48 @@ function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
+// @-mention autocomplete list, shared by the comment composer and the in-place
+// comment edit box. Parent positions it (absolute) via className.
+function MentionDropdown({ candidates, activeIndex, onPick, className }: {
+  candidates: LiveStaff[];
+  activeIndex: number;
+  onPick: (s: LiveStaff) => void;
+  className: string;
+}) {
+  return (
+    <div className={`${className} rounded-lg overflow-hidden z-10 min-w-[200px]`}
+      style={{ background: "#0a1626", border: "1px solid #1c3248", boxShadow: "0 8px 24px #00000080" }}>
+      {candidates.map((s, i) => {
+        const active = i === activeIndex;
+        return (
+          <button key={staffAuthId(s)} type="button"
+            onMouseDown={(e) => { e.preventDefault(); onPick(s); }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+            style={{ background: active ? "#1c3248" : "transparent", color: "#cce4ff" }}>
+            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+              style={{ background: "#38b6e8", color: "#fff" }}>
+              {staffInitials(s).charAt(0)}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold truncate">{staffName(s)}</p>
+              <p className="text-xs truncate" style={{ color: "#4a7090" }}>{s.email}</p>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
   { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
+  // Weekly SEO tombstone: the slot's article was never posted (set by the
+  // weekly generator on carry-forward; admins may also set it manually).
+  { key: "missed", label: "Missed", color: "#ef4444" },
 ];
 
 function priorityColor(p: number): string {
@@ -545,7 +581,7 @@ function TaskPanel({
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
-    moveTaskToProject, projects,
+    moveTaskToProject, archiveTask, projects,
   } = useStore();
   const { user } = useAuth();
 
@@ -608,19 +644,27 @@ function TaskPanel({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [pendingMentions, setPendingMentions] = useState<{ id: string; label: string }[]>([]);
+  // @-mention state for the in-place comment EDIT textarea (mirrors the composer's)
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [editMentionQuery, setEditMentionQuery] = useState<string | null>(null);
+  const [editMentionIndex, setEditMentionIndex] = useState(0);
+  const [editPendingMentions, setEditPendingMentions] = useState<{ id: string; label: string }[]>([]);
 
   // Compute mention candidates from current state (kept lean — derives from liveStaff)
-  const mentionCandidates = mentionQuery === null
-    ? []
-    : liveStaff
-        .filter((s) => {
-          const id = staffAuthId(s);
-          if (id === user?.id) return false;
-          const q = mentionQuery.toLowerCase();
-          if (!q) return true;
-          return staffName(s).toLowerCase().includes(q) || s.email.toLowerCase().includes(q);
-        })
-        .slice(0, 6);
+  function mentionCandidatesFor(query: string | null): LiveStaff[] {
+    if (query === null) return [];
+    return liveStaff
+      .filter((s) => {
+        const id = staffAuthId(s);
+        if (id === user?.id) return false;
+        const q = query.toLowerCase();
+        if (!q) return true;
+        return staffName(s).toLowerCase().includes(q) || s.email.toLowerCase().includes(q);
+      })
+      .slice(0, 6);
+  }
+  const mentionCandidates = mentionCandidatesFor(mentionQuery);
+  const editMentionCandidates = mentionCandidatesFor(editMentionQuery);
 
   useEffect(() => {
     let cancelled = false;
@@ -717,6 +761,69 @@ function TaskPanel({
     }
   }
 
+  // ── @-mentions inside the in-place comment edit box ──────────────────────
+  function handleEditCommentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const text = e.target.value;
+    setEditingCommentBody(text);
+    const cursor = e.target.selectionStart ?? text.length;
+    const mention = detectMentionToken(text, cursor);
+    if (mention) {
+      setEditMentionQuery(mention.token);
+      setEditMentionIndex(0);
+    } else {
+      setEditMentionQuery(null);
+    }
+  }
+
+  function insertEditMention(staff: LiveStaff) {
+    const ta = editTextareaRef.current;
+    if (!ta) return;
+    const text = editingCommentBody;
+    const cursor = ta.selectionStart ?? text.length;
+    const mention = detectMentionToken(text, cursor);
+    if (!mention) return;
+    const label = staffName(staff).split(" ")[0] || staffName(staff);
+    const before = text.slice(0, mention.start);
+    const after = text.slice(cursor);
+    const insertion = `@${label} `;
+    setEditingCommentBody(before + insertion + after);
+    const id = staffAuthId(staff);
+    setEditPendingMentions((prev) => prev.some((m) => m.id === id) ? prev : [...prev, { id, label }]);
+    setEditMentionQuery(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = before.length + insertion.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
+  function handleEditCommentKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>, commentId: string) {
+    if (editMentionQuery !== null && editMentionCandidates.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setEditMentionIndex((i) => (i + 1) % editMentionCandidates.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setEditMentionIndex((i) => (i - 1 + editMentionCandidates.length) % editMentionCandidates.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        insertEditMention(editMentionCandidates[editMentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setEditMentionQuery(null);
+        return;
+      }
+    }
+    if (e.key === "Escape") { e.preventDefault(); cancelEditComment(); return; }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSaveCommentEdit(commentId); }
+  }
+
   // Paste an image (e.g. a screenshot) straight into the comment as its attachment.
   function handleCommentPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     for (const item of Array.from(e.clipboardData?.items ?? [])) {
@@ -793,12 +900,27 @@ function TaskPanel({
     setEditingCommentId(c.id);
     setEditingCommentBody(c.body);
     setEditCommentError(null);
+    // Seed with the comment's existing mentions (labels = first names, matching
+    // what the composer inserts) so they stay persisted on save and are never
+    // re-notified. Staff no longer active can't be resolved and drop off.
+    setEditPendingMentions(
+      c.mentionedUserIds.flatMap((id) => {
+        const s = liveStaff.find((st) => staffAuthId(st) === id);
+        if (!s) return [];
+        const label = staffName(s).split(" ")[0] || staffName(s);
+        return [{ id, label }];
+      })
+    );
+    setEditMentionQuery(null);
+    setEditMentionIndex(0);
   }
 
   function cancelEditComment() {
     setEditingCommentId(null);
     setEditingCommentBody("");
     setEditCommentError(null);
+    setEditPendingMentions([]);
+    setEditMentionQuery(null);
   }
 
   async function handleSaveCommentEdit(id: string) {
@@ -810,9 +932,27 @@ function TaskPanel({
     setSavingCommentEdit(true);
     setEditCommentError(null);
     try {
-      const updated = await dbUpdateTaskComment(id, { body });
+      // Keep only mentions whose label is still present in the edited body
+      const activeMentions = editPendingMentions.filter((m) => body.includes(`@${m.label}`));
+      const updated = await dbUpdateTaskComment(id, { body, mentionedUserIds: activeMentions.map((m) => m.id) });
       if (!updated) { setEditCommentError("Failed to save changes."); return; }
       setComments((prev) => prev.map((c) => (c.id === id ? updated : c)));
+
+      // Notify ONLY mentions newly added by this edit — pre-existing ones never re-fire.
+      const prevMentionIds = new Set(target?.mentionedUserIds ?? []);
+      const authorName = user?.name ?? "Someone";
+      for (const m of activeMentions) {
+        if (m.id === user?.id || prevMentionIds.has(m.id)) continue;
+        await addNotification({
+          title: `${authorName} mentioned you in "${task.title}"`,
+          body,
+          type: "mention",
+          projectId,
+          taskId: task.id,
+          userId: m.id,
+          link: `/projects/${projectId}?task=${task.id}`,
+        });
+      }
       cancelEditComment();
     } catch (err: unknown) {
       setEditCommentError(errorMessage(err) || "Failed to save changes.");
@@ -1118,7 +1258,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "revision_required" && s.key !== "done"))
+                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -1386,6 +1526,8 @@ function TaskPanel({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        // "missed" tombstones are a permanent record — only admins may reopen.
+                        if (sub.status === "missed" && !isAdmin) return;
                         if (isDone) {
                           updateSubtaskStatus(projectId, task.id, sub.id, "todo");
                         } else if (isAdmin) {
@@ -1408,6 +1550,8 @@ function TaskPanel({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        // "missed" tombstones are a permanent record — only admins may reopen.
+                        if (sub.status === "missed" && !isAdmin) return;
                         const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
                         const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "revision_required", "done"];
                         const order = isAdmin ? adminOrder : staffOrder;
@@ -1599,18 +1743,28 @@ function TaskPanel({
                       )}
                       {isEditing ? (
                         <div className="flex flex-col gap-2">
-                          <textarea
-                            autoFocus
-                            value={editingCommentBody}
-                            onChange={(e) => setEditingCommentBody(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") { e.preventDefault(); cancelEditComment(); }
-                              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSaveCommentEdit(c.id); }
-                            }}
-                            rows={3}
-                            className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-none"
-                            style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff" }}
-                          />
+                          <div className="relative">
+                            <textarea
+                              ref={editTextareaRef}
+                              autoFocus
+                              value={editingCommentBody}
+                              onChange={handleEditCommentChange}
+                              onKeyDown={(e) => handleEditCommentKeyDown(e, c.id)}
+                              onBlur={() => setTimeout(() => setEditMentionQuery(null), 150)}
+                              placeholder="Edit your comment... type @ to mention someone"
+                              rows={3}
+                              className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-none block"
+                              style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff" }}
+                            />
+                            {editMentionQuery !== null && editMentionCandidates.length > 0 && (
+                              <MentionDropdown
+                                candidates={editMentionCandidates}
+                                activeIndex={editMentionIndex}
+                                onPick={insertEditMention}
+                                className="absolute left-0 bottom-full mb-1"
+                              />
+                            )}
+                          </div>
                           {editCommentError && (
                             <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {editCommentError}</p>
                           )}
@@ -1731,27 +1885,12 @@ function TaskPanel({
               style={{ color: "#cce4ff" }}
             />
             {mentionQuery !== null && mentionCandidates.length > 0 && (
-              <div className="absolute left-2 bottom-full mb-1 rounded-lg overflow-hidden z-10 min-w-[200px]"
-                style={{ background: "#0a1626", border: "1px solid #1c3248", boxShadow: "0 8px 24px #00000080" }}>
-                {mentionCandidates.map((s, i) => {
-                  const active = i === mentionIndex;
-                  return (
-                    <button key={staffAuthId(s)} type="button"
-                      onMouseDown={(e) => { e.preventDefault(); insertMention(s); }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
-                      style={{ background: active ? "#1c3248" : "transparent", color: "#cce4ff" }}>
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                        style={{ background: "#38b6e8", color: "#fff" }}>
-                        {staffInitials(s).charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold truncate">{staffName(s)}</p>
-                        <p className="text-xs truncate" style={{ color: "#4a7090" }}>{s.email}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+              <MentionDropdown
+                candidates={mentionCandidates}
+                activeIndex={mentionIndex}
+                onPick={insertMention}
+                className="absolute left-2 bottom-full mb-1"
+              />
             )}
             {commentFile && (
               <div className="flex items-center gap-2 px-2 py-1 rounded text-xs"
@@ -2010,6 +2149,17 @@ function TaskPanel({
             <div className="flex-1 py-2 rounded-lg text-sm font-medium text-center" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
               Awaiting Admin Review...
             </div>
+          )}
+          {/* Admin: archive a completed top-level task (hides it from all active views) */}
+          {isAdmin && !task.parentId && task.status === "done" && (
+            <button
+              onClick={async () => { await archiveTask(projectId, task.id); onClose(); }}
+              className="py-2 px-4 rounded-lg text-sm font-medium flex items-center gap-2"
+              style={{ background: "#6b728020", border: "1px solid #6b728040", color: "#9ca3af" }}
+              title="Archive this completed task"
+            >
+              <Archive size={14} /> Archive
+            </button>
           )}
           {/* Default close button */}
           {(isAdmin ? task.status !== "pending_review" : (!isMyTask || task.status === "done")) && !canGoBack && (

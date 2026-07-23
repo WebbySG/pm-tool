@@ -119,6 +119,7 @@ export default function NewProjectPage() {
         createdBy: null,
         deletionRequestedBy: null,
         deletionRequestedAt: null,
+        archivedAt: null,
       }));
     });
 

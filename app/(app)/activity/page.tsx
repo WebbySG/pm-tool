@@ -11,7 +11,7 @@ import { History, RotateCw, ExternalLink, ChevronDown } from "lucide-react";
 // ── Label maps (mirror components/task-drawer.tsx) ──────────────────────────
 const STATUS_LABEL: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", pending_review: "Pending Review",
-  revision_required: "Revision Required", done: "Done",
+  revision_required: "Revision Required", done: "Done", missed: "Missed",
 };
 const PRIORITY_LABEL: Record<number, string> = {
   1: "P1 · Critical", 2: "P2 · Urgent", 3: "P3 · High", 4: "P4 · High",
