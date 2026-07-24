@@ -95,6 +95,8 @@ const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
+  // Waiting on the CLIENT (not internal review) — admin-set only.
+  { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
   { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
   // Weekly SEO tombstone: the slot's article was never posted (set by the
@@ -1360,7 +1362,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
+                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -1587,7 +1589,7 @@ function TaskPanel({
                 isHtml(task.description)
                   ? <div className="rich-content text-sm leading-relaxed" style={{ color: "#cce4ff" }}
                       dangerouslySetInnerHTML={{ __html: sanitizeHtml(task.description) }} />
-                  : <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#cce4ff" }}>{task.description}</p>
+                  : <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "#cce4ff" }}>{task.description}</p>
               ) : (
                 <p className="text-sm" style={{ color: "#8b90a750" }}>
                   {canEdit ? "Click to add a description, or drag & drop / paste an image..." : "No description."}
@@ -1655,7 +1657,7 @@ function TaskPanel({
                         // "missed" tombstones are a permanent record — only admins may reopen.
                         if (sub.status === "missed" && !isAdmin) return;
                         const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
-                        const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "revision_required", "done"];
+                        const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "pending_client_approval", "revision_required", "done"];
                         const order = isAdmin ? adminOrder : staffOrder;
                         const idx = order.indexOf(sub.status as TaskStatus);
                         const next = order[(idx === -1 ? 0 : idx + 1) % order.length];

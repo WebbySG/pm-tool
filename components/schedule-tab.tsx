@@ -34,6 +34,7 @@ function slotEndDate(projectStart: Date, month: number, week: number): string {
 
 const STATUS_COLORS: Record<string, string> = {
   todo: "#4a7090", in_progress: "#38b6e8", review: "#f59e0b", done: "#22c55e", missed: "#ef4444",
+  pending_review: "#a855f7", pending_client_approval: "#ec4899", revision_required: "#f59e0b",
 };
 function PRIORITY_COLORS(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -113,9 +114,9 @@ function TaskRow({
       {/* Status pill */}
       <span
         className="shrink-0 text-xs px-2 py-0.5 rounded-full capitalize"
-        style={{ background: STATUS_COLORS[task.status] + "20", color: STATUS_COLORS[task.status] }}
+        style={{ background: (STATUS_COLORS[task.status] ?? "#4a7090") + "20", color: STATUS_COLORS[task.status] ?? "#4a7090" }}
       >
-        {task.status.replace("_", " ")}
+        {task.status.replace(/_/g, " ")}
       </span>
 
       {/* Assignee avatar */}

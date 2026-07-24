@@ -35,7 +35,9 @@ export interface ArticleComment {
 }
 // "missed" = a weekly SEO article slot that was never posted (tombstone written by
 // the weekly generator when an unfinished article is carried to the next week).
-export type TaskStatus = "todo" | "in_progress" | "pending_review" | "revision_required" | "done" | "missed";
+// "pending_client_approval" = internally approved, now waiting on the CLIENT
+// (admin-set only; sits between review and done in the workflow).
+export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "revision_required" | "done" | "missed";
 export type TaskPriority = number; // 1 (highest) – 10 (lowest)
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";

@@ -384,7 +384,7 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `staff_members` | `id`, `user_id` (auth UUID), `email`, `first_name`, `last_name`, `avatar_initials`, `pm_role`, `status`, `can_access_content` |
 | `user_roles` | `user_id`, `role` (owner/admin = admin) |
 | `pm_projects` | `id`, `name`, `description`, `type`, `phase`, `client_id`, `channel_id`, `start_date`, `due_date`, `assigned_staff` (uuid[]) |
-| `pm_tasks` | `id`, `project_id`, `parent_id`, `title`, `description`, `status` (CHECK: todo/in_progress/pending_review/revision_required/done/**missed**), `priority`, `type`, `assignee_id`, `due_date`, `tags`, `recurring`, `recurring_day`, `sort_order`, `created_by` (auth uid, DB `DEFAULT auth.uid()` — who created the task; NULL for service-role/MCP inserts & pre-migration tasks), `deletion_requested_by` (auth uid; non-NULL ⇒ deletion awaiting admin approval), `deletion_requested_at`, `archived_at` (admin archive; loadAll filters IS NULL), `seo_week` (Monday date) + `seo_slot` (weekly SEO engine identity — see Weekly SEO Task Engine module) |
+| `pm_tasks` | `id`, `project_id`, `parent_id`, `title`, `description`, `status` (CHECK: todo/in_progress/pending_review/**pending_client_approval**/revision_required/done/**missed**), `priority`, `type`, `assignee_id`, `due_date`, `tags`, `recurring`, `recurring_day`, `sort_order`, `created_by` (auth uid, DB `DEFAULT auth.uid()` — who created the task; NULL for service-role/MCP inserts & pre-migration tasks), `deletion_requested_by` (auth uid; non-NULL ⇒ deletion awaiting admin approval), `deletion_requested_at`, `archived_at` (admin archive; loadAll filters IS NULL), `seo_week` (Monday date) + `seo_slot` (weekly SEO engine identity — see Weekly SEO Task Engine module) |
 | `pm_weekly_seo_plans` | `id`, `project_id` (unique FK → `pm_projects`, CASCADE), `enabled`, `assignee_id`, `include_articles`, `include_backlinks`, `include_gmb`, `created_at`. Which projects get the weekly SEO task set. RLS `pm_allow_all`. |
 | `pm_channels` | `id`, `name`, `color`, `order` |
 | `pm_clients` | `id`, `name`, `website`, `industry` |
@@ -412,6 +412,16 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 | `pm_invoice_counters` | `year` (PK), `last_seq` — used by `next_invoice_number(p_year)` RPC |
 | `pm_invoice_logs` | `id`, `invoice_id`, `event`, `detail`, `actor` — invoice activity audit trail |
 | `pm_clients` extension | added `billing_email`, `billing_address` (nullable) for invoice prefill |
+
+### `pending_client_approval` Task Status (2026-07-24)
+
+Internally approved work now waiting on the **client** to sign off. Migration [scripts/task-status-pending-client-approval.sql](scripts/task-status-pending-client-approval.sql) — **applied to the LIVE project (`tfhzuruaaymfhqmeiusr`) on 2026-07-24** via the `mcp__supabase__*` MCP (identity-verified first); re-run on any fresh project. Rules:
+
+- **Admin-set only** — excluded from the staff status dropdown in the task drawer (same filter as pending_review/revision_required/done/missed).
+- **Open/active state** (not done): counts as an active task everywhere; the completion cascade still marks it done when a parent is approved.
+- **Not overdue-flagged** — kanban `TaskCard` and the tasks page exclude it from overdue highlighting (the wait is on the client, not staff).
+- **Roll-up protected** — like `done`, a descendant submitting for review does NOT clobber a top-level task parked in this state (`rollupTopStatus` in [lib/store.ts](lib/store.ts)); a descendant `revision_required` still overrides it.
+- **Display entries** (color `#ec4899` pink) in: task-drawer `statusOptions`, kanban `STATUS_COLS` (own column, grid is now `STATUS_COLS.length`-driven), tasks-page `statusConfig` + status filter + dedicated "Pending Client Approval" group, activity-page `STATUS_LABEL`, chat `taskStatusColor/Label` + tasks side-panel grouping, schedule-tab `STATUS_COLORS`.
 
 ### Review Workflow Roll-up & Completion Cascade (2026-07-23)
 
@@ -457,7 +467,7 @@ app/(app)/dashboard/page.tsx  — Admin: full team; Staff: own tasks only
 app/(app)/projects/page.tsx   — Project list, channels, DnD, admin-only controls
 app/(app)/projects/new/page.tsx — Create project (admin only), live staff
 app/(app)/projects/[id]/page.tsx — Project detail, kanban, schedule, files (session-only blobs), pinned, content, weekly reports (pm_weekly_reports)
-app/(app)/tasks/page.tsx      — All tasks (role filtered). New Task dialog: admin can quick-create a project inline ("New project" → name only; defaults type=webdev, phase=discovery, assignedStaff=[task assignee]). Uses store.addProject which now returns the new project id.
+app/(app)/tasks/page.tsx      — All tasks (role filtered). Filter bar: project / member / type / priority / status dropdowns. New Task dialog: admin can quick-create a project inline ("New project" → name only; defaults type=webdev, phase=discovery, assignedStaff=[task assignee]). Uses store.addProject which now returns the new project id.
 app/(app)/team/page.tsx       — Team management, invites, content access toggle
 app/(app)/activity/page.tsx   — UNIFIED Activity Log (admin only): merges FOUR streams into one per-person timeline — task audit rows (dbListRecentActivity 300), task comments (dbListRecentComments 200), chat messages across ALL conversations (loadRecentChatMessages 200, labeled #Project / group name / "Direct message", deep-links /chat?c=<id>&m=<mid>), and file uploads (dbListRecentUploads 120). Person dropdown + per-type filter chips with counts (Task changes / Comments / Chat / Files), grouped by day, task deep-links via slug. Comment/upload context resolved client-side from the store task tree (archived/deleted tasks → "archived or deleted task").
 app/(app)/credentials/page.tsx — Credentials (admin only)

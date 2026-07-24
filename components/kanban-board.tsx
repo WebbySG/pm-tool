@@ -23,6 +23,7 @@ const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
+  { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
   { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
 ];
@@ -37,7 +38,7 @@ function priorityColor(p: number): string {
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
 export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
-  const overdue = task.status !== "done" && task.status !== "pending_review" && !!task.dueDate && new Date(task.dueDate) < new Date();
+  const overdue = task.status !== "done" && task.status !== "pending_review" && task.status !== "pending_client_approval" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
   const prio = typeof task.priority === "number" ? task.priority : 5;
 
@@ -224,7 +225,7 @@ export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask, liveStaf
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(5, minmax(200px, 1fr))", overflowX: "auto" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${STATUS_COLS.length}, minmax(200px, 1fr))`, overflowX: "auto" }}>
         {STATUS_COLS.map(({ key, label, color }) => (
           <KanbanColumn
             key={key}

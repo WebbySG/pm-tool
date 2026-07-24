@@ -31,6 +31,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   todo:              { label: "To Do",             color: "#64748b", bg: "#64748b20" },
   in_progress:       { label: "In Progress",       color: "#3b82f6", bg: "#3b82f620" },
   pending_review:    { label: "Pending Review",    color: "#a855f7", bg: "#a855f720" },
+  pending_client_approval: { label: "Pending Client Approval", color: "#ec4899", bg: "#ec489920" },
   revision_required: { label: "Revision Required", color: "#f59e0b", bg: "#f59e0b20" },
   done:              { label: "Done",              color: "#22c55e", bg: "#22c55e20" },
   missed:            { label: "Missed",            color: "#ef4444", bg: "#ef444420" },
@@ -77,11 +78,11 @@ function TaskGroup({
               }}
             >
               {/* Complete / request approval button */}
-              {task.status === "pending_review" ? (
+              {task.status === "pending_review" || task.status === "pending_client_approval" ? (
                 <div
                   className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
-                  style={{ borderColor: "#a855f7" }}
-                  title="Awaiting review"
+                  style={{ borderColor: task.status === "pending_review" ? "#a855f7" : "#ec4899" }}
+                  title={task.status === "pending_review" ? "Awaiting review" : "Awaiting client approval"}
                 />
               ) : isAdmin ? (
                 <button
@@ -174,7 +175,8 @@ export default function TasksPage() {
   const [filterMember, setFilterMember] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
-  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "revision_required">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "revision_required">("all");
+  const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
   const allTasks: TaskWithProject[] = projects.flatMap((p) =>
@@ -183,11 +185,16 @@ export default function TasksPage() {
       .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   );
 
+  // Project filter options: only projects that actually have tasks visible to this user.
+  const projectOptions = Array.from(new Map(allTasks.map((t) => [t.projectId, t.projectName])).entries())
+    .sort((a, b) => a[1].localeCompare(b[1]));
+
   // "missed" is a closed state (weekly SEO tombstone) — never an active task.
   const activeTasks = allTasks.filter((t) => t.status !== "done" && t.status !== "missed");
   const doneCount = allTasks.filter((t) => t.status === "done").length;
 
   const filtered = activeTasks.filter((t) => {
+    if (filterProject !== "all" && t.projectId !== filterProject) return false;
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
     if (filterStatus !== "all" && t.status !== filterStatus) return false;
@@ -206,6 +213,7 @@ export default function TasksPage() {
     todo: activeTasks.filter((t) => t.status === "todo").length,
     in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
     pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
+    pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length,
     revision_required: activeTasks.filter((t) => t.status === "revision_required").length,
   };
 
@@ -215,8 +223,9 @@ export default function TasksPage() {
   // Tasks in review/revision states get their own dedicated groups,
   // so they don't get buried in date-based groups.
   const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review");
+  const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval");
   const revisionTasks       = filtered.filter((t) => t.status === "revision_required");
-  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "revision_required");
+  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "revision_required");
 
   const grouped = {
     overdue:         dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
@@ -224,6 +233,7 @@ export default function TasksPage() {
     upcoming:        dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) > now),
     noDate:          dateGroupable.filter((t) => !t.dueDate),
     pendingReview:   pendingReviewTasks,
+    pendingClient:   pendingClientTasks,
     revision:        revisionTasks,
   };
 
@@ -366,6 +376,10 @@ export default function TasksPage() {
         {activeTab === "tasks" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
+              <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
+                <option value="all">All Projects</option>
+                {projectOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
               <select value={filterMember} onChange={(e) => setFilterMember(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
                 <option value="all">All Members</option>
                 {liveStaff.map((s) => <option key={s.id} value={staffAuthId(s)}>{staffName(s)}</option>)}
@@ -392,6 +406,7 @@ export default function TasksPage() {
                 <option value="todo">To Do ({statusCounts.todo})</option>
                 <option value="in_progress">In Progress ({statusCounts.in_progress})</option>
                 <option value="pending_review">Pending Review ({statusCounts.pending_review})</option>
+                <option value="pending_client_approval">Pending Client Approval ({statusCounts.pending_client_approval})</option>
                 <option value="revision_required">Revision Required ({statusCounts.revision_required})</option>
               </select>
               <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
@@ -423,6 +438,7 @@ export default function TasksPage() {
             <TaskGroup title="Upcoming" tasks={grouped.upcoming} accent="#38b6e8" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Pending Review" tasks={grouped.pendingReview} accent="#a855f7" icon={<Clock size={14} style={{ color: "#a855f7" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Pending Client Approval" tasks={grouped.pendingClient} accent="#ec4899" icon={<Clock size={14} style={{ color: "#ec4899" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Revision Required" tasks={grouped.revision} accent="#f59e0b" icon={<XCircle size={14} style={{ color: "#f59e0b" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
 
             {filtered.length === 0 && (

@@ -267,7 +267,9 @@ async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: strin
   walk(top);
   let desired: TaskStatus | null = null;
   if (rev) desired = "revision_required";
-  else if (pend) desired = top.status === "done" ? null : "pending_review";
+  // pending_client_approval is an admin-parked state (waiting on the CLIENT) —
+  // like done, a descendant submitting for review must not clobber it.
+  else if (pend) desired = top.status === "done" || top.status === "pending_client_approval" ? null : "pending_review";
   else if (top.status === "pending_review" || top.status === "revision_required") desired = "in_progress";
   if (!desired || desired === top.status) return;
   const topId = top.id;
