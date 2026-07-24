@@ -1869,9 +1869,9 @@ function TaskPanel({
                               onPaste={handleEditCommentPaste}
                               onBlur={() => setTimeout(() => setEditMentionQuery(null), 150)}
                               placeholder="Edit your comment... type @ to mention someone, paste images inline"
-                              rows={3}
-                              className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-none block"
-                              style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff" }}
+                              rows={6}
+                              className="w-full px-2.5 py-2 rounded-lg text-sm outline-none resize-y block"
+                              style={{ background: "#0a1626", border: "1px solid #38b6e8", color: "#cce4ff", minHeight: 110 }}
                             />
                             {editMentionQuery !== null && editMentionCandidates.length > 0 && (
                               <MentionDropdown
@@ -2006,9 +2006,9 @@ function TaskPanel({
               onPaste={handleCommentPaste}
               onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
               placeholder="Leave a comment, ask a question, or @mention someone... (paste images anywhere — they appear inline)"
-              rows={2}
-              className="bg-transparent text-sm outline-none resize-none"
-              style={{ color: "#cce4ff" }}
+              rows={6}
+              className="bg-transparent text-sm outline-none resize-y"
+              style={{ color: "#cce4ff", minHeight: 110 }}
             />
             {mentionQuery !== null && mentionCandidates.length > 0 && (
               <MentionDropdown
