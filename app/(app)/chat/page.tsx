@@ -1136,6 +1136,42 @@ function MessageItem({
   const [editBody, setEditBody] = useState(msg.body);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  // @-mention autocomplete for the in-place edit box (mirrors the Composer's).
+  const [editMentionMenu, setEditMentionMenu] = useState<{ query: string; startIdx: number } | null>(null);
+  const [editMenuIndex, setEditMenuIndex] = useState(0);
+  const editRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const editMentionMatches = useMemo(() => {
+    if (!editMentionMenu) return [];
+    return liveStaff.filter((s) => s.first_name && s.first_name.toLowerCase().startsWith(editMentionMenu.query)).slice(0, 6);
+  }, [editMentionMenu, liveStaff]);
+
+  function handleEditChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const v = e.target.value;
+    setEditBody(v);
+    const caret = e.target.selectionStart ?? v.length;
+    const mention = v.slice(0, caret).match(/@([a-zA-Z0-9_-]*)$/);
+    if (mention) {
+      setEditMentionMenu({ query: mention[1].toLowerCase(), startIdx: caret - mention[0].length });
+      setEditMenuIndex(0);
+    } else {
+      setEditMentionMenu(null);
+    }
+  }
+
+  function pickEditMention(s: LiveStaff) {
+    if (!editMentionMenu || !s.first_name) return;
+    const before = editBody.slice(0, editMentionMenu.startIdx);
+    const after = editBody.slice(editRef.current?.selectionStart ?? editBody.length);
+    const insert = `@${s.first_name} `;
+    const caret = (before + insert).length;
+    setEditBody(before + insert + after);
+    setEditMentionMenu(null);
+    setTimeout(() => {
+      const el = editRef.current;
+      if (el) { el.focus(); el.setSelectionRange(caret, caret); }
+    }, 0);
+  }
 
   // Group this message's reactions by emoji → { count, mine }
   const reactionGroups = useMemo(() => {
@@ -1166,6 +1202,7 @@ function MessageItem({
         link: `/chat?c=${msg.conversationId}&m=${msg.id}`,
       })));
     }
+    setEditMentionMenu(null);
     setEditing(false);
     onSaved();
   }
@@ -1212,16 +1249,47 @@ function MessageItem({
 
         {editing ? (
           <div className="flex flex-col gap-1.5">
-            <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)}
+            {editMentionMenu && editMentionMatches.length > 0 && (
+              <div className="rounded-lg overflow-hidden"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+                <div className="text-xs px-3 py-1.5 flex items-center gap-1.5"
+                  style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+                  <AtSign size={10} /> mention
+                </div>
+                {editMentionMatches.map((s, i) => (
+                  <button key={s.id} onClick={() => pickEditMention(s)} onMouseEnter={() => setEditMenuIndex(i)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm"
+                    style={{ color: "var(--text)", background: i === editMenuIndex ? "var(--accent)18" : "transparent" }}>
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                      style={{ background: avatarColor(s, liveStaff), color: "#fff" }}>
+                      {staffInitials(s)}
+                    </div>
+                    <span>{staffName(s)}</span>
+                    <span className="text-xs ml-auto" style={{ color: "var(--text-muted)" }}>@{s.first_name?.toLowerCase()}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea ref={editRef} value={editBody} onChange={handleEditChange}
               rows={Math.max(2, editBody.split("\n").length)}
               className="bg-transparent text-sm outline-none px-2 py-1.5 rounded resize-y w-full"
               style={{ color: "var(--text)", border: "1px solid var(--border)" }}
-              onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }} />
+              onKeyDown={(e) => {
+                // While the mention menu is open, the keyboard drives it (like the Composer).
+                if (editMentionMenu && editMentionMatches.length > 0) {
+                  const count = editMentionMatches.length;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setEditMenuIndex((i) => (i + 1) % count); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setEditMenuIndex((i) => (i - 1 + count) % count); return; }
+                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickEditMention(editMentionMatches[Math.min(editMenuIndex, count - 1)]); return; }
+                  if (e.key === "Escape") { e.preventDefault(); setEditMentionMenu(null); return; }
+                }
+                if (e.key === "Escape") { setEditMentionMenu(null); setEditing(false); }
+              }} />
             <div className="flex gap-2">
               <button onClick={handleSaveEdit}
                 className="text-xs font-semibold px-3 py-1 rounded text-white"
                 style={{ background: "var(--accent)" }}>Save</button>
-              <button onClick={() => { setEditing(false); setEditBody(msg.body); }}
+              <button onClick={() => { setEditing(false); setEditBody(msg.body); setEditMentionMenu(null); }}
                 className="text-xs px-3 py-1 rounded" style={{ color: "var(--text-muted)" }}>Cancel</button>
             </div>
           </div>
