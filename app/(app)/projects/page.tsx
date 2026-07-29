@@ -4,7 +4,8 @@ import {
   type DragStartEvent, type DragEndEvent, useDroppable, useDraggable,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { type Project, type Channel } from "@/lib/mock-data";
@@ -253,7 +254,10 @@ function ChannelGroup({
 }
 
 // ─── Main page ─────────────────────────────────────────────────────────────
-export default function ProjectsPage() {
+type TypeFilter = "all" | "webdev" | "both" | "seo";
+const TYPE_FILTER_KEYS: TypeFilter[] = ["all", "webdev", "both", "seo"];
+
+function ProjectsPageInner() {
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const { projects: allProjects, channels, addChannel, moveProjectToChannel } = useStore();
@@ -263,8 +267,26 @@ export default function ProjectsPage() {
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
 
-  const [filterStaff, setFilterStaff] = useState("all");
-  const [filterType, setFilterType] = useState<"all" | "webdev" | "both" | "seo">("all");
+  // Filters live in the URL (?type=seo&staff=<uuid>) so the selection survives
+  // navigating into a project and pressing back, and filtered views can be
+  // opened in a new tab / shared.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get("type") as TypeFilter | null;
+  const [filterStaff, setFilterStaff] = useState(searchParams.get("staff") ?? "all");
+  const [filterType, setFilterType] = useState<TypeFilter>(
+    typeParam && TYPE_FILTER_KEYS.includes(typeParam) ? typeParam : "all"
+  );
+
+  function applyFilters(type: TypeFilter, staff: string) {
+    setFilterType(type);
+    setFilterStaff(staff);
+    const q = new URLSearchParams();
+    if (type !== "all") q.set("type", type);
+    if (staff !== "all") q.set("staff", staff);
+    const qs = q.toString();
+    router.replace(qs ? `/projects?${qs}` : "/projects", { scroll: false });
+  }
 
   useEffect(() => {
     if (!user?.id) return;
@@ -354,7 +376,7 @@ export default function ProjectsPage() {
               return (
                 <button
                   key={t.key}
-                  onClick={() => setFilterType(t.key)}
+                  onClick={() => applyFilters(t.key, filterStaff)}
                   title={t.title}
                   className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
                   style={{
@@ -373,7 +395,7 @@ export default function ProjectsPage() {
           {liveStaff.length > 0 && (
             <select
               value={filterStaff}
-              onChange={(e) => setFilterStaff(e.target.value)}
+              onChange={(e) => applyFilters(filterType, e.target.value)}
               className="px-3 py-1.5 rounded-lg text-sm outline-none"
               style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: filterStaff === "all" ? "var(--text-muted)" : "var(--text)" }}
             >
@@ -482,5 +504,15 @@ export default function ProjectsPage() {
         )}
       </div>
     </>
+  );
+}
+
+// useSearchParams requires a Suspense boundary on statically-rendered routes
+// (same idiom as credentials/new).
+export default function ProjectsPage() {
+  return (
+    <Suspense>
+      <ProjectsPageInner />
+    </Suspense>
   );
 }

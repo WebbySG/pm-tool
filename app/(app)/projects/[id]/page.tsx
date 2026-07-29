@@ -61,7 +61,7 @@ export default function ProjectDetailPage() {
   const taskQueryId = searchParams.get("task");
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, initialized, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   // The URL segment may be the readable slug ("asc-racking") or the UUID —
   // resolve once and use the real UUID for every DB call below.
   const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
@@ -187,7 +187,19 @@ export default function ProjectDetailPage() {
     if (t) setSelectedTask(t);
   }, [taskQueryId, projectRaw?.id, projectRaw?.tasks.length]);
 
-  if (!projectRaw) return notFound();
+  if (!projectRaw) {
+    // Cold load (new tab / hard refresh / shared link): the store persists to
+    // sessionStorage which is PER-TAB, so a fresh tab renders before init()
+    // has loaded any projects. Don't 404 until the store has actually loaded.
+    if (!initialized) {
+      return (
+        <div className="flex-1 flex items-center justify-center min-h-[60vh]">
+          <Loader2 size={28} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+        </div>
+      );
+    }
+    return notFound();
+  }
   const project = projectRaw;
 
   const done = project.tasks.filter((t) => t.status === "done").length;
