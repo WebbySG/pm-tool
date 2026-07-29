@@ -264,6 +264,7 @@ export default function ProjectsPage() {
   const [activeProject, setActiveProject] = useState<Project | null>(null);
 
   const [filterStaff, setFilterStaff] = useState("all");
+  const [filterType, setFilterType] = useState<"all" | "webdev" | "both" | "seo">("all");
 
   useEffect(() => {
     if (!user?.id) return;
@@ -306,9 +307,21 @@ export default function ProjectsPage() {
     setShowAddChannel(false);
   }
 
-  const visibleProjects = filterStaff === "all"
+  const staffFiltered = filterStaff === "all"
     ? projects
     : projects.filter((p) => p.assignedStaff.includes(filterStaff));
+
+  // Service-based type matching: "seo" and "webdev" also include "Web + SEO"
+  // projects (they contain that service); "both" isolates the combined ones.
+  const typeMatches = (p: Project, key: typeof filterType) =>
+    key === "all" ? true
+    : key === "seo" ? p.type === "seo" || p.type === "both"
+    : key === "webdev" ? p.type !== "seo"
+    : p.type === "both";
+
+  const visibleProjects = staffFiltered.filter((p) => typeMatches(p, filterType));
+  const typeCount = (key: typeof filterType) => staffFiltered.filter((p) => typeMatches(p, key)).length;
+  const isFiltering = filterStaff !== "all" || filterType !== "all";
 
   // Stable, predictable order within each channel (alphabetical) so cards don't
   // appear in arbitrary database order.
@@ -328,6 +341,33 @@ export default function ProjectsPage() {
           <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>
             {visibleProjects.length} project{visibleProjects.length !== 1 ? "s" : ""}
           </span>
+
+          {/* Type filter — SEO / Web Dev also match "Web + SEO" projects */}
+          <div className="flex items-center gap-1.5">
+            {([
+              { key: "all", label: "All Types", color: "#4a7090", title: "Show every project" },
+              { key: "webdev", label: "Web Dev", color: "#38b6e8", title: "Website projects (includes Web + SEO)" },
+              { key: "seo", label: "SEO", color: "#22c55e", title: "SEO projects (includes Web + SEO)" },
+              { key: "both", label: "Web + SEO", color: "#a855f7", title: "Only combined Web + SEO projects" },
+            ] as const).map((t) => {
+              const active = filterType === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setFilterType(t.key)}
+                  title={t.title}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                  style={{
+                    background: active ? t.color + "25" : "var(--bg-card)",
+                    border: `1px solid ${active ? t.color : "var(--border)"}`,
+                    color: active ? t.color : "var(--text-muted)",
+                  }}
+                >
+                  {t.label} · {typeCount(t.key)}
+                </button>
+              );
+            })}
+          </div>
 
           {/* Staff filter */}
           {liveStaff.length > 0 && (
@@ -392,16 +432,22 @@ export default function ProjectsPage() {
         {/* DnD area */}
         <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver as any} onDragEnd={handleDragEnd}>
           <div className="flex flex-col gap-8 group">
-            {channels.map((channel) => (
-              <ChannelGroup
-                key={channel.id}
-                channel={channel}
-                projects={projectsInChannel(channel.id)}
-                isOver={overChannelId === channel.id}
-                isAdmin={isAdmin}
-                liveStaff={liveStaff}
-              />
-            ))}
+            {channels.map((channel) => {
+              const channelProjects = projectsInChannel(channel.id);
+              // While a filter is active, hide channels with no matches so the
+              // remaining groups are easy to scan (they stay drop targets otherwise).
+              if (isFiltering && channelProjects.length === 0) return null;
+              return (
+                <ChannelGroup
+                  key={channel.id}
+                  channel={channel}
+                  projects={channelProjects}
+                  isOver={overChannelId === channel.id}
+                  isAdmin={isAdmin}
+                  liveStaff={liveStaff}
+                />
+              );
+            })}
 
             {ungrouped.length > 0 && (
               <ChannelGroup
