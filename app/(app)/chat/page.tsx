@@ -55,6 +55,7 @@ const taskStatusColor: Record<string, string> = {
   in_progress: "#3b82f6",
   pending_review: "#a855f7",
   pending_client_approval: "#ec4899",
+  pending_article_post: "#f97316",
   revision_required: "#f59e0b",
   done: "#22c55e",
   missed: "#ef4444",
@@ -62,6 +63,7 @@ const taskStatusColor: Record<string, string> = {
 const taskStatusLabel: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", pending_review: "Pending Review",
   pending_client_approval: "Pending Client Approval",
+  pending_article_post: "Pending Article Post",
   revision_required: "Revision Required", done: "Done", missed: "Missed",
 };
 
@@ -2911,8 +2913,8 @@ function TasksPanel({
 
   // Group by status for project channels (cleaner overview)
   const grouped = useMemo(() => {
-    const order = ["pending_review", "pending_client_approval", "revision_required", "in_progress", "todo", "done"] as const;
-    const out: Record<string, typeof filtered> = { todo: [], in_progress: [], pending_review: [], pending_client_approval: [], revision_required: [], done: [] };
+    const order = ["pending_review", "pending_client_approval", "pending_article_post", "revision_required", "in_progress", "todo", "done"] as const;
+    const out: Record<string, typeof filtered> = { todo: [], in_progress: [], pending_review: [], pending_client_approval: [], pending_article_post: [], revision_required: [], done: [] };
     for (const t of filtered) {
       (out[t.status] ?? out.todo).push(t);
     }

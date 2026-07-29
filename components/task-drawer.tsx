@@ -97,6 +97,10 @@ const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
   // Waiting on the CLIENT (not internal review) — admin-set only.
   { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
+  // Approved internally — waiting on the assignee to upload the article to the
+  // website and record the live link (entered via admin Approve on tasks with
+  // requiresArticlePost; completed via "Mark as Posted" in the drawer footer).
+  { key: "pending_article_post", label: "Pending Article Post", color: "#f97316" },
   { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
   // Weekly SEO tombstone: the slot's article was never posted (set by the
@@ -612,6 +616,7 @@ function TaskPanel({
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
+    markArticlePosted, setTaskRequiresArticlePost,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
     moveTaskToProject, archiveTask, projects,
   } = useStore();
@@ -646,6 +651,9 @@ function TaskPanel({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [approvalLoading, setApprovalLoading] = useState(false);
+  const [articleUrlDraft, setArticleUrlDraft] = useState("");
+  const [postingArticle, setPostingArticle] = useState(false);
+  const [articlePostError, setArticlePostError] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [confirmDeleteAttachmentId, setConfirmDeleteAttachmentId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1162,6 +1170,28 @@ function TaskPanel({
     }
   }
 
+  async function handleMarkPosted() {
+    let url = articleUrlDraft.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try {
+      new URL(url);
+    } catch {
+      setArticlePostError("That doesn't look like a valid link — paste the full article URL.");
+      return;
+    }
+    setArticlePostError(null);
+    setPostingArticle(true);
+    try {
+      await markArticlePosted(projectId, task.id, task.title, user?.name ?? "Staff", url);
+      setArticleUrlDraft("");
+    } catch (e) {
+      setArticlePostError(errorMessage(e));
+    } finally {
+      setPostingArticle(false);
+    }
+  }
+
   const status = statusOptions.find((s) => s.key === task.status) ?? statusOptions[0];
   const prio = localPrio ?? (typeof task.priority === "number" ? task.priority : 5);
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
@@ -1362,7 +1392,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
+                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "pending_article_post" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -1460,6 +1490,41 @@ function TaskPanel({
                 style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#8b90a7" }}>
                 {new Date(task.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
               </p>
+            </div>
+          )}
+
+          {/* Article link — permanent record once posted */}
+          {task.articleUrl && (
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Article Link</p>
+              <a
+                href={task.articleUrl} target="_blank" rel="noreferrer"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:opacity-80 transition-opacity"
+                style={{ background: "#0e1e30", border: "1px solid #22c55e40", color: "#22c55e" }}
+                title={task.articleUrl}
+              >
+                <ExternalLink size={13} className="shrink-0" />
+                <span className="truncate">{task.articleUrl.replace(/^https?:\/\//i, "")}</span>
+              </a>
+            </div>
+          )}
+
+          {/* Admin: require a live article link before this task can complete */}
+          {isAdmin && (
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Article Post</p>
+              <button
+                onClick={() => setTaskRequiresArticlePost(projectId, task.id, !task.requiresArticlePost)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"
+                style={{ background: "#0e1e30", border: `1px solid ${task.requiresArticlePost ? "#f9731640" : "#1c3248"}`, color: task.requiresArticlePost ? "#f97316" : "#4a7090" }}
+                title="When on, approving this task parks it in Pending Article Post until the assignee adds the live article link"
+              >
+                <span className="w-4 h-4 rounded flex items-center justify-center border shrink-0"
+                  style={{ borderColor: task.requiresArticlePost ? "#f97316" : "#4a7090", background: task.requiresArticlePost ? "#f97316" : "transparent" }}>
+                  {task.requiresArticlePost && <Check size={11} color="#fff" />}
+                </span>
+                {task.requiresArticlePost ? "Link required" : "Not required"}
+              </button>
             </div>
           )}
 
@@ -1632,6 +1697,9 @@ function TaskPanel({
                         e.stopPropagation();
                         // "missed" tombstones are a permanent record — only admins may reopen.
                         if (sub.status === "missed" && !isAdmin) return;
+                        // pending_article_post completes via the child's Mark-as-Posted
+                        // panel (link required) — staff can't shortcut it here.
+                        if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
                         if (isDone) {
                           updateSubtaskStatus(projectId, task.id, sub.id, "todo");
                         } else if (isAdmin) {
@@ -1656,6 +1724,8 @@ function TaskPanel({
                         e.stopPropagation();
                         // "missed" tombstones are a permanent record — only admins may reopen.
                         if (sub.status === "missed" && !isAdmin) return;
+                        // pending_article_post is resolved via the child's link panel.
+                        if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
                         const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
                         const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "pending_client_approval", "revision_required", "done"];
                         const order = isAdmin ? adminOrder : staffOrder;
@@ -2261,6 +2331,36 @@ function TaskPanel({
             </div>
           </div>
         )}
+        {/* Article-post: assignee (or admin) records the live link to complete */}
+        {(isAdmin || isMyTask) && task.status === "pending_article_post" && (
+          <div className="flex flex-col gap-2 p-3 rounded-lg" style={{ background: "#f9731614", border: "1px solid #f9731640" }}>
+            <p className="text-xs" style={{ color: "#fb923c" }}>
+              <span className="font-semibold">Approved.</span> Upload this article to the website, then paste the live link here to complete the task.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={articleUrlDraft}
+                onChange={(e) => { setArticleUrlDraft(e.target.value); setArticlePostError(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleMarkPosted(); }}
+                placeholder="https://clientwebsite.com/blog/article-title"
+                className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+                style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+              />
+              <button
+                onClick={handleMarkPosted}
+                disabled={postingArticle || !articleUrlDraft.trim()}
+                className="py-2 px-4 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shrink-0"
+                style={{ background: "#f97316", color: "#fff", opacity: postingArticle || !articleUrlDraft.trim() ? 0.6 : 1 }}
+              >
+                {postingArticle ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Mark as Posted
+              </button>
+            </div>
+            {articlePostError && (
+              <p className="text-xs" style={{ color: "#f87171" }}>{articlePostError}</p>
+            )}
+          </div>
+        )}
         {/* Admin: approve + reject when pending review */}
         {isAdmin && task.status === "pending_review" && (
           <div className="flex gap-2">
@@ -2288,8 +2388,9 @@ function TaskPanel({
           {canGoBack && (
             <button onClick={onGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
           )}
-          {/* Staff on own task: request review or show pending state */}
-          {!isAdmin && isMyTask && task.status !== "done" && task.status !== "pending_review" && (
+          {/* Staff on own task: request review or show pending state
+              (pending_article_post uses the Mark-as-Posted panel above instead) */}
+          {!isAdmin && isMyTask && task.status !== "done" && task.status !== "pending_review" && task.status !== "pending_article_post" && (
             <button
               onClick={handleRequestApproval}
               disabled={approvalLoading}

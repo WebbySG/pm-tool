@@ -1,7 +1,7 @@
 "use client";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
-import { Bot, AlertTriangle, CheckSquare, UserPlus, RefreshCw, CheckCheck, ClipboardCheck, Check, Loader2, CalendarClock, Trash2 } from "lucide-react";
+import { Bot, AlertTriangle, CheckSquare, UserPlus, RefreshCw, CheckCheck, ClipboardCheck, Check, Loader2, CalendarClock, Trash2, Newspaper } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
@@ -15,6 +15,7 @@ const typeConfig: Record<string, { icon: typeof Bot; color: string; bg: string; 
   approval_request: { icon: ClipboardCheck,  color: "#a855f7", bg: "#a855f720", label: "Approval" },
   deletion_request: { icon: Trash2,           color: "#ef4444", bg: "#ef444420", label: "Deletion" },
   billing_reminder: { icon: CalendarClock,    color: "#f59e0b", bg: "#f59e0b20", label: "Renewal" },
+  article_posted:   { icon: Newspaper,        color: "#f97316", bg: "#f9731620", label: "Article" },
 };
 
 function timeAgo(date: string) {
@@ -48,7 +49,7 @@ export default function NotificationsPage() {
   // for them. Staff still see their full notification stream (approvals,
   // revisions, mentions).
   const visible = isAdmin
-    ? notifications.filter((n) => n.type === "approval_request" || n.type === "deletion_request" || n.userId === user?.id)
+    ? notifications.filter((n) => n.type === "approval_request" || n.type === "deletion_request" || n.type === "article_posted" || n.userId === user?.id)
     : notifications.filter((n) => !n.userId || n.userId === user?.id);
   const unread = visible.filter((n) => !n.read);
   const read = visible.filter((n) => n.read);

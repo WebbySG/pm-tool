@@ -37,7 +37,7 @@ export interface ArticleComment {
 // the weekly generator when an unfinished article is carried to the next week).
 // "pending_client_approval" = internally approved, now waiting on the CLIENT
 // (admin-set only; sits between review and done in the workflow).
-export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "revision_required" | "done" | "missed";
+export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required" | "done" | "missed";
 export type TaskPriority = number; // 1 (highest) – 10 (lowest)
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";
@@ -142,6 +142,13 @@ export interface Task {
   // Set when an admin archives a completed task (hidden from all active views;
   // browsable/unarchivable from the Archive page).
   archivedAt: string | null;
+  // Article-post workflow: when true, admin Approve parks the task in
+  // 'pending_article_post' until the assignee uploads the article to the
+  // website and records the live link. Auto-set on weekly SEO article slots;
+  // admin-togglable on any task.
+  requiresArticlePost: boolean;
+  // The live URL recorded via "Mark as Posted" (permanent record).
+  articleUrl: string | null;
 }
 
 export interface ProjectMedia {

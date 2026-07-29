@@ -32,6 +32,8 @@ function rowToTask(row: Row): Task {
     deletionRequestedBy: (row.deletion_requested_by as string | null) ?? null,
     deletionRequestedAt: (row.deletion_requested_at as string | null) ?? null,
     archivedAt: (row.archived_at as string | null) ?? null,
+    requiresArticlePost: (row.requires_article_post as boolean) ?? false,
+    articleUrl: (row.article_url as string | null) ?? null,
   };
 }
 

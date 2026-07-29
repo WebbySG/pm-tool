@@ -24,6 +24,7 @@ const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
   { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
+  { key: "pending_article_post", label: "Pending Article Post", color: "#f97316" },
   { key: "revision_required", label: "Revision Required", color: "#f59e0b" },
   { key: "done", label: "Done", color: "#22c55e" },
 ];

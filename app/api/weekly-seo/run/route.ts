@@ -254,6 +254,7 @@ export async function POST(req: Request) {
             ...base,
             parent_id: parent!.id,
             title: `Article ${s.n} (${s.day})`,
+            requires_article_post: true,
             due_date: iso(addDays(weekStart, s.offset)),
             seo_week: weekIso,
             seo_slot: s.slot,

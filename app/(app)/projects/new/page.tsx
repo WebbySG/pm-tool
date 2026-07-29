@@ -120,6 +120,8 @@ export default function NewProjectPage() {
         deletionRequestedBy: null,
         deletionRequestedAt: null,
         archivedAt: null,
+        requiresArticlePost: false,
+        articleUrl: null,
       }));
     });
 

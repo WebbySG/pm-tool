@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { playNotificationSound } from "@/lib/notification-sound";
 import { showWebNotification } from "@/lib/web-notifications";
 import {
-  Bot, AlertTriangle, UserPlus, RefreshCw, CheckSquare, ClipboardCheck, Bell, X, CalendarClock, Trash2,
+  Bot, AlertTriangle, UserPlus, RefreshCw, CheckSquare, ClipboardCheck, Bell, X, CalendarClock, Trash2, Newspaper,
 } from "lucide-react";
 
 // Slack-style transient popups for new app notifications (pm_notifications).
@@ -43,6 +43,7 @@ const typeConfig: Record<string, { icon: typeof Bot; color: string; bg: string; 
   approval_request: { icon: ClipboardCheck, color: "#a855f7", bg: "#a855f720", label: "Approval" },
   deletion_request: { icon: Trash2,        color: "#ef4444", bg: "#ef444420", label: "Deletion" },
   billing_reminder: { icon: CalendarClock,  color: "#f59e0b", bg: "#f59e0b20", label: "Renewal" },
+  article_posted:   { icon: Newspaper,     color: "#f97316", bg: "#f9731620", label: "Article" },
 };
 
 function hrefFor(n: NotifRow): string {
@@ -72,8 +73,8 @@ export function NotificationToastContainer() {
         // - Admin: only approval requests are worth interrupting for.
         // - Staff: targeted (user_id === self) or workspace-global (user_id IS NULL).
         if (isAdmin) {
-          // Admins get approval + deletion requests + anything targeted to them (e.g. renewal reminders).
-          if (n.type !== "approval_request" && n.type !== "deletion_request" && n.user_id !== user.id) return;
+          // Admins get approval + deletion requests + article-posted alerts + anything targeted to them (e.g. renewal reminders).
+          if (n.type !== "approval_request" && n.type !== "deletion_request" && n.type !== "article_posted" && n.user_id !== user.id) return;
         } else {
           if (n.user_id && n.user_id !== user.id) return;
         }

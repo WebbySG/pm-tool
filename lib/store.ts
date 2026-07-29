@@ -66,6 +66,8 @@ interface Store {
   // Task actions
   requestTaskApproval: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
   approveTaskCompletion: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
+  markArticlePosted: (projectId: string, taskId: string, taskTitle: string, staffDisplayName: string, url: string) => Promise<void>;
+  setTaskRequiresArticlePost: (projectId: string, taskId: string, value: boolean) => Promise<void>;
   rejectTask: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   // Staff request deletion of a task they created; an admin must approve/reject.
   requestTaskDeletion: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
@@ -214,7 +216,9 @@ type StoreSet = (fn: (s: Store) => Partial<Store>) => void;
 
 // "Completing the parent completes everything under it": mark every incomplete
 // descendant done, locally + in the DB. 'missed' tombstones are a permanent
-// record of unposted weekly articles and are never touched.
+// record of unposted weekly articles and are never touched. Descendants parked
+// in 'pending_article_post' are also left alone — the article still has to go
+// up on the website; force-doneing them would skip the link.
 async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId: string, taskId: string) {
   const proj = get().projects.find((p) => p.id === projectId);
   if (!proj) return;
@@ -223,7 +227,7 @@ async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId
   const ids: string[] = [];
   const walk = (x: Task) => {
     for (const s of x.subtasks) {
-      if (s.status !== "done" && s.status !== "missed") ids.push(s.id);
+      if (s.status !== "done" && s.status !== "missed" && s.status !== "pending_article_post") ids.push(s.id);
       walk(s);
     }
   };
@@ -267,9 +271,10 @@ async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: strin
   walk(top);
   let desired: TaskStatus | null = null;
   if (rev) desired = "revision_required";
-  // pending_client_approval is an admin-parked state (waiting on the CLIENT) —
-  // like done, a descendant submitting for review must not clobber it.
-  else if (pend) desired = top.status === "done" || top.status === "pending_client_approval" ? null : "pending_review";
+  // pending_client_approval / pending_article_post are admin-parked states
+  // (waiting on the client / on the article link) — like done, a descendant
+  // submitting for review must not clobber them.
+  else if (pend) desired = top.status === "done" || top.status === "pending_client_approval" || top.status === "pending_article_post" ? null : "pending_review";
   else if (top.status === "pending_review" || top.status === "revision_required") desired = "in_progress";
   if (!desired || desired === top.status) return;
   const topId = top.id;
@@ -513,7 +518,29 @@ export const useStore = create<Store>()(
 
   approveTaskCompletion: async (projectId, taskId, taskTitle) => {
     const proj = get().projects.find((p) => p.id === projectId);
-    const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
+    const task = proj ? findTaskInTree(proj.tasks, taskId) : null;
+    const assigneeId = task?.assigneeId ?? null;
+
+    // Article-post workflow: an approved article task isn't finished until the
+    // assignee has uploaded it to the website and recorded the live link —
+    // park it in pending_article_post instead of done and prompt the assignee.
+    if (task?.requiresArticlePost && !task.articleUrl) {
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "pending_article_post" }) })) }));
+      await db.dbUpdateTask(taskId, { status: "pending_article_post" });
+      await clearTaskApprovalRequests(get, taskId);
+      await rollupTopStatus(set, get, projectId, taskId);
+      await get().addNotification({
+        title: "Approved — Post the Article",
+        body: `"${taskTitle}" is approved. Upload it to the website and add the article link to complete the task.`,
+        type: "task_assigned",
+        projectId,
+        taskId,
+        userId: assigneeId,
+        link: `/projects/${projectId}?task=${taskId}`,
+      });
+      return;
+    }
+
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
     await cascadeDescendantsDone(set, get, projectId, taskId);
@@ -528,6 +555,29 @@ export const useStore = create<Store>()(
       userId: assigneeId,
       link: `/projects/${projectId}?task=${taskId}`,
     });
+  },
+
+  // Assignee (or admin) records the live article URL on a pending_article_post
+  // task — this is what completes the article workflow. Notifies admins via the
+  // workspace-global `article_posted` type (mirrors approval_request routing).
+  markArticlePosted: async (projectId, taskId, taskTitle, staffDisplayName, url) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { articleUrl: url, status: "done" }) })) }));
+    await db.dbUpdateTask(taskId, { article_url: url, status: "done" });
+    await cascadeDescendantsDone(set, get, projectId, taskId);
+    await rollupTopStatus(set, get, projectId, taskId);
+    await get().addNotification({
+      title: "Article Posted",
+      body: `${staffDisplayName} posted "${taskTitle}" to the website: ${url}`,
+      type: "article_posted",
+      projectId,
+      taskId,
+      link: `/projects/${projectId}?task=${taskId}`,
+    });
+  },
+
+  setTaskRequiresArticlePost: async (projectId, taskId, value) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { requiresArticlePost: value }) })) }));
+    await db.dbUpdateTask(taskId, { requires_article_post: value });
   },
 
   rejectTask: async (projectId, taskId, taskTitle) => {
@@ -665,6 +715,8 @@ export const useStore = create<Store>()(
       deletionRequestedBy: null,
       deletionRequestedAt: null,
       archivedAt: null,
+      requiresArticlePost: false,
+      articleUrl: null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -725,6 +777,8 @@ export const useStore = create<Store>()(
       deletionRequestedBy: null,
       deletionRequestedAt: null,
       archivedAt: null,
+      requiresArticlePost: false,
+      articleUrl: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({

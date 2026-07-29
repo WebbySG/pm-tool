@@ -32,6 +32,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   in_progress:       { label: "In Progress",       color: "#3b82f6", bg: "#3b82f620" },
   pending_review:    { label: "Pending Review",    color: "#a855f7", bg: "#a855f720" },
   pending_client_approval: { label: "Pending Client Approval", color: "#ec4899", bg: "#ec489920" },
+  pending_article_post: { label: "Pending Article Post", color: "#f97316", bg: "#f9731620" },
   revision_required: { label: "Revision Required", color: "#f59e0b", bg: "#f59e0b20" },
   done:              { label: "Done",              color: "#22c55e", bg: "#22c55e20" },
   missed:            { label: "Missed",            color: "#ef4444", bg: "#ef444420" },
@@ -78,11 +79,11 @@ function TaskGroup({
               }}
             >
               {/* Complete / request approval button */}
-              {task.status === "pending_review" || task.status === "pending_client_approval" ? (
+              {task.status === "pending_review" || task.status === "pending_client_approval" || task.status === "pending_article_post" ? (
                 <div
                   className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
-                  style={{ borderColor: task.status === "pending_review" ? "#a855f7" : "#ec4899" }}
-                  title={task.status === "pending_review" ? "Awaiting review" : "Awaiting client approval"}
+                  style={{ borderColor: task.status === "pending_review" ? "#a855f7" : task.status === "pending_client_approval" ? "#ec4899" : "#f97316" }}
+                  title={task.status === "pending_review" ? "Awaiting review" : task.status === "pending_client_approval" ? "Awaiting client approval" : "Awaiting article link — open the task to add it"}
                 />
               ) : isAdmin ? (
                 <button
@@ -175,7 +176,7 @@ export default function TasksPage() {
   const [filterMember, setFilterMember] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
-  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "revision_required">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required">("all");
   const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
@@ -214,6 +215,7 @@ export default function TasksPage() {
     in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
     pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
     pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length,
+    pending_article_post: activeTasks.filter((t) => t.status === "pending_article_post").length,
     revision_required: activeTasks.filter((t) => t.status === "revision_required").length,
   };
 
@@ -224,8 +226,9 @@ export default function TasksPage() {
   // so they don't get buried in date-based groups.
   const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review");
   const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval");
+  const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post");
   const revisionTasks       = filtered.filter((t) => t.status === "revision_required");
-  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "revision_required");
+  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required");
 
   const grouped = {
     overdue:         dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
@@ -234,6 +237,7 @@ export default function TasksPage() {
     noDate:          dateGroupable.filter((t) => !t.dueDate),
     pendingReview:   pendingReviewTasks,
     pendingClient:   pendingClientTasks,
+    pendingArticle:  pendingArticleTasks,
     revision:        revisionTasks,
   };
 
@@ -407,6 +411,7 @@ export default function TasksPage() {
                 <option value="in_progress">In Progress ({statusCounts.in_progress})</option>
                 <option value="pending_review">Pending Review ({statusCounts.pending_review})</option>
                 <option value="pending_client_approval">Pending Client Approval ({statusCounts.pending_client_approval})</option>
+                <option value="pending_article_post">Pending Article Post ({statusCounts.pending_article_post})</option>
                 <option value="revision_required">Revision Required ({statusCounts.revision_required})</option>
               </select>
               <span className="text-sm" style={{ color: "#4a7090" }}>{filtered.length} active task{filtered.length !== 1 ? "s" : ""}</span>
@@ -439,6 +444,7 @@ export default function TasksPage() {
             <TaskGroup title="No Due Date" tasks={grouped.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Pending Review" tasks={grouped.pendingReview} accent="#a855f7" icon={<Clock size={14} style={{ color: "#a855f7" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Pending Client Approval" tasks={grouped.pendingClient} accent="#ec4899" icon={<Clock size={14} style={{ color: "#ec4899" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="Pending Article Post" tasks={grouped.pendingArticle} accent="#f97316" icon={<Clock size={14} style={{ color: "#f97316" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Revision Required" tasks={grouped.revision} accent="#f59e0b" icon={<XCircle size={14} style={{ color: "#f59e0b" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
 
             {filtered.length === 0 && (
