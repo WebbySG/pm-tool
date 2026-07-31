@@ -235,10 +235,14 @@ export default function TasksPage() {
 
   // Tasks in review/revision states get their own dedicated groups,
   // so they don't get buried in date-based groups.
-  const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review");
-  const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval");
-  const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post");
-  const revisionTasks       = filtered.filter((t) => t.status === "revision_required");
+  // Oldest submission first (FIFO review queue) — the admin works top-down.
+  // Runs after the filter bar, so the order holds within any member/project view.
+  const bySubmission = (a: TaskWithProject, b: TaskWithProject) =>
+    new Date(a.statusChangedAt ?? a.createdAt).getTime() - new Date(b.statusChangedAt ?? b.createdAt).getTime();
+  const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review").sort(bySubmission);
+  const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval").sort(bySubmission);
+  const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post").sort(bySubmission);
+  const revisionTasks       = filtered.filter((t) => t.status === "revision_required").sort(bySubmission);
   const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required");
 
   const grouped = {
