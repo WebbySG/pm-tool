@@ -2355,8 +2355,10 @@ function TaskPanel({
             </div>
           </div>
         )}
-        {/* Article-post: assignee (or admin) records the live link to complete */}
-        {(isAdmin || isMyTask) && task.status === "pending_article_post" && (
+        {/* Article-post: the ASSIGNEE records the live link. The admin only gets
+            the input when the task is theirs or unassigned (user rule 2026-07-31)
+            — posting is the assignee's job; reassign to yourself to override. */}
+        {task.status === "pending_article_post" && (isMyTask || (isAdmin && !task.assigneeId)) && (
           <div className="flex flex-col gap-2 p-3 rounded-lg" style={{ background: "#f9731614", border: "1px solid #f9731640" }}>
             <p className="text-xs" style={{ color: "#fb923c" }}>
               <span className="font-semibold">Approved.</span> Upload this article to the website, then paste the live link here to complete the task.
@@ -2383,6 +2385,14 @@ function TaskPanel({
             {articlePostError && (
               <p className="text-xs" style={{ color: "#f87171" }}>{articlePostError}</p>
             )}
+          </div>
+        )}
+        {/* Admin viewing a staff-assigned article task: the link is the staff's
+            job — show who owns it instead of the input. */}
+        {task.status === "pending_article_post" && isAdmin && !isMyTask && !!task.assigneeId && (
+          <div className="p-3 rounded-lg text-xs" style={{ background: "#f9731614", border: "1px solid #f9731640", color: "#fb923c" }}>
+            <span className="font-semibold">Approved — waiting on {assignee ? staffName(assignee) : "the assignee"}</span> to upload the article to the website and add the live link
+            {task.statusChangedAt && ` (since ${new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})`}.
           </div>
         )}
         {/* Admin: approve + reject when pending review */}
