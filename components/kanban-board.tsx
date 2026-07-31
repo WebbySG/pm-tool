@@ -17,7 +17,7 @@ interface LiveStaff {
 function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || [s.first_name, s.last_name].filter(Boolean).join(" ").slice(0, 2).toUpperCase() || s.email.slice(0, 2).toUpperCase(); }
 import { useStore } from "@/lib/store";
-import { Calendar, Plus, Paperclip, RefreshCw } from "lucide-react";
+import { Calendar, Clock, Plus, Paperclip, RefreshCw } from "lucide-react";
 
 const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
@@ -54,6 +54,13 @@ export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClic
         <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#f59e0b20", color: "#f59e0b", border: "1px solid #f59e0b40" }}>
           <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "#f59e0b" }} />
           Revision Required
+        </div>
+      )}
+      {/* Submission time — tells a NEW review request from one already looked at */}
+      {task.status === "pending_review" && task.statusChangedAt && (
+        <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
+          <Clock size={10} />
+          Submitted {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
         </div>
       )}
       <div className="flex items-start justify-between gap-1">

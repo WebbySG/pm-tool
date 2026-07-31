@@ -217,6 +217,13 @@ type StoreSet = (fn: (s: Store) => Partial<Store>) => void;
 
 // ── Review-workflow helpers (children at any depth) ──────────────────────────
 
+// Status patch that also stamps statusChangedAt optimistically — the DB trigger
+// pm_tasks_set_status_changed_at is authoritative; this just keeps "since"
+// timestamps fresh in the UI until the next refresh().
+function statusPatch(status: TaskStatus): Partial<Task> {
+  return { status, statusChangedAt: new Date().toISOString() };
+}
+
 // "Closing the parent closes everything under it": mark every still-open
 // descendant done (or rejected, when the parent was rejected), locally + in the
 // DB. 'missed' tombstones are a permanent record of unposted weekly articles
@@ -240,7 +247,7 @@ async function cascadeDescendantsClosed(set: StoreSet, get: () => Store, project
   set((s) => ({
     projects: patchProject(s.projects, projectId, (p) => {
       let tasks = p.tasks;
-      for (const id of ids) tasks = patchTaskInTree(tasks, id, { status });
+      for (const id of ids) tasks = patchTaskInTree(tasks, id, statusPatch(status));
       return { ...p, tasks };
     }),
   }));
@@ -284,7 +291,7 @@ async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: strin
   if (!desired || desired === top.status) return;
   const topId = top.id;
   const status = desired;
-  set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, topId, { status }) })) }));
+  set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, topId, statusPatch(status)) })) }));
   await db.dbUpdateTask(topId, { status });
 }
 
@@ -509,7 +516,7 @@ export const useStore = create<Store>()(
   // ─── Tasks ────────────────────────────────────────────────────────────────
 
   requestTaskApproval: async (projectId, taskId, staffName, taskTitle) => {
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "pending_review" }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("pending_review")) })) }));
     await db.dbUpdateTask(taskId, { status: "pending_review" });
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
@@ -530,7 +537,7 @@ export const useStore = create<Store>()(
     // assignee has uploaded it to the website and recorded the live link —
     // park it in pending_article_post instead of done and prompt the assignee.
     if (task?.requiresArticlePost && !task.articleUrl) {
-      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "pending_article_post" }) })) }));
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("pending_article_post")) })) }));
       await db.dbUpdateTask(taskId, { status: "pending_article_post" });
       await clearTaskApprovalRequests(get, taskId);
       await rollupTopStatus(set, get, projectId, taskId);
@@ -546,7 +553,7 @@ export const useStore = create<Store>()(
       return;
     }
 
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("done")) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
     await cascadeDescendantsClosed(set, get, projectId, taskId);
     await clearTaskApprovalRequests(get, taskId);
@@ -566,7 +573,7 @@ export const useStore = create<Store>()(
   // task — this is what completes the article workflow. Notifies admins via the
   // workspace-global `article_posted` type (mirrors approval_request routing).
   markArticlePosted: async (projectId, taskId, taskTitle, staffDisplayName, url) => {
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { articleUrl: url, status: "done" }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { articleUrl: url, ...statusPatch("done") }) })) }));
     await db.dbUpdateTask(taskId, { article_url: url, status: "done" });
     await cascadeDescendantsClosed(set, get, projectId, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
@@ -588,7 +595,7 @@ export const useStore = create<Store>()(
   rejectTask: async (projectId, taskId, taskTitle) => {
     const proj = get().projects.find((p) => p.id === projectId);
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "revision_required" }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("revision_required")) })) }));
     await db.dbUpdateTask(taskId, { status: "revision_required" });
     await clearTaskApprovalRequests(get, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
@@ -609,7 +616,7 @@ export const useStore = create<Store>()(
   markTaskRejected: async (projectId, taskId, taskTitle) => {
     const proj = get().projects.find((p) => p.id === projectId);
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "rejected" }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("rejected")) })) }));
     await db.dbUpdateTask(taskId, { status: "rejected" });
     await clearTaskApprovalRequests(get, taskId);
     await cascadeDescendantsClosed(set, get, projectId, taskId, "rejected");
@@ -678,7 +685,7 @@ export const useStore = create<Store>()(
   },
 
   updateTaskStatus: async (projectId, taskId, status) => {
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch(status)) })) }));
     await db.dbUpdateTask(taskId, { status });
     if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
     if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, taskId, status);
@@ -744,6 +751,7 @@ export const useStore = create<Store>()(
       archivedAt: null,
       requiresArticlePost: false,
       articleUrl: null,
+      statusChangedAt: new Date().toISOString(),
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -806,6 +814,7 @@ export const useStore = create<Store>()(
       archivedAt: null,
       requiresArticlePost: false,
       articleUrl: null,
+      statusChangedAt: new Date().toISOString(),
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
@@ -826,7 +835,7 @@ export const useStore = create<Store>()(
   },
 
   updateSubtaskStatus: async (projectId, _parentTaskId, subtaskId, status) => {
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, { status }) })) }));
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, statusPatch(status)) })) }));
     await db.dbUpdateTask(subtaskId, { status });
     if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, subtaskId, status);
     await rollupTopStatus(set, get, projectId, subtaskId);

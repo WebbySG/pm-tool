@@ -106,7 +106,16 @@ function TaskGroup({
                 <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>
                   {task.title}
                 </p>
-                <p className="text-xs truncate" style={{ color: "#4a7090" }}>{task.projectName}</p>
+                <p className="text-xs truncate" style={{ color: "#4a7090" }}>
+                  {task.projectName}
+                  {/* When it was submitted — distinguishes a fresh review request from one already seen */}
+                  {task.status === "pending_review" && task.statusChangedAt && (
+                    <span style={{ color: "#a855f7" }}>
+                      {" · submitted "}
+                      {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  )}
+                </p>
               </div>
 
               <div className="flex items-center gap-3 shrink-0">

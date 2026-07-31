@@ -1419,6 +1419,12 @@ function TaskPanel({
                 ))}
               </div>
             )}
+            {/* When it entered this status — tells a NEW review submission from an old one */}
+            {task.statusChangedAt && (
+              <p className="text-xs mt-1" style={{ color: "#4a7090" }}>
+                since {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
           </div>
 
           {/* Priority */}
@@ -1752,6 +1758,7 @@ function TaskPanel({
                       }}
                       className="text-xs px-1.5 py-0.5 rounded-full shrink-0 hover:opacity-70 transition-opacity"
                       style={{ background: subStatus.color + "20", color: subStatus.color }}
+                      title={sub.statusChangedAt ? `${subStatus.label} since ${new Date(sub.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : undefined}
                     >
                       {subStatus.label}
                     </button>
@@ -2380,7 +2387,13 @@ function TaskPanel({
         )}
         {/* Admin: approve + reject when pending review */}
         {isAdmin && task.status === "pending_review" && (
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
+            {task.statusChangedAt && (
+              <p className="text-xs text-center" style={{ color: "#a855f7" }}>
+                Submitted for review {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
+            <div className="flex gap-2">
             {/* Reject outright — closes the task as `rejected` (two-click confirm) */}
             <button
               onClick={() => { if (!confirmReject) { setConfirmReject(true); return; } handleMarkRejected(); }}
@@ -2411,6 +2424,7 @@ function TaskPanel({
               {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               Approve
             </button>
+            </div>
           </div>
         )}
         <div className="flex items-center gap-2">

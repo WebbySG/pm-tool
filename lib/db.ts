@@ -34,6 +34,7 @@ function rowToTask(row: Row): Task {
     archivedAt: (row.archived_at as string | null) ?? null,
     requiresArticlePost: (row.requires_article_post as boolean) ?? false,
     articleUrl: (row.article_url as string | null) ?? null,
+    statusChangedAt: (row.status_changed_at as string | null) ?? null,
   };
 }
 

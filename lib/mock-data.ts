@@ -156,6 +156,10 @@ export interface Task {
   requiresArticlePost: boolean;
   // The live URL recorded via "Mark as Posted" (permanent record).
   articleUrl: string | null;
+  // When the task last changed status (DB trigger pm_tasks_set_status_changed_at;
+  // stamped optimistically client-side too). Lets the admin tell a NEW
+  // pending_review submission from an old one.
+  statusChangedAt: string | null;
 }
 
 export interface ProjectMedia {

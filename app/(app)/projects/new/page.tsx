@@ -122,6 +122,7 @@ export default function NewProjectPage() {
         archivedAt: null,
         requiresArticlePost: false,
         articleUrl: null,
+        statusChangedAt: new Date().toISOString(),
       }));
     });
 
