@@ -1,6 +1,6 @@
 "use client";
 import { Topbar } from "@/components/topbar";
-import { type Task } from "@/lib/mock-data";
+import { type Task, isClosedStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
@@ -36,6 +36,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   revision_required: { label: "Revision Required", color: "#f59e0b", bg: "#f59e0b20" },
   done:              { label: "Done",              color: "#22c55e", bg: "#22c55e20" },
   missed:            { label: "Missed",            color: "#ef4444", bg: "#ef444420" },
+  rejected:          { label: "Rejected",          color: "#dc2626", bg: "#dc262620" },
 };
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
@@ -190,8 +191,9 @@ export default function TasksPage() {
   const projectOptions = Array.from(new Map(allTasks.map((t) => [t.projectId, t.projectName])).entries())
     .sort((a, b) => a[1].localeCompare(b[1]));
 
-  // "missed" is a closed state (weekly SEO tombstone) — never an active task.
-  const activeTasks = allTasks.filter((t) => t.status !== "done" && t.status !== "missed");
+  // "missed" (weekly SEO tombstone) and "rejected" (admin refused the work)
+  // are closed states — never active tasks.
+  const activeTasks = allTasks.filter((t) => !isClosedStatus(t.status));
   const doneCount = allTasks.filter((t) => t.status === "done").length;
 
   const filtered = activeTasks.filter((t) => {

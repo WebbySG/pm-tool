@@ -69,6 +69,9 @@ interface Store {
   markArticlePosted: (projectId: string, taskId: string, taskTitle: string, staffDisplayName: string, url: string) => Promise<void>;
   setTaskRequiresArticlePost: (projectId: string, taskId: string, value: boolean) => Promise<void>;
   rejectTask: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
+  // Admin refuses the work outright — closes the task as `rejected` (unlike
+  // rejectTask, which sends it back for another attempt as revision_required).
+  markTaskRejected: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   // Staff request deletion of a task they created; an admin must approve/reject.
   requestTaskDeletion: (projectId: string, taskId: string, staffName: string, taskTitle: string) => Promise<void>;
   approveTaskDeletion: (projectId: string, taskId: string, taskTitle: string, requesterId: string | null) => Promise<void>;
@@ -214,12 +217,13 @@ type StoreSet = (fn: (s: Store) => Partial<Store>) => void;
 
 // ── Review-workflow helpers (children at any depth) ──────────────────────────
 
-// "Completing the parent completes everything under it": mark every incomplete
-// descendant done, locally + in the DB. 'missed' tombstones are a permanent
-// record of unposted weekly articles and are never touched. Descendants parked
-// in 'pending_article_post' are also left alone — the article still has to go
-// up on the website; force-doneing them would skip the link.
-async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId: string, taskId: string) {
+// "Closing the parent closes everything under it": mark every still-open
+// descendant done (or rejected, when the parent was rejected), locally + in the
+// DB. 'missed' tombstones are a permanent record of unposted weekly articles
+// and are never touched; already-closed (done/rejected) descendants keep their
+// state. Descendants parked in 'pending_article_post' are also left alone — the
+// article still has to go up on the website; force-closing them would skip the link.
+async function cascadeDescendantsClosed(set: StoreSet, get: () => Store, projectId: string, taskId: string, status: "done" | "rejected" = "done") {
   const proj = get().projects.find((p) => p.id === projectId);
   if (!proj) return;
   const t = findTaskInTree(proj.tasks, taskId);
@@ -227,7 +231,7 @@ async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId
   const ids: string[] = [];
   const walk = (x: Task) => {
     for (const s of x.subtasks) {
-      if (s.status !== "done" && s.status !== "missed" && s.status !== "pending_article_post") ids.push(s.id);
+      if (s.status !== "done" && s.status !== "missed" && s.status !== "rejected" && s.status !== "pending_article_post") ids.push(s.id);
       walk(s);
     }
   };
@@ -236,11 +240,11 @@ async function cascadeDescendantsDone(set: StoreSet, get: () => Store, projectId
   set((s) => ({
     projects: patchProject(s.projects, projectId, (p) => {
       let tasks = p.tasks;
-      for (const id of ids) tasks = patchTaskInTree(tasks, id, { status: "done" });
+      for (const id of ids) tasks = patchTaskInTree(tasks, id, { status });
       return { ...p, tasks };
     }),
   }));
-  await db.dbUpdateTasksBulk(ids, { status: "done" });
+  await db.dbUpdateTasksBulk(ids, { status });
 }
 
 // Roll a child's review state up to its TOP-LEVEL task so pending work is
@@ -270,11 +274,12 @@ async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: strin
   };
   walk(top);
   let desired: TaskStatus | null = null;
-  if (rev) desired = "revision_required";
+  // A rejected top is a terminal admin decision — descendant churn never reopens it.
+  if (rev) desired = top.status === "rejected" ? null : "revision_required";
   // pending_client_approval / pending_article_post are admin-parked states
   // (waiting on the client / on the article link) — like done, a descendant
   // submitting for review must not clobber them.
-  else if (pend) desired = top.status === "done" || top.status === "pending_client_approval" || top.status === "pending_article_post" ? null : "pending_review";
+  else if (pend) desired = top.status === "done" || top.status === "rejected" || top.status === "pending_client_approval" || top.status === "pending_article_post" ? null : "pending_review";
   else if (top.status === "pending_review" || top.status === "revision_required") desired = "in_progress";
   if (!desired || desired === top.status) return;
   const topId = top.id;
@@ -543,7 +548,7 @@ export const useStore = create<Store>()(
 
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
-    await cascadeDescendantsDone(set, get, projectId, taskId);
+    await cascadeDescendantsClosed(set, get, projectId, taskId);
     await clearTaskApprovalRequests(get, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
@@ -563,7 +568,7 @@ export const useStore = create<Store>()(
   markArticlePosted: async (projectId, taskId, taskTitle, staffDisplayName, url) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { articleUrl: url, status: "done" }) })) }));
     await db.dbUpdateTask(taskId, { article_url: url, status: "done" });
-    await cascadeDescendantsDone(set, get, projectId, taskId);
+    await cascadeDescendantsClosed(set, get, projectId, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Article Posted",
@@ -590,6 +595,28 @@ export const useStore = create<Store>()(
     await get().addNotification({
       title: "Revision Required",
       body: `"${taskTitle}" requires revisions before it can be approved.`,
+      type: "task_assigned",
+      projectId,
+      taskId,
+      userId: assigneeId,
+      link: `/projects/${projectId}?task=${taskId}`,
+    });
+  },
+
+  // Admin refuses the work outright: `rejected` is a CLOSED state — the task is
+  // finished-without-acceptance, not sent back for redo. Rejecting a parent
+  // rejects every still-open descendant (mirrors the done cascade).
+  markTaskRejected: async (projectId, taskId, taskTitle) => {
+    const proj = get().projects.find((p) => p.id === projectId);
+    const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status: "rejected" }) })) }));
+    await db.dbUpdateTask(taskId, { status: "rejected" });
+    await clearTaskApprovalRequests(get, taskId);
+    await cascadeDescendantsClosed(set, get, projectId, taskId, "rejected");
+    await rollupTopStatus(set, get, projectId, taskId);
+    await get().addNotification({
+      title: "Task Rejected",
+      body: `"${taskTitle}" has been reviewed and rejected.`,
       type: "task_assigned",
       projectId,
       taskId,
@@ -654,7 +681,7 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { status }) })) }));
     await db.dbUpdateTask(taskId, { status });
     if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
-    if (status === "done") await cascadeDescendantsDone(set, get, projectId, taskId);
+    if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, taskId, status);
     await rollupTopStatus(set, get, projectId, taskId);
   },
 
@@ -801,7 +828,7 @@ export const useStore = create<Store>()(
   updateSubtaskStatus: async (projectId, _parentTaskId, subtaskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, { status }) })) }));
     await db.dbUpdateTask(subtaskId, { status });
-    if (status === "done") await cascadeDescendantsDone(set, get, projectId, subtaskId);
+    if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, subtaskId, status);
     await rollupTopStatus(set, get, projectId, subtaskId);
   },
 

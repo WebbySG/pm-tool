@@ -37,7 +37,14 @@ export interface ArticleComment {
 // the weekly generator when an unfinished article is carried to the next week).
 // "pending_client_approval" = internally approved, now waiting on the CLIENT
 // (admin-set only; sits between review and done in the workflow).
-export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required" | "done" | "missed";
+// "rejected" = admin refused the work outright — a CLOSED state, no redo loop
+// (unlike revision_required, which reopens the task for another attempt).
+export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required" | "done" | "missed" | "rejected";
+
+// Closed (terminal) statuses — tasks in these states never count as active work.
+export function isClosedStatus(s: string): boolean {
+  return s === "done" || s === "missed" || s === "rejected";
+}
 export type TaskPriority = number; // 1 (highest) – 10 (lowest)
 export type TaskType = "webdev" | "seo" | "both";
 export type ProjectPhase = "discovery" | "design" | "development" | "qa" | "launch";

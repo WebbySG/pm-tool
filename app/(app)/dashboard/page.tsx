@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { isClosedStatus } from "@/lib/mock-data";
 
 function priorityColor(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -60,12 +61,12 @@ export default function DashboardPage() {
     projects.length,
     allTasks.filter((t) => t.status === "in_progress").length,
     allTasks.filter((t) => t.status === "pending_review").length,
-    allTasks.filter((t) => t.status !== "done" && t.dueDate && new Date(t.dueDate) < new Date()).length,
+    allTasks.filter((t) => !isClosedStatus(t.status) && t.dueDate && new Date(t.dueDate) < new Date()).length,
   ];
 
   const aiNotif = notifications.find((n) => n.type === "ai_followup" && !n.read);
   const recentTasks = allTasks
-    .filter((t) => t.status !== "done")
+    .filter((t) => !isClosedStatus(t.status))
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
     .slice(0, 3);
 
@@ -201,7 +202,7 @@ export default function DashboardPage() {
                 const avatarColor = AVATAR_COLORS[si % AVATAR_COLORS.length];
                 const name = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email;
                 const initials = s.avatar_initials || name.slice(0, 2).toUpperCase();
-                const userTasks = allTasks.filter((t) => t.assigneeId === (s.user_id ?? s.id) && t.status !== "done");
+                const userTasks = allTasks.filter((t) => t.assigneeId === (s.user_id ?? s.id) && !isClosedStatus(t.status));
                 const overdue = userTasks.filter((t) => t.dueDate && new Date(t.dueDate) < new Date()).length;
 
                 return (

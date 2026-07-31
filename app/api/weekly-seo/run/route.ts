@@ -193,7 +193,7 @@ export async function POST(req: Request) {
         if (needRollover && prevParent) {
           const prevIncomplete = prev
             .filter((r) => r.seo_slot?.startsWith("article-") && r.seo_slot !== "articles-parent"
-              && r.status !== "done" && r.status !== "missed")
+              && r.status !== "done" && r.status !== "missed" && r.status !== "rejected")
             .sort((a, b) => (a.seo_slot ?? "").localeCompare(b.seo_slot ?? ""));
 
           for (const t of prevIncomplete) {
@@ -233,10 +233,12 @@ export async function POST(req: Request) {
           }
 
           // Close out last week's parent; record the shortfall in its title.
+          // Only `done` articles count as posted — carried, missed, and
+          // rejected slots are all shortfall.
           if (!dry) {
-            const posted = Math.max(0, 3 - prevIncomplete.length);
+            const posted = prev.filter((r) => r.seo_slot?.startsWith("article-") && r.seo_slot !== "articles-parent" && r.status === "done").length;
             let title = prevParent.title;
-            if (prevIncomplete.length > 0 && !/\d\/3 posted/.test(title)) title += ` — ${posted}/3 posted`;
+            if (posted < 3 && !/\d\/3 posted/.test(title)) title += ` — ${posted}/3 posted`;
             const { error: closeErr } = await admin.from("pm_tasks")
               .update({ status: "done", title }).eq("id", prevParent.id);
             if (closeErr) throw closeErr;
@@ -274,7 +276,7 @@ export async function POST(req: Request) {
         if (!s.on) continue;
         if (cur.some((r) => r.seo_slot === s.slot)) continue;
         const prevRow = prev.find((r) => r.seo_slot === s.slot);
-        if (prevRow && prevRow.status !== "done" && prevRow.status !== "missed") {
+        if (prevRow && prevRow.status !== "done" && prevRow.status !== "missed" && prevRow.status !== "rejected") {
           if (dry) { dryNotes.push(`carry ${s.title} forward`); carried++; continue; }
           const { error } = await admin.from("pm_tasks").update({
             due_date: fridayIso,

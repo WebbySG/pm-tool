@@ -20,6 +20,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending_client_approval: "Pending Client Approval",
   pending_article_post: "Pending Article Post",
   revision_required: "Revision Required", done: "Done", missed: "Missed",
+  rejected: "Rejected",
 };
 const PRIORITY_LABEL: Record<number, string> = {
   1: "P1 · Critical", 2: "P2 · Urgent", 3: "P3 · High", 4: "P4 · High",

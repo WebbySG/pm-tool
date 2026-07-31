@@ -20,7 +20,7 @@ import {
   loadConversationImages, loadConversationLinkMessages,
 } from "@/lib/chat-db";
 import type { ConversationWithUnread, ChatMessage, ChatCategory, ThreadMeta, ChatPinnedMessage, ChatReaction } from "@/lib/chat-types";
-import type { Project, Task } from "@/lib/mock-data";
+import { isClosedStatus, type Project, type Task } from "@/lib/mock-data";
 import { playNotificationSound, playSentSound, playReactionSound, isChatSoundMuted, setChatSoundMuted, getChatSoundVolume, setChatSoundVolume } from "@/lib/notification-sound";
 import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
@@ -59,12 +59,14 @@ const taskStatusColor: Record<string, string> = {
   revision_required: "#f59e0b",
   done: "#22c55e",
   missed: "#ef4444",
+  rejected: "#dc2626",
 };
 const taskStatusLabel: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", pending_review: "Pending Review",
   pending_client_approval: "Pending Client Approval",
   pending_article_post: "Pending Article Post",
   revision_required: "Revision Required", done: "Done", missed: "Missed",
+  rejected: "Rejected",
 };
 
 interface LiveStaff {
@@ -286,15 +288,15 @@ export default function ChatPage() {
     return <MessageSquare size={14} style={{ color: "#34d399" }} />;
   }
 
-  // Count of active (not done) tasks relevant to this conversation
+  // Count of active (not done/missed/rejected) tasks relevant to this conversation
   function getConvTaskCount(c: ConversationWithUnread): number {
     if (c.kind === "project") {
       const p = projects.find((pp) => pp.id === c.projectId);
       if (!p) return 0;
       let n = 0;
       for (const t of p.tasks) {
-        if (t.status !== "done") n++;
-        for (const s of t.subtasks) if (s.status !== "done") n++;
+        if (!isClosedStatus(t.status)) n++;
+        for (const s of t.subtasks) if (!isClosedStatus(s.status)) n++;
       }
       return n;
     }
@@ -302,9 +304,9 @@ export default function ChatPage() {
     let n = 0;
     for (const p of projects) {
       for (const t of p.tasks) {
-        if (t.status !== "done" && memberIds.has(t.assigneeId)) n++;
+        if (!isClosedStatus(t.status) && memberIds.has(t.assigneeId)) n++;
         for (const s of t.subtasks) {
-          if (s.status !== "done" && memberIds.has(s.assigneeId)) n++;
+          if (!isClosedStatus(s.status) && memberIds.has(s.assigneeId)) n++;
         }
       }
     }
@@ -1646,7 +1648,7 @@ function Composer({
     const q = taskMenu.query.trim();
     const list = q
       ? allTasksFlat.filter((t) => t.title.toLowerCase().includes(q) || t.projectName.toLowerCase().includes(q))
-      : allTasksFlat.filter((t) => t.status !== "done");
+      : allTasksFlat.filter((t) => !isClosedStatus(t.status));
     return list.slice(0, 8);
   }, [taskMenu, allTasksFlat]);
 
@@ -2907,14 +2909,14 @@ function TasksPanel({
     const q = search.trim().toLowerCase();
     const base = q
       ? tasks.filter((t) => t.title.toLowerCase().includes(q) || t.projectName.toLowerCase().includes(q))
-      : tasks.filter((t) => t.status !== "done");
+      : tasks.filter((t) => !isClosedStatus(t.status));
     return base.slice(0, 200);
   }, [tasks, search]);
 
   // Group by status for project channels (cleaner overview)
   const grouped = useMemo(() => {
-    const order = ["pending_review", "pending_client_approval", "pending_article_post", "revision_required", "in_progress", "todo", "done"] as const;
-    const out: Record<string, typeof filtered> = { todo: [], in_progress: [], pending_review: [], pending_client_approval: [], pending_article_post: [], revision_required: [], done: [] };
+    const order = ["pending_review", "pending_client_approval", "pending_article_post", "revision_required", "in_progress", "todo", "done", "rejected", "missed"] as const;
+    const out: Record<string, typeof filtered> = { todo: [], in_progress: [], pending_review: [], pending_client_approval: [], pending_article_post: [], revision_required: [], done: [], rejected: [], missed: [] };
     for (const t of filtered) {
       (out[t.status] ?? out.todo).push(t);
     }

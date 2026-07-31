@@ -106,6 +106,8 @@ const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   // Weekly SEO tombstone: the slot's article was never posted (set by the
   // weekly generator on carry-forward; admins may also set it manually).
   { key: "missed", label: "Missed", color: "#ef4444" },
+  // Admin refused the work outright — closed, no redo loop (admin-set only).
+  { key: "rejected", label: "Rejected", color: "#dc2626" },
 ];
 
 function priorityColor(p: number): string {
@@ -615,7 +617,7 @@ function TaskPanel({
     updateTaskStatus, updateTaskPriority, updateTaskAssignee, updateTaskDescription,
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
-    requestTaskApproval, approveTaskCompletion, rejectTask, addNotification,
+    requestTaskApproval, approveTaskCompletion, rejectTask, markTaskRejected, addNotification,
     markArticlePosted, setTaskRequiresArticlePost,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
     moveTaskToProject, archiveTask, projects,
@@ -651,6 +653,7 @@ function TaskPanel({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [approvalLoading, setApprovalLoading] = useState(false);
+  const [confirmReject, setConfirmReject] = useState(false);
   const [articleUrlDraft, setArticleUrlDraft] = useState("");
   const [postingArticle, setPostingArticle] = useState(false);
   const [articlePostError, setArticlePostError] = useState<string | null>(null);
@@ -1167,6 +1170,18 @@ function TaskPanel({
       await rejectTask(projectId, task.id, task.title);
     } finally {
       setApprovalLoading(false);
+      setConfirmReject(false);
+    }
+  }
+
+  // Reject outright (closed, no redo) — distinct from handleReject's revision loop.
+  async function handleMarkRejected() {
+    setApprovalLoading(true);
+    try {
+      await markTaskRejected(projectId, task.id, task.title);
+    } finally {
+      setApprovalLoading(false);
+      setConfirmReject(false);
     }
   }
 
@@ -1392,7 +1407,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "pending_article_post" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed"))
+                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "pending_article_post" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed" && s.key !== "rejected"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -1695,8 +1710,9 @@ function TaskPanel({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        // "missed" tombstones are a permanent record — only admins may reopen.
-                        if (sub.status === "missed" && !isAdmin) return;
+                        // "missed" tombstones and admin rejections are a permanent
+                        // record — only admins may reopen.
+                        if ((sub.status === "missed" || sub.status === "rejected") && !isAdmin) return;
                         // pending_article_post completes via the child's Mark-as-Posted
                         // panel (link required) — staff can't shortcut it here.
                         if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
@@ -1722,8 +1738,9 @@ function TaskPanel({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        // "missed" tombstones are a permanent record — only admins may reopen.
-                        if (sub.status === "missed" && !isAdmin) return;
+                        // "missed" tombstones and admin rejections are a permanent
+                        // record — only admins may reopen.
+                        if ((sub.status === "missed" || sub.status === "rejected") && !isAdmin) return;
                         // pending_article_post is resolved via the child's link panel.
                         if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
                         const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
@@ -2364,6 +2381,18 @@ function TaskPanel({
         {/* Admin: approve + reject when pending review */}
         {isAdmin && task.status === "pending_review" && (
           <div className="flex gap-2">
+            {/* Reject outright — closes the task as `rejected` (two-click confirm) */}
+            <button
+              onClick={() => { if (!confirmReject) { setConfirmReject(true); return; } handleMarkRejected(); }}
+              disabled={approvalLoading}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+              style={confirmReject
+                ? { background: "#dc2626", color: "#fff", opacity: approvalLoading ? 0.7 : 1 }
+                : { background: "#dc262620", border: "1px solid #dc262640", color: "#dc2626", opacity: approvalLoading ? 0.7 : 1 }}
+            >
+              {approvalLoading ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+              {confirmReject ? "Confirm Reject?" : "Reject"}
+            </button>
             <button
               onClick={handleReject}
               disabled={approvalLoading}
@@ -2389,8 +2418,9 @@ function TaskPanel({
             <button onClick={onGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
           )}
           {/* Staff on own task: request review or show pending state
-              (pending_article_post uses the Mark-as-Posted panel above instead) */}
-          {!isAdmin && isMyTask && task.status !== "done" && task.status !== "pending_review" && task.status !== "pending_article_post" && (
+              (pending_article_post uses the Mark-as-Posted panel above instead;
+              rejected is a closed admin decision — no resubmit) */}
+          {!isAdmin && isMyTask && task.status !== "done" && task.status !== "rejected" && task.status !== "pending_review" && task.status !== "pending_article_post" && (
             <button
               onClick={handleRequestApproval}
               disabled={approvalLoading}
@@ -2406,8 +2436,13 @@ function TaskPanel({
               Awaiting Admin Review...
             </div>
           )}
-          {/* Admin: archive a completed top-level task (hides it from all active views) */}
-          {isAdmin && !task.parentId && task.status === "done" && (
+          {!isAdmin && isMyTask && task.status === "rejected" && (
+            <div className="flex-1 py-2 rounded-lg text-sm font-medium text-center" style={{ background: "#dc262620", color: "#dc2626", border: "1px solid #dc262640" }}>
+              Rejected by Admin
+            </div>
+          )}
+          {/* Admin: archive a closed top-level task (hides it from all active views) */}
+          {isAdmin && !task.parentId && (task.status === "done" || task.status === "rejected") && (
             <button
               onClick={async () => { await archiveTask(projectId, task.id); onClose(); }}
               className="py-2 px-4 rounded-lg text-sm font-medium flex items-center gap-2"
@@ -2418,7 +2453,7 @@ function TaskPanel({
             </button>
           )}
           {/* Default close button */}
-          {(isAdmin ? task.status !== "pending_review" : (!isMyTask || task.status === "done")) && !canGoBack && (
+          {(isAdmin ? task.status !== "pending_review" : (!isMyTask || task.status === "done" || task.status === "rejected")) && !canGoBack && (
             <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Done</button>
           )}
         </div>
