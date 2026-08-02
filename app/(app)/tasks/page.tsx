@@ -17,7 +17,7 @@ function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boolean).join(" ") || s.email; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
-type TaskWithProject = Task & { projectName: string; projectId: string };
+type TaskWithProject = Task & { projectName: string; projectId: string; parentTitle?: string };
 
 function priorityColor(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -110,6 +110,8 @@ function TaskGroup({
                 </p>
                 <p className="text-xs truncate" style={{ color: "#4a7090" }}>
                   {task.projectName}
+                  {/* Subtask surfaced on its own row (e.g. a parked child) — show which parent it lives under */}
+                  {task.parentTitle && <span>{" › "}{task.parentTitle}</span>}
                   {/* When it was submitted — distinguishes a fresh review request from one already seen */}
                   {task.status === "pending_review" && task.statusChangedAt && (
                     <span style={{ color: "#a855f7" }}>
@@ -219,7 +221,25 @@ export default function TasksPage() {
   const activeTasks = allTasks.filter((t) => !isClosedStatus(t.status));
   const doneCount = allTasks.filter((t) => t.status === "done").length;
 
-  const filtered = activeTasks.filter((t) => {
+  // to_be_discussed does NOT roll up onto the parent (the admin parks a child
+  // without touching the top-level task), so parked SUBTASKS would be invisible
+  // in the top-level lists above. Surface every parked descendant as its own
+  // row, tagged with its parent's title; clicking one opens the CHILD drawer.
+  const parkedDescendants: TaskWithProject[] = projects.flatMap((p) => {
+    const out: TaskWithProject[] = [];
+    const walk = (t: Task) => {
+      for (const c of t.subtasks) {
+        if (c.status === "to_be_discussed" && (isAdmin || c.assigneeId === user?.id)) {
+          out.push({ ...c, projectName: p.name, projectId: p.id, parentTitle: t.title });
+        }
+        walk(c);
+      }
+    };
+    for (const t of p.tasks) walk(t);
+    return out;
+  });
+
+  const passesBarFilters = (t: TaskWithProject) => {
     if (filterProject !== "all" && t.projectId !== filterProject) return false;
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
@@ -233,12 +253,14 @@ export default function TasksPage() {
       if (fp === 7 && p < 7) return false;
     }
     return true;
-  });
+  };
+
+  const filtered = activeTasks.filter(passesBarFilters);
 
   const statusCounts = {
     todo: activeTasks.filter((t) => t.status === "todo").length,
     in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
-    to_be_discussed: activeTasks.filter((t) => t.status === "to_be_discussed").length,
+    to_be_discussed: activeTasks.filter((t) => t.status === "to_be_discussed").length + parkedDescendants.length,
     pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
     pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length,
     pending_article_post: activeTasks.filter((t) => t.status === "pending_article_post").length,
@@ -258,7 +280,8 @@ export default function TasksPage() {
   const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval").sort(bySubmission);
   const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post").sort(bySubmission);
   const revisionTasks       = filtered.filter((t) => t.status === "revision_required").sort(bySubmission);
-  const toDiscussTasks      = filtered.filter((t) => t.status === "to_be_discussed").sort(bySubmission);
+  // Parked top-level tasks AND parked subtasks (which don't roll up) together.
+  const toDiscussTasks      = [...filtered.filter((t) => t.status === "to_be_discussed"), ...parkedDescendants.filter(passesBarFilters)].sort(bySubmission);
   const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required" && t.status !== "to_be_discussed");
 
   const grouped = {
@@ -324,9 +347,19 @@ export default function TasksPage() {
     setProjError(null);
   }
 
-  // Keep selected task in sync with store updates
+  // Keep selected task in sync with store updates. Deep search — the selected
+  // row may be a SUBTASK (parked to_be_discussed children get their own rows),
+  // and its drawer must open on the child, not the parent.
+  const findDeep = (tasks: Task[], id: string): Task | null => {
+    for (const t of tasks) {
+      if (t.id === id) return t;
+      const hit = findDeep(t.subtasks, id);
+      if (hit) return hit;
+    }
+    return null;
+  };
   const liveSelectedTask = selectedTask
-    ? projects.find((p) => p.id === selectedTask.projectId)?.tasks.find((t) => t.id === selectedTask.id) ?? null
+    ? findDeep(projects.find((p) => p.id === selectedTask.projectId)?.tasks ?? [], selectedTask.id)
     : null;
 
   // Content approval data
@@ -519,8 +552,12 @@ export default function TasksPage() {
             : activeTab === "revision"
             ? "No tasks need revision right now."
             : "Nothing parked for discussion right now.";
-          const matched = activeTasks
-            .filter((t) => t.status === statusFilter)
+          // The discuss tab also lists parked SUBTASKS — to_be_discussed doesn't
+          // roll up, so without them a parked child would be invisible here.
+          const pool = activeTab === "discuss"
+            ? [...activeTasks.filter((t) => t.status === statusFilter), ...parkedDescendants]
+            : activeTasks.filter((t) => t.status === statusFilter);
+          const matched = pool
             .filter((t) => filterMember === "all" || t.assigneeId === filterMember)
             .filter((t) => filterType === "all" || t.type === filterType);
 
