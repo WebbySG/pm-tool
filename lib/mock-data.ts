@@ -207,6 +207,9 @@ export interface Project {
   tasks: Task[];
   media: ProjectMedia[];
   pinnedItems: PinnedItem[];
+  // Admin archive — loadAll only returns projects where this is NULL, so an
+  // archived project (and all its tasks with it) vanishes from active views.
+  archivedAt: string | null;
 }
 
 export interface Notification {

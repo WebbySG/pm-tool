@@ -9,7 +9,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { type Project, type Channel } from "@/lib/mock-data";
-import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical, AlertTriangle } from "lucide-react";
+import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical, AlertTriangle, Archive } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
@@ -28,10 +28,11 @@ const CHANNEL_COLORS = ["#38b6e8", "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "
 
 // ─── Draggable project card ───────────────────────────────────────────────
 function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Project; isAdmin: boolean; liveStaff: LiveStaff[] }) {
-  const { deleteProject } = useStore();
+  const { deleteProject, archiveProject } = useStore();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: project.id });
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.3 : 1, touchAction: "none" };
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
 
   const done = project.tasks.filter((t) => t.status === "done").length;
@@ -72,6 +73,24 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
             {project.type === "seo" ? "SEO" : project.type === "both" ? "Web + SEO" : "Web Dev"}
           </span>
           <div className="flex-1" />
+          {isAdmin && (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                if (!confirmArchive) { setConfirmArchive(true); setTimeout(() => setConfirmArchive(false), 3000); return; }
+                archiveProject(project.id);
+              }}
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold"
+              style={{
+                background: confirmArchive ? "#6b7280" : "#6b728018",
+                color: confirmArchive ? "#fff" : "#9ca3af",
+                border: `1px solid ${confirmArchive ? "#6b7280" : "#6b728040"}`,
+              }}
+              title={confirmArchive ? "Click again to archive (restore anytime from Archive page)" : "Archive project (hide from active views)"}
+            >
+              {confirmArchive ? <><AlertTriangle size={11} /> Confirm</> : <Archive size={11} />}
+            </button>
+          )}
           {isAdmin && (
             <button
               onClick={(e) => {

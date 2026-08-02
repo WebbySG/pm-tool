@@ -55,6 +55,7 @@ function rowToProject(row: Row, tasks: Task[] = []): Project {
     tasks,
     media: [],
     pinnedItems: [],
+    archivedAt: (row.archived_at as string | null) ?? null,
   };
 }
 
@@ -75,7 +76,7 @@ export async function loadAll() {
   ] = await Promise.all([
     supabase.from("pm_clients").select("*"),
     supabase.from("pm_channels").select("*").order("order"),
-    supabase.from("pm_projects").select("*"),
+    supabase.from("pm_projects").select("*").is("archived_at", null),
     supabase.from("pm_tasks").select("*").is("archived_at", null).order("sort_order").order("created_at"),
     supabase.from("pm_task_attachments").select("*"),
     supabase.from("pm_credentials").select("*"),
@@ -197,7 +198,7 @@ export async function loadAll() {
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
-export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">) {
+export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks" | "media" | "pinnedItems" | "archivedAt">) {
   const { error } = await supabase.from("pm_projects").insert({
     id, name: data.name, description: data.description, type: data.type,
     phase: data.phase, client_id: data.clientId ?? null,
@@ -226,6 +227,26 @@ export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "n
   if (data.dueDate !== undefined) patch.due_date = data.dueDate || null;
   if (data.assignedStaff !== undefined) patch.assigned_staff = data.assignedStaff;
   await supabase.from("pm_projects").update(patch).eq("id", id);
+}
+
+// Archive / unarchive a project. Only the project row is stamped — its tasks
+// keep their own archived_at untouched, but they disappear from every view
+// anyway because loadAll drops the whole project (tasks are nested under
+// projects in the store). Unarchiving therefore restores everything intact.
+export async function dbSetProjectArchived(projectId: string, archived: boolean) {
+  const stamp = archived ? new Date().toISOString() : null;
+  const { error } = await supabase.from("pm_projects").update({ archived_at: stamp }).eq("id", projectId);
+  if (error) throw error;
+}
+
+export async function dbListArchivedProjects(): Promise<Project[]> {
+  const { data, error } = await supabase
+    .from("pm_projects")
+    .select("*")
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false });
+  if (error) { console.error("dbListArchivedProjects", error); return []; }
+  return ((data ?? []) as Row[]).map((r) => rowToProject(r));
 }
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────

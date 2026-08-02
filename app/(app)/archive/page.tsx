@@ -3,10 +3,10 @@ import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
-import { dbListArchivedTasks } from "@/lib/db";
-import { Calendar, RotateCcw, Archive, ArchiveRestore, Loader2 } from "lucide-react";
+import { dbListArchivedTasks, dbListArchivedProjects } from "@/lib/db";
+import { Calendar, RotateCcw, Archive, ArchiveRestore, Loader2, FolderClosed } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { type Task } from "@/lib/mock-data";
+import { type Task, type Project } from "@/lib/mock-data";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -21,14 +21,16 @@ type TaskWithProject = Task & { projectName: string; projectId: string };
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
 export default function ArchivePage() {
-  const { projects, updateTaskStatus, archiveTask, unarchiveTask } = useStore();
+  const { projects, updateTaskStatus, archiveTask, unarchiveTask, unarchiveProject } = useStore();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [tab, setTab] = useState<"completed" | "archived">("completed");
+  const [tab, setTab] = useState<"completed" | "archived" | "projects">("completed");
   const [archived, setArchived] = useState<TaskWithProject[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -58,6 +60,25 @@ export default function ArchivePage() {
 
   useEffect(() => { if (tab === "archived") void loadArchived(); }, [tab, loadArchived]);
 
+  const loadArchivedProjects = useCallback(async () => {
+    setProjectsLoading(true);
+    try {
+      setArchivedProjects(await dbListArchivedProjects());
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (tab === "projects") void loadArchivedProjects(); }, [tab, loadArchivedProjects]);
+
+  async function handleUnarchiveProject(p: Project) {
+    setBusyId(p.id);
+    try {
+      await unarchiveProject(p.id);
+      setArchivedProjects((prev) => prev.filter((x) => x.id !== p.id));
+    } finally { setBusyId(null); }
+  }
+
   const doneTasks: TaskWithProject[] = projects.flatMap((p) =>
     p.tasks
       .filter((t) => t.status === "done" && (!isAdmin ? t.assigneeId === user?.id : true))
@@ -77,7 +98,7 @@ export default function ArchivePage() {
     } finally { setBusyId(null); }
   }
 
-  const list = tab === "completed" ? doneTasks : archived;
+  const list = tab === "completed" ? doneTasks : tab === "archived" ? archived : [];
 
   // Group by project
   const byProject = new Map<string, TaskWithProject[]>();
@@ -113,6 +134,19 @@ export default function ArchivePage() {
           >
             <ArchiveRestore size={14} /> Archived{tab === "archived" ? ` (${archived.length})` : ""}
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => setTab("projects")}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium"
+              style={{
+                background: tab === "projects" ? "#38b6e815" : "transparent",
+                border: `1px solid ${tab === "projects" ? "#38b6e830" : "#1c3248"}`,
+                color: tab === "projects" ? "#38b6e8" : "#4a7090",
+              }}
+            >
+              <FolderClosed size={14} /> Archived Projects{tab === "projects" ? ` (${archivedProjects.length})` : ""}
+            </button>
+          )}
         </div>
 
         {tab === "archived" && archivedLoading && (
@@ -121,13 +155,70 @@ export default function ArchivePage() {
           </p>
         )}
 
-        {list.length === 0 && !(tab === "archived" && archivedLoading) && (
+        {tab !== "projects" && list.length === 0 && !(tab === "archived" && archivedLoading) && (
           <div className="flex flex-col items-center justify-center py-24 gap-3">
             <Archive size={36} style={{ color: "#1c3248" }} />
             <p className="text-sm" style={{ color: "#4a7090" }}>
               {tab === "completed" ? "No completed tasks yet." : "Nothing archived yet."}
             </p>
           </div>
+        )}
+
+        {/* ARCHIVED PROJECTS TAB (admin) — whole projects hidden from active views */}
+        {tab === "projects" && (
+          <>
+            {projectsLoading && (
+              <p className="text-sm flex items-center gap-2" style={{ color: "#4a7090" }}>
+                <Loader2 size={14} className="animate-spin" /> Loading archived projects...
+              </p>
+            )}
+            {!projectsLoading && archivedProjects.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-24 gap-3">
+                <FolderClosed size={36} style={{ color: "#1c3248" }} />
+                <p className="text-sm" style={{ color: "#4a7090" }}>No archived projects.</p>
+              </div>
+            )}
+            {archivedProjects.length > 0 && (
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
+                {archivedProjects.map((p, i) => {
+                  const typeColor = p.type === "seo" ? "#22c55e" : p.type === "both" ? "#a855f7" : "#38b6e8";
+                  const busy = busyId === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-4 px-4 py-3"
+                      style={{
+                        background: "#0f1d2e",
+                        borderBottom: i < archivedProjects.length - 1 ? "1px solid #1c3248" : "none",
+                        borderLeft: `3px solid ${typeColor}`,
+                      }}
+                    >
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full shrink-0" style={{ background: typeColor + "25", color: typeColor }}>
+                        {p.type === "seo" ? "SEO" : p.type === "both" ? "Web + SEO" : "Web Dev"}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{p.name}</p>
+                        <p className="text-xs" style={{ color: "#4a7090" }}>
+                          {p.archivedAt
+                            ? `Archived ${new Date(p.archivedAt).toLocaleString("en-SG", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}`
+                            : "Archived"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleUnarchiveProject(p)}
+                        disabled={busy}
+                        title="Restore project (and all its tasks) to active views"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity shrink-0"
+                        style={{ background: "#38b6e820", color: "#38b6e8", border: "1px solid #38b6e840", opacity: busy ? 0.6 : 1 }}
+                      >
+                        {busy ? <Loader2 size={11} className="animate-spin" /> : <ArchiveRestore size={11} />} Unarchive
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
 
         {Array.from(byProject.entries()).map(([projectId, tasks]) => (

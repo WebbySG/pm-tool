@@ -100,9 +100,11 @@ interface Store {
   deleteAttachment: (projectId: string, taskId: string, attachmentId: string) => Promise<void>;
 
   // Project actions
-  addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems">, seedTasks?: Task[]) => Promise<string>;
+  addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems" | "archivedAt">, seedTasks?: Task[]) => Promise<string>;
   updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "channelId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
+  archiveProject: (projectId: string) => Promise<void>;
+  unarchiveProject: (projectId: string) => Promise<void>;
   assignStaff: (projectId: string, userId: string) => Promise<void>;
   removeStaff: (projectId: string, userId: string) => Promise<void>;
 
@@ -950,7 +952,7 @@ export const useStore = create<Store>()(
     const seedTasks: Task[] = seedTaskDefs.map((t) => ({
       ...t, id: uuid(), projectId: id, parentId: null,
     }));
-    const newProject: Project = { ...projectData, id, tasks: seedTasks, media: [], pinnedItems: [] };
+    const newProject: Project = { ...projectData, id, tasks: seedTasks, media: [], pinnedItems: [], archivedAt: null };
     set((s) => ({ projects: [...s.projects, newProject] }));
     await db.dbAddProject(id, projectData);
     for (const t of seedTasks) {
@@ -967,6 +969,19 @@ export const useStore = create<Store>()(
   deleteProject: async (projectId) => {
     set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) }));
     await db.dbDeleteProject(projectId);
+  },
+
+  // Archive hides the project (and with it all its tasks) from every active
+  // view — loadAll filters pm_projects on archived_at IS NULL. Nothing is
+  // deleted; unarchive restores the project with tasks/comments intact.
+  archiveProject: async (projectId) => {
+    await db.dbSetProjectArchived(projectId, true);
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) }));
+  },
+
+  unarchiveProject: async (projectId) => {
+    await db.dbSetProjectArchived(projectId, false);
+    await get().refresh();
   },
 
   assignStaff: async (projectId, userId) => {

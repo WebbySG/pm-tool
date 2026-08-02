@@ -129,7 +129,8 @@ export async function POST(req: Request) {
     const { data: projRows, error: projErr } = await admin
       .from("pm_projects")
       .select("id,name,assigned_staff")
-      .in("id", plans.map((p) => p.project_id));
+      .in("id", plans.map((p) => p.project_id))
+      .is("archived_at", null);
     if (projErr) throw projErr;
     const projects = new Map((projRows ?? []).map((p) => [p.id as string, p as { id: string; name: string; assigned_staff: string[] | null }]));
 
@@ -137,7 +138,10 @@ export async function POST(req: Request) {
 
     for (const plan of plans) {
       const project = projects.get(plan.project_id);
-      if (!project) continue; // project deleted; FK cascade will have removed the plan anyway
+      // Missing = deleted (FK cascade removes the plan) OR ARCHIVED — an
+      // archived project must not keep generating weekly tasks; its plan
+      // stays enrolled and resumes automatically on unarchive.
+      if (!project) continue;
       const assignee = plan.assignee_id ?? project.assigned_staff?.[0] ?? null;
 
       const { data: rowData, error: rowErr } = await admin
