@@ -88,6 +88,8 @@ function ActivityInner() {
   const [loading, setLoading] = useState(true);
   const [actorFilter, setActorFilter] = useState<string>("all");
   const [kindFilter, setKindFilter] = useState<"all" | FeedKind>("all");
+  // Sub-filter for "Task changes": show only changes INTO this status.
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   async function load() {
     setLoading(true);
@@ -108,10 +110,16 @@ function ActivityInner() {
       .then(({ data }) => setStaff((data as StaffLite[]) ?? []));
   }, []);
 
-  const actorName = useMemo(() => {
+  // Actors that don't resolve against ACTIVE staff are revoked/former accounts
+  // (their auth uid lingers in old audit rows). Label their rows "Former staff";
+  // isKnownActor keeps them out of the people filter dropdown.
+  const { actorName, isKnownActor } = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of staff) m.set(authId(s), staffLabel(s));
-    return (id: string | null) => (id ? (m.get(id) ?? "Unknown user") : "System");
+    return {
+      actorName: (id: string | null) => (id ? (m.get(id) ?? "Former staff") : "System"),
+      isKnownActor: (id: string) => m.has(id),
+    };
   }, [staff]);
 
   const projectName = useMemo(() => {
@@ -175,11 +183,32 @@ function ActivityInner() {
 
   const actorsPresent = useMemo(() => {
     const ids = Array.from(new Set(feed.map((r) => r.actorId).filter((x): x is string => !!x)));
-    return ids.map((id) => ({ id, name: actorName(id) })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [feed, actorName]);
+    // Only current staff belong in the people filter — revoked accounts'
+    // history stays visible under "All people" but isn't a filter option.
+    return ids
+      .filter(isKnownActor)
+      .map((id) => ({ id, name: actorName(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [feed, actorName, isKnownActor]);
 
   const byActor = actorFilter === "all" ? feed : feed.filter((r) => r.actorId === actorFilter);
-  const filtered = kindFilter === "all" ? byActor : byActor.filter((r) => r.kind === kindFilter);
+  const byKind = kindFilter === "all" ? byActor : byActor.filter((r) => r.kind === kindFilter);
+  // Deeper drill-down for Task changes: only status changes INTO the picked
+  // status ("what status are they in" — matches on the audit row's new_value).
+  const filtered = kindFilter === "task" && statusFilter !== "all"
+    ? byKind.filter((r) => r.act?.field === "status" && r.act.newValue === statusFilter)
+    : byKind;
+
+  // How many recorded changes went INTO each status (for the selected person).
+  const statusChangeCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of byActor) {
+      if (r.kind === "task" && r.act?.field === "status" && r.act.newValue) {
+        c[r.act.newValue] = (c[r.act.newValue] ?? 0) + 1;
+      }
+    }
+    return c;
+  }, [byActor]);
 
   // Per-kind counts for the selected person (or everyone)
   const counts = useMemo(() => {
@@ -241,7 +270,7 @@ function ActivityInner() {
 
         {/* Type filter chips with counts (for the selected person) */}
         <div className="flex items-center gap-2 mb-5 flex-wrap">
-          <button onClick={() => setKindFilter("all")}
+          <button onClick={() => { setKindFilter("all"); setStatusFilter("all"); }}
             className="px-3 py-1.5 rounded-full text-xs font-semibold"
             style={{
               background: kindFilter === "all" ? "rgba(var(--accent-rgb),0.2)" : "var(--bg-surface)",
@@ -251,7 +280,7 @@ function ActivityInner() {
             All · {byActor.length}
           </button>
           {(Object.keys(KIND_META) as FeedKind[]).map((k) => (
-            <button key={k} onClick={() => setKindFilter(k)}
+            <button key={k} onClick={() => { setKindFilter(k); setStatusFilter("all"); }}
               className="px-3 py-1.5 rounded-full text-xs font-semibold"
               style={{
                 background: kindFilter === k ? `${KIND_META[k].color}25` : "var(--bg-surface)",
@@ -261,6 +290,29 @@ function ActivityInner() {
               {KIND_META[k].label} · {counts[k]}
             </button>
           ))}
+          {/* Deeper filter for Task changes: which status the change went INTO */}
+          {kindFilter === "task" && (
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-1.5 rounded-full text-xs font-semibold outline-none cursor-pointer"
+                style={{
+                  background: statusFilter === "all" ? "var(--bg-surface)" : "#38b6e825",
+                  color: statusFilter === "all" ? "var(--text-muted)" : "#38b6e8",
+                  border: `1px solid ${statusFilter === "all" ? "var(--border)" : "#38b6e8"}`,
+                }}
+              >
+                <option value="all">Any status</option>
+                {Object.entries(STATUS_LABEL)
+                  .filter(([k]) => statusChangeCounts[k] || k === statusFilter)
+                  .map(([k, label]) => (
+                    <option key={k} value={k}>→ {label} · {statusChangeCounts[k] ?? 0}</option>
+                  ))}
+              </select>
+              <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+            </div>
+          )}
         </div>
 
         {loading && feed.length === 0 ? (
