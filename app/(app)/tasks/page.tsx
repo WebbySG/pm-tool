@@ -187,7 +187,7 @@ export default function TasksPage() {
   const [projError, setProjError] = useState<string | null>(null);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const [activeTab, setActiveTab] = useState<"tasks" | "content" | "review" | "revision">("tasks");
+  const [activeTab, setActiveTab] = useState<"tasks" | "content" | "review" | "revision" | "discuss">("tasks");
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -394,6 +394,19 @@ export default function TasksPage() {
             )}
           </button>
           <button
+            onClick={() => setActiveTab("discuss")}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "discuss" ? "#1c3248" : "transparent",
+              color: activeTab === "discuss" ? "#06b6d4" : "#4a7090",
+            }}
+          >
+            To Be Discussed
+            {statusCounts.to_be_discussed > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#06b6d420", color: "#06b6d4" }}>{statusCounts.to_be_discussed}</span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab("content")}
             className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
             style={{
@@ -496,14 +509,16 @@ export default function TasksPage() {
           </>
         )}
 
-        {/* REVIEW TAB — tasks awaiting approval */}
-        {(activeTab === "review" || activeTab === "revision") && (() => {
-          const statusFilter = activeTab === "review" ? "pending_review" : "revision_required";
-          const accent = activeTab === "review" ? "#a855f7" : "#f59e0b";
-          const title = activeTab === "review" ? "Pending Review" : "Revision Required";
+        {/* REVIEW / REVISION / TO-BE-DISCUSSED TABS — single-status quick filters */}
+        {(activeTab === "review" || activeTab === "revision" || activeTab === "discuss") && (() => {
+          const statusFilter = activeTab === "review" ? "pending_review" : activeTab === "revision" ? "revision_required" : "to_be_discussed";
+          const accent = activeTab === "review" ? "#a855f7" : activeTab === "revision" ? "#f59e0b" : "#06b6d4";
+          const title = activeTab === "review" ? "Pending Review" : activeTab === "revision" ? "Revision Required" : "To Be Discussed";
           const empty = activeTab === "review"
             ? "Nothing pending review right now."
-            : "No tasks need revision right now.";
+            : activeTab === "revision"
+            ? "No tasks need revision right now."
+            : "Nothing parked for discussion right now.";
           const matched = activeTasks
             .filter((t) => t.status === statusFilter)
             .filter((t) => filterMember === "all" || t.assigneeId === filterMember)
@@ -530,13 +545,21 @@ export default function TasksPage() {
                   <option value="webdev">Web Dev</option>
                   <option value="seo">SEO</option>
                 </select>
-                <span className="text-sm" style={{ color: "#4a7090" }}>{matched.length} task{matched.length !== 1 ? "s" : ""} in {title.toLowerCase()}</span>
+                <span className="text-sm" style={{ color: "#4a7090" }}>{matched.length} task{matched.length !== 1 ? "s" : ""} {activeTab === "discuss" ? "parked for discussion" : `in ${title.toLowerCase()}`}</span>
               </div>
 
-              <TaskGroup title="Overdue" tasks={matchedGroups.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-              <TaskGroup title="Due Today" tasks={matchedGroups.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-              <TaskGroup title="Upcoming" tasks={matchedGroups.upcoming} accent={accent} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-              <TaskGroup title="No Due Date" tasks={matchedGroups.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              {activeTab === "discuss" ? (
+                // Parked tasks aren't due-date-driven (admin-parked, never overdue-flagged) —
+                // one FIFO queue, oldest-parked first, matching the main-tab group order.
+                <TaskGroup title="To Be Discussed" tasks={[...matched].sort(bySubmission)} accent={accent} icon={<Clock size={14} style={{ color: accent }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              ) : (
+                <>
+                  <TaskGroup title="Overdue" tasks={matchedGroups.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+                  <TaskGroup title="Due Today" tasks={matchedGroups.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+                  <TaskGroup title="Upcoming" tasks={matchedGroups.upcoming} accent={accent} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+                  <TaskGroup title="No Due Date" tasks={matchedGroups.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+                </>
+              )}
 
               {matched.length === 0 && (
                 <div className="text-center py-16">
