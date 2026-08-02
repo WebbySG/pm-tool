@@ -35,6 +35,7 @@ function slotEndDate(projectStart: Date, month: number, week: number): string {
 const STATUS_COLORS: Record<string, string> = {
   todo: "#4a7090", in_progress: "#38b6e8", review: "#f59e0b", done: "#22c55e", missed: "#ef4444", rejected: "#dc2626",
   pending_review: "#a855f7", pending_client_approval: "#ec4899", pending_article_post: "#f97316", revision_required: "#f59e0b",
+  to_be_discussed: "#06b6d4",
 };
 function PRIORITY_COLORS(p: number | string): string {
   const n = typeof p === "number" ? p : 5;

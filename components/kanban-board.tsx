@@ -22,6 +22,7 @@ import { Calendar, Clock, Plus, Paperclip, RefreshCw } from "lucide-react";
 const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
+  { key: "to_be_discussed", label: "To Be Discussed", color: "#06b6d4" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
   { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
   { key: "pending_article_post", label: "Pending Article Post", color: "#f97316" },
@@ -40,7 +41,7 @@ function priorityColor(p: number): string {
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
 export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
-  const overdue = task.status !== "done" && task.status !== "rejected" && task.status !== "pending_review" && task.status !== "pending_client_approval" && !!task.dueDate && new Date(task.dueDate) < new Date();
+  const overdue = task.status !== "done" && task.status !== "rejected" && task.status !== "pending_review" && task.status !== "pending_client_approval" && task.status !== "to_be_discussed" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
   const prio = typeof task.priority === "number" ? task.priority : 5;
 

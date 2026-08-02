@@ -30,6 +30,7 @@ function priorityColor(p: number | string): string {
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
   todo:              { label: "To Do",             color: "#64748b", bg: "#64748b20" },
   in_progress:       { label: "In Progress",       color: "#3b82f6", bg: "#3b82f620" },
+  to_be_discussed:   { label: "To Be Discussed",   color: "#06b6d4", bg: "#06b6d420" },
   pending_review:    { label: "Pending Review",    color: "#a855f7", bg: "#a855f720" },
   pending_client_approval: { label: "Pending Client Approval", color: "#ec4899", bg: "#ec489920" },
   pending_article_post: { label: "Pending Article Post", color: "#f97316", bg: "#f9731620" },
@@ -67,7 +68,8 @@ function TaskGroup({
           const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
           const avatarColor = AVATAR_COLORS[liveStaff.indexOf(assignee!) % AVATAR_COLORS.length] ?? "#818cf8";
           const sc = statusConfig[task.status];
-          const overdue = task.status !== "done" && !!task.dueDate && new Date(task.dueDate) < new Date();
+          // to_be_discussed is admin-parked — don't red-flag its due date.
+          const overdue = task.status !== "done" && task.status !== "to_be_discussed" && !!task.dueDate && new Date(task.dueDate) < new Date();
           return (
             <div
               key={task.id}
@@ -80,11 +82,11 @@ function TaskGroup({
               }}
             >
               {/* Complete / request approval button */}
-              {task.status === "pending_review" || task.status === "pending_client_approval" || task.status === "pending_article_post" ? (
+              {task.status === "pending_review" || task.status === "pending_client_approval" || task.status === "pending_article_post" || task.status === "to_be_discussed" ? (
                 <div
                   className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
-                  style={{ borderColor: task.status === "pending_review" ? "#a855f7" : task.status === "pending_client_approval" ? "#ec4899" : "#f97316" }}
-                  title={task.status === "pending_review" ? "Awaiting review" : task.status === "pending_client_approval" ? "Awaiting client approval" : "Awaiting article link — open the task to add it"}
+                  style={{ borderColor: task.status === "pending_review" ? "#a855f7" : task.status === "pending_client_approval" ? "#ec4899" : task.status === "to_be_discussed" ? "#06b6d4" : "#f97316" }}
+                  title={task.status === "pending_review" ? "Awaiting review" : task.status === "pending_client_approval" ? "Awaiting client approval" : task.status === "to_be_discussed" ? "Parked for discussion — open the task for the note" : "Awaiting article link — open the task to add it"}
                 />
               ) : isAdmin ? (
                 <button
@@ -115,7 +117,19 @@ function TaskGroup({
                       {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                     </span>
                   )}
+                  {task.status === "to_be_discussed" && task.statusChangedAt && (
+                    <span style={{ color: "#06b6d4" }}>
+                      {" · parked "}
+                      {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  )}
                 </p>
+                {/* Admin's discussion note — the reason this task is parked */}
+                {isAdmin && task.status === "to_be_discussed" && task.discussionNote && (
+                  <p className="text-xs truncate mt-0.5" style={{ color: "#06b6d4" }} title={task.discussionNote}>
+                    💬 {task.discussionNote}
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
@@ -186,7 +200,7 @@ export default function TasksPage() {
   const [filterMember, setFilterMember] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
-  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "todo" | "in_progress" | "to_be_discussed" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required">("all");
   const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
@@ -224,6 +238,7 @@ export default function TasksPage() {
   const statusCounts = {
     todo: activeTasks.filter((t) => t.status === "todo").length,
     in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
+    to_be_discussed: activeTasks.filter((t) => t.status === "to_be_discussed").length,
     pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
     pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length,
     pending_article_post: activeTasks.filter((t) => t.status === "pending_article_post").length,
@@ -243,7 +258,8 @@ export default function TasksPage() {
   const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval").sort(bySubmission);
   const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post").sort(bySubmission);
   const revisionTasks       = filtered.filter((t) => t.status === "revision_required").sort(bySubmission);
-  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required");
+  const toDiscussTasks      = filtered.filter((t) => t.status === "to_be_discussed").sort(bySubmission);
+  const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required" && t.status !== "to_be_discussed");
 
   const grouped = {
     overdue:         dateGroupable.filter((t) => t.dueDate && new Date(t.dueDate) < now && new Date(t.dueDate).toDateString() !== todayStr),
@@ -254,6 +270,7 @@ export default function TasksPage() {
     pendingClient:   pendingClientTasks,
     pendingArticle:  pendingArticleTasks,
     revision:        revisionTasks,
+    toDiscuss:       toDiscussTasks,
   };
 
   async function handleComplete(task: TaskWithProject) {
@@ -424,6 +441,7 @@ export default function TasksPage() {
                 <option value="all">All Statuses</option>
                 <option value="todo">To Do ({statusCounts.todo})</option>
                 <option value="in_progress">In Progress ({statusCounts.in_progress})</option>
+                <option value="to_be_discussed">To Be Discussed ({statusCounts.to_be_discussed})</option>
                 <option value="pending_review">Pending Review ({statusCounts.pending_review})</option>
                 <option value="pending_client_approval">Pending Client Approval ({statusCounts.pending_client_approval})</option>
                 <option value="pending_article_post">Pending Article Post ({statusCounts.pending_article_post})</option>
@@ -461,6 +479,7 @@ export default function TasksPage() {
             <TaskGroup title="Pending Client Approval" tasks={grouped.pendingClient} accent="#ec4899" icon={<Clock size={14} style={{ color: "#ec4899" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Pending Article Post" tasks={grouped.pendingArticle} accent="#f97316" icon={<Clock size={14} style={{ color: "#f97316" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
             <TaskGroup title="Revision Required" tasks={grouped.revision} accent="#f59e0b" icon={<XCircle size={14} style={{ color: "#f59e0b" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+            <TaskGroup title="To Be Discussed" tasks={grouped.toDiscuss} accent="#06b6d4" icon={<Clock size={14} style={{ color: "#06b6d4" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
 
             {filtered.length === 0 && (
               <div className="text-center py-16 flex flex-col items-center gap-3">

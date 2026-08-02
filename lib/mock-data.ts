@@ -39,7 +39,9 @@ export interface ArticleComment {
 // (admin-set only; sits between review and done in the workflow).
 // "rejected" = admin refused the work outright — a CLOSED state, no redo loop
 // (unlike revision_required, which reopens the task for another attempt).
-export type TaskStatus = "todo" | "in_progress" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required" | "done" | "missed" | "rejected";
+// "to_be_discussed" = admin parked the task pending a discussion (admin-set
+// only; open state; carries an admin discussionNote that clears on exit).
+export type TaskStatus = "todo" | "in_progress" | "to_be_discussed" | "pending_review" | "pending_client_approval" | "pending_article_post" | "revision_required" | "done" | "missed" | "rejected";
 
 // Closed (terminal) statuses — tasks in these states never count as active work.
 export function isClosedStatus(s: string): boolean {
@@ -160,6 +162,11 @@ export interface Task {
   // stamped optimistically client-side too). Lets the admin tell a NEW
   // pending_review submission from an old one.
   statusChangedAt: string | null;
+  // Admin's reference note while the task is parked in 'to_be_discussed'.
+  // Transient by design: the pm_tasks_clear_discussion_note DB trigger nulls
+  // it whenever the status moves to anything else (statusPatch mirrors this
+  // optimistically), so it never lingers on a resumed task.
+  discussionNote: string | null;
 }
 
 export interface ProjectMedia {

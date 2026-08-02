@@ -16,7 +16,8 @@ import { History, RotateCw, ExternalLink, ChevronDown, MessageSquare, MessageCir
 
 // ── Label maps (mirror components/task-drawer.tsx) ──────────────────────────
 const STATUS_LABEL: Record<string, string> = {
-  todo: "To Do", in_progress: "In Progress", pending_review: "Pending Review",
+  todo: "To Do", in_progress: "In Progress", to_be_discussed: "To Be Discussed",
+  pending_review: "Pending Review",
   pending_client_approval: "Pending Client Approval",
   pending_article_post: "Pending Article Post",
   revision_required: "Revision Required", done: "Done", missed: "Missed",

@@ -68,6 +68,9 @@ interface Store {
   approveTaskCompletion: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   markArticlePosted: (projectId: string, taskId: string, taskTitle: string, staffDisplayName: string, url: string) => Promise<void>;
   setTaskRequiresArticlePost: (projectId: string, taskId: string, value: boolean) => Promise<void>;
+  // Admin's reference note on a task parked in 'to_be_discussed' (auto-cleared
+  // by DB trigger + statusPatch when the status moves on).
+  setTaskDiscussionNote: (projectId: string, taskId: string, note: string) => Promise<void>;
   rejectTask: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   // Admin refuses the work outright — closes the task as `rejected` (unlike
   // rejectTask, which sends it back for another attempt as revision_required).
@@ -219,9 +222,15 @@ type StoreSet = (fn: (s: Store) => Partial<Store>) => void;
 
 // Status patch that also stamps statusChangedAt optimistically — the DB trigger
 // pm_tasks_set_status_changed_at is authoritative; this just keeps "since"
-// timestamps fresh in the UI until the next refresh().
+// timestamps fresh in the UI until the next refresh(). Leaving 'to_be_discussed'
+// also clears the admin's discussion note, mirroring the
+// pm_tasks_clear_discussion_note DB trigger (the note lives and dies with the status).
 function statusPatch(status: TaskStatus): Partial<Task> {
-  return { status, statusChangedAt: new Date().toISOString() };
+  return {
+    status,
+    statusChangedAt: new Date().toISOString(),
+    ...(status !== "to_be_discussed" ? { discussionNote: null } : {}),
+  };
 }
 
 // "Closing the parent closes everything under it": mark every still-open
@@ -283,10 +292,11 @@ async function rollupTopStatus(set: StoreSet, get: () => Store, projectId: strin
   let desired: TaskStatus | null = null;
   // A rejected top is a terminal admin decision — descendant churn never reopens it.
   if (rev) desired = top.status === "rejected" ? null : "revision_required";
-  // pending_client_approval / pending_article_post are admin-parked states
-  // (waiting on the client / on the article link) — like done, a descendant
-  // submitting for review must not clobber them.
-  else if (pend) desired = top.status === "done" || top.status === "rejected" || top.status === "pending_client_approval" || top.status === "pending_article_post" ? null : "pending_review";
+  // pending_client_approval / pending_article_post / to_be_discussed are
+  // admin-parked states (waiting on the client / on the article link / on a
+  // discussion) — like done, a descendant submitting for review must not
+  // clobber them (auto-exiting to_be_discussed would also wipe the admin's note).
+  else if (pend) desired = top.status === "done" || top.status === "rejected" || top.status === "pending_client_approval" || top.status === "pending_article_post" || top.status === "to_be_discussed" ? null : "pending_review";
   else if (top.status === "pending_review" || top.status === "revision_required") desired = "in_progress";
   if (!desired || desired === top.status) return;
   const topId = top.id;
@@ -592,6 +602,12 @@ export const useStore = create<Store>()(
     await db.dbUpdateTask(taskId, { requires_article_post: value });
   },
 
+  setTaskDiscussionNote: async (projectId, taskId, note) => {
+    const value = note.trim() || null;
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { discussionNote: value }) })) }));
+    await db.dbUpdateTask(taskId, { discussion_note: value });
+  },
+
   rejectTask: async (projectId, taskId, taskTitle) => {
     const proj = get().projects.find((p) => p.id === projectId);
     const assigneeId = proj ? findTaskInTree(proj.tasks, taskId)?.assigneeId ?? null : null;
@@ -752,6 +768,7 @@ export const useStore = create<Store>()(
       requiresArticlePost: false,
       articleUrl: null,
       statusChangedAt: new Date().toISOString(),
+      discussionNote: null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -815,6 +832,7 @@ export const useStore = create<Store>()(
       requiresArticlePost: false,
       articleUrl: null,
       statusChangedAt: new Date().toISOString(),
+      discussionNote: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({

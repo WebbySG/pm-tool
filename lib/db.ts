@@ -35,6 +35,7 @@ function rowToTask(row: Row): Task {
     requiresArticlePost: (row.requires_article_post as boolean) ?? false,
     articleUrl: (row.article_url as string | null) ?? null,
     statusChangedAt: (row.status_changed_at as string | null) ?? null,
+    discussionNote: (row.discussion_note as string | null) ?? null,
   };
 }
 

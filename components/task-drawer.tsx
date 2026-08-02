@@ -94,6 +94,9 @@ function MentionDropdown({ candidates, activeIndex, onPick, className }: {
 const statusOptions: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
   { key: "in_progress", label: "In Progress", color: "#3b82f6" },
+  // Parked by the admin pending a discussion — carries an admin-only note
+  // (discussionNote) that auto-clears when the status moves on. Admin-set only.
+  { key: "to_be_discussed", label: "To Be Discussed", color: "#06b6d4" },
   { key: "pending_review", label: "Pending Review", color: "#a855f7" },
   // Waiting on the CLIENT (not internal review) — admin-set only.
   { key: "pending_client_approval", label: "Pending Client Approval", color: "#ec4899" },
@@ -618,7 +621,7 @@ function TaskPanel({
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, markTaskRejected, addNotification,
-    markArticlePosted, setTaskRequiresArticlePost,
+    markArticlePosted, setTaskRequiresArticlePost, setTaskDiscussionNote,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
     moveTaskToProject, archiveTask, projects,
   } = useStore();
@@ -657,9 +660,22 @@ function TaskPanel({
   const [articleUrlDraft, setArticleUrlDraft] = useState("");
   const [postingArticle, setPostingArticle] = useState(false);
   const [articlePostError, setArticlePostError] = useState<string | null>(null);
+  // Admin's "to be discussed" reference note (task.discussionNote)
+  const [noteDraft, setNoteDraft] = useState(task.discussionNote ?? "");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [confirmDeleteAttachmentId, setConfirmDeleteAttachmentId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Keep the discussion-note draft in sync when switching tasks or when the
+  // status changes (leaving to_be_discussed clears the stored note).
+  useEffect(() => {
+    setNoteDraft(task.discussionNote ?? "");
+    setNoteSaved(false);
+    setNoteError(null);
+  }, [task.id, task.status, task.discussionNote]);
 
   // ── Comments ─────────────────────────────────────────────────────────────
   const [comments, setComments] = useState<TaskComment[]>([]);
@@ -1407,7 +1423,7 @@ function TaskPanel({
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 w-full rounded-lg overflow-hidden z-20 shadow-lg" style={{ background: "#0e1e30", border: "1px solid #1c3248" }}>
                 {statusOptions
-                  .filter((s) => isAdmin || (s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "pending_article_post" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed" && s.key !== "rejected"))
+                  .filter((s) => isAdmin || (s.key !== "to_be_discussed" && s.key !== "pending_review" && s.key !== "pending_client_approval" && s.key !== "pending_article_post" && s.key !== "revision_required" && s.key !== "done" && s.key !== "missed" && s.key !== "rejected"))
                   .map((s) => (
                   <button key={s.key} className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                     style={{ color: s.color, background: s.key === task.status ? "#1c3248" : "transparent" }}
@@ -1569,6 +1585,53 @@ function TaskPanel({
           </div>
         </div>
 
+        {/* Admin discussion note — only while parked in "To Be Discussed".
+            The note is transient by design: the DB trigger (mirrored by
+            statusPatch) clears it as soon as the status moves on. */}
+        {isAdmin && task.status === "to_be_discussed" && (
+          <div className="rounded-lg p-3 flex flex-col gap-2"
+            style={{ background: "#06b6d410", border: "1px solid #06b6d440" }}>
+            <div className="flex items-center gap-2">
+              <MessageSquare size={14} style={{ color: "#06b6d4" }} />
+              <p className="text-sm font-semibold" style={{ color: "#06b6d4" }}>Discussion note</p>
+            </div>
+            <textarea
+              value={noteDraft}
+              onChange={(e) => { setNoteDraft(e.target.value); setNoteSaved(false); }}
+              placeholder="What do you want to discuss? (only you and other admins see this)"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-y"
+              style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }}
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  setNoteSaving(true);
+                  setNoteError(null);
+                  try {
+                    await setTaskDiscussionNote(projectId, task.id, noteDraft);
+                    setNoteSaved(true);
+                  } catch (err) {
+                    setNoteError(errorMessage(err) || "Failed to save note.");
+                  } finally {
+                    setNoteSaving(false);
+                  }
+                }}
+                disabled={noteSaving || (noteDraft.trim() === (task.discussionNote ?? ""))}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
+                style={{ background: "#06b6d4", color: "#04222c" }}
+              >
+                {noteSaving ? "Saving…" : "Save note"}
+              </button>
+              {noteSaved && <span className="text-xs" style={{ color: "#22c55e" }}>✓ Saved</span>}
+              <span className="text-xs ml-auto" style={{ color: "#4a7090" }}>
+                Cleared automatically when the status changes
+              </span>
+            </div>
+            {noteError && <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {noteError}</p>}
+          </div>
+        )}
+
         {/* Move to another project (admin, top-level task only) */}
         {isAdmin && !task.parentId && (
           <div className="relative">
@@ -1721,7 +1784,8 @@ function TaskPanel({
                         if ((sub.status === "missed" || sub.status === "rejected") && !isAdmin) return;
                         // pending_article_post completes via the child's Mark-as-Posted
                         // panel (link required) — staff can't shortcut it here.
-                        if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
+                        // to_be_discussed is admin-parked — staff can't move it either.
+                        if ((sub.status === "pending_article_post" || sub.status === "to_be_discussed") && !isAdmin) { onOpenChild(sub); return; }
                         if (isDone) {
                           updateSubtaskStatus(projectId, task.id, sub.id, "todo");
                         } else if (isAdmin) {
@@ -1747,8 +1811,9 @@ function TaskPanel({
                         // "missed" tombstones and admin rejections are a permanent
                         // record — only admins may reopen.
                         if ((sub.status === "missed" || sub.status === "rejected") && !isAdmin) return;
-                        // pending_article_post is resolved via the child's link panel.
-                        if (sub.status === "pending_article_post" && !isAdmin) { onOpenChild(sub); return; }
+                        // pending_article_post is resolved via the child's link panel;
+                        // to_be_discussed is admin-parked — staff can't cycle either.
+                        if ((sub.status === "pending_article_post" || sub.status === "to_be_discussed") && !isAdmin) { onOpenChild(sub); return; }
                         const staffOrder: TaskStatus[] = ["todo", "in_progress", "pending_review"];
                         const adminOrder: TaskStatus[] = ["todo", "in_progress", "pending_review", "pending_client_approval", "revision_required", "done"];
                         const order = isAdmin ? adminOrder : staffOrder;
