@@ -9,8 +9,10 @@ export function useChatUnread(userId: string | undefined): number {
     if (!userId) { setCount(0); return; }
     let cancelled = false;
     const refresh = async () => {
-      const n = await getTotalUnreadForUser(userId);
-      if (!cancelled) setCount(n);
+      try {
+        const n = await getTotalUnreadForUser(userId);
+        if (!cancelled) setCount(n);
+      } catch { /* keep the previous count; the next re-check corrects it */ }
     };
     refresh();
     const unsub = subscribeToInboxForUser(userId, refresh);

@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { dbAddAttachment } from "@/lib/db";
 import {
   loadConversationsForUser, loadMessages, sendMessage, markRead,
+  subscribeToInboxForUser,
   findOrCreateDM, createGroup, ensureProjectChannel,
   subscribeToConversation, uploadChatAttachment, resolveMentions,
   editMessage, deleteMessage, parseMentionTokens,
@@ -259,14 +260,13 @@ export default function ChatPage() {
     }
   }
 
-  // Re-load conversation list whenever a new message arrives anywhere (for sort + unread)
+  // Re-load conversation list whenever a message/conversation/read-state changes
+  // anywhere (for sort + unread). subscribeToInboxForUser also re-checks on
+  // websocket reconnect, tab focus, and a slow interval — so unread badges here
+  // can't go stale when realtime events are missed.
   useEffect(() => {
     if (!user?.id) return;
-    const channel = supabase.channel("chat-inbox-page")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_messages" }, () => reloadConvs(true))
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pm_chat_conversations" }, () => reloadConvs(true))
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return subscribeToInboxForUser(user.id, () => { reloadConvs(true).catch(() => { /* next re-check corrects it */ }); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 

@@ -516,8 +516,12 @@ export async function deleteMessage(messageId: string): Promise<void> {
 }
 
 export async function markRead(conversationId: string, userId: string): Promise<void> {
+  // "now" is a Postgres special date/time input evaluated SERVER-side at execution.
+  // Never stamp the client clock here: a browser clock running behind the server
+  // marks last_read_at in the past, so messages stay counted as unread forever —
+  // an unread badge pointing at nothing.
   await supabase.from("pm_chat_members")
-    .update({ last_read_at: new Date().toISOString() })
+    .update({ last_read_at: "now" })
     .eq("conversation_id", conversationId)
     .eq("user_id", userId);
 }
@@ -697,6 +701,7 @@ export function subscribeToInboxForUser(
   onAnyChange: () => void,
 ) {
   const topic = `chat-inbox-${userId || "anon"}-${++inboxChannelSeq}`;
+  let joinedOnce = false;
   const channel = supabase.channel(topic)
     .on("postgres_changes", {
       event: "*", schema: "public", table: "pm_chat_messages",
@@ -710,8 +715,33 @@ export function subscribeToInboxForUser(
       event: "*", schema: "public", table: "pm_chat_members",
       filter: `user_id=eq.${userId}`,
     }, () => onAnyChange())
-    .subscribe();
-  return () => { supabase.removeChannel(channel); };
+    .subscribe((status) => {
+      // A dropped websocket (laptop sleep, backgrounded tab, network blip) loses
+      // every event sent while it was down — realtime never replays them, so the
+      // badge would keep a count that is no longer true. Re-check from the DB
+      // whenever the channel REjoins. (The initial join is skipped: every caller
+      // already does a first load right after subscribing.)
+      if (status === "SUBSCRIBED") {
+        if (joinedOnce) onAnyChange();
+        joinedOnce = true;
+      }
+    });
+
+  // Realtime alone is not a guarantee. Re-verify unread state whenever the user
+  // comes back to the tab, plus a slow safety-net interval while it stays open.
+  const recheck = () => {
+    if (document.visibilityState === "visible") onAnyChange();
+  };
+  window.addEventListener("focus", recheck);
+  document.addEventListener("visibilitychange", recheck);
+  const interval = window.setInterval(recheck, 60_000);
+
+  return () => {
+    supabase.removeChannel(channel);
+    window.removeEventListener("focus", recheck);
+    document.removeEventListener("visibilitychange", recheck);
+    window.clearInterval(interval);
+  };
 }
 
 // ─── @-mention parsing ────────────────────────────────────────────────────────

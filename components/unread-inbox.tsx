@@ -59,8 +59,10 @@ export function UnreadInbox() {
     if (!user?.id) { setConvs([]); return; }
     let cancelled = false;
     const refresh = async () => {
-      const list = await loadConversationsForUser(user.id);
-      if (!cancelled) setConvs(list);
+      try {
+        const list = await loadConversationsForUser(user.id);
+        if (!cancelled) setConvs(list);
+      } catch { /* keep the previous list; the next re-check corrects it */ }
     };
     refresh();
     const unsub = subscribeToInboxForUser(user.id, refresh);
