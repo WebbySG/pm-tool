@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
@@ -737,6 +737,13 @@ function TaskPanel({
     });
     return () => { cancelled = true; };
   }, [task.id]);
+
+  // Newest comment first. `comments` stays in DB (chronological) order so posts
+  // can append; only the render order is reversed.
+  const commentsNewestFirst = useMemo(
+    () => [...comments].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [comments],
+  );
 
   // Detect "@token" immediately before cursor in textarea. Returns the token
   // (without @) and the start index of the @, or null if no active mention.
@@ -1933,13 +1940,127 @@ function TaskPanel({
             </button>
           </div>
 
+          {/* Composer sits above the list: comments are newest-first, so a new
+              post appears directly below it instead of at the far end. */}
+          <div
+            className="flex flex-col gap-2 px-3 py-2.5 rounded-lg relative"
+            style={{ background: "#0e1e30", border: `1px ${commentDragActive ? "dashed" : "solid"} ${commentDragActive ? "#38b6e8" : "#1c3248"}` }}
+            onDragOver={(e) => {
+              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+              e.preventDefault();
+              setCommentDragActive(true);
+            }}
+            onDragLeave={() => setCommentDragActive(false)}
+            onDrop={(e) => {
+              const files = Array.from(e.dataTransfer?.files ?? []);
+              if (!files.length) return;
+              e.preventDefault();
+              setCommentDragActive(false);
+              const imgs = files.filter((f) => f.type.startsWith("image/"));
+              if (imgs.length) void insertCommentInlineImages(imgs, "new");
+              const others = files.filter((f) => !f.type.startsWith("image/"));
+              if (others.length) setCommentFiles((prev) => [...prev, ...others]);
+            }}
+          >
+            {commentDragActive && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg pointer-events-none"
+                style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
+                <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
+                  <Paperclip size={13} /> Drop images to attach
+                </span>
+              </div>
+            )}
+            <textarea
+              ref={commentTextareaRef}
+              value={commentBody}
+              onChange={handleCommentChange}
+              onKeyDown={handleCommentKeyDown}
+              onPaste={handleCommentPaste}
+              onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
+              placeholder="Leave a comment, ask a question, or @mention someone... (paste images anywhere — they appear inline)"
+              rows={6}
+              className="bg-transparent text-sm outline-none resize-y"
+              style={{ color: "#cce4ff", minHeight: 110 }}
+            />
+            {mentionQuery !== null && mentionCandidates.length > 0 && (
+              <MentionDropdown
+                candidates={mentionCandidates}
+                activeIndex={mentionIndex}
+                onPick={insertMention}
+                className="absolute left-2 top-full mt-1"
+              />
+            )}
+            {commentFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {commentFiles.map((f, fi) => {
+                  const isImg = f.type.startsWith("image/");
+                  return isImg ? (
+                    <div key={fi} className="relative rounded-lg overflow-hidden" style={{ border: "1px solid #1c3248" }}>
+                      <img src={window.URL.createObjectURL(f)} alt={f.name} className="object-cover" style={{ width: 72, height: 72 }} />
+                      <button
+                        onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
+                        className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{ background: "#000000a0", color: "#fff" }} title="Remove">
+                        <X size={9} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div key={fi} className="flex items-center gap-2 px-2 py-1 rounded text-xs"
+                      style={{ background: "#0a1626", color: "#cce4ff", border: "1px solid #1c3248" }}>
+                      <Paperclip size={11} style={{ color: "#38b6e8" }} />
+                      <span className="truncate max-w-[160px]">{f.name}</span>
+                      <button onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
+                        style={{ color: "#ef4444" }} title="Remove"><X size={11} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {uploadingCommentImgs > 0 && (
+              <p className="text-xs flex items-center gap-1.5" style={{ color: "#38b6e8" }}>
+                <Loader2 size={11} className="animate-spin" /> Uploading image{uploadingCommentImgs > 1 ? "s" : ""}…
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer hover:opacity-80"
+                style={{ color: "#4a7090" }}>
+                <Paperclip size={12} />
+                Attach files
+                <input ref={commentFileRef} type="file" className="hidden" multiple
+                  accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    const imgs = picked.filter((f) => f.type.startsWith("image/"));
+                    if (imgs.length) void insertCommentInlineImages(imgs, "new");
+                    const others = picked.filter((f) => !f.type.startsWith("image/"));
+                    if (others.length) setCommentFiles((prev) => [...prev, ...others]);
+                    e.target.value = "";
+                  }} />
+              </label>
+              <div className="flex-1" />
+              <button onClick={handlePostComment}
+                disabled={postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{
+                  background: "#38b6e8", color: "#fff",
+                  opacity: postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0) ? 0.5 : 1,
+                }}>
+                {postingComment ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                Post
+              </button>
+            </div>
+          </div>
+          {commentError && (
+            <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {commentError}</p>
+          )}
+
           {commentsLoading && comments.length === 0 && (
             <p className="text-xs px-1" style={{ color: "#4a7090" }}>Loading comments...</p>
           )}
 
-          {comments.length > 0 && (
-            <div className="flex flex-col gap-2 mb-3">
-              {comments.map((c) => {
+          {commentsNewestFirst.length > 0 && (
+            <div className="flex flex-col gap-2 mt-3">
+              {commentsNewestFirst.map((c) => {
                 const author = liveStaff.find((s) => staffAuthId(s) === c.authorId);
                 const initials = author ? staffInitials(author).charAt(0) : "?";
                 const name = author ? staffName(author) : "Unknown";
@@ -2126,119 +2247,6 @@ function TaskPanel({
                 );
               })}
             </div>
-          )}
-
-          {/* Composer */}
-          <div
-            className="flex flex-col gap-2 px-3 py-2.5 rounded-lg relative"
-            style={{ background: "#0e1e30", border: `1px ${commentDragActive ? "dashed" : "solid"} ${commentDragActive ? "#38b6e8" : "#1c3248"}` }}
-            onDragOver={(e) => {
-              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
-              e.preventDefault();
-              setCommentDragActive(true);
-            }}
-            onDragLeave={() => setCommentDragActive(false)}
-            onDrop={(e) => {
-              const files = Array.from(e.dataTransfer?.files ?? []);
-              if (!files.length) return;
-              e.preventDefault();
-              setCommentDragActive(false);
-              const imgs = files.filter((f) => f.type.startsWith("image/"));
-              if (imgs.length) void insertCommentInlineImages(imgs, "new");
-              const others = files.filter((f) => !f.type.startsWith("image/"));
-              if (others.length) setCommentFiles((prev) => [...prev, ...others]);
-            }}
-          >
-            {commentDragActive && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg pointer-events-none"
-                style={{ background: "#0e1e30d0", border: "2px dashed #38b6e8" }}>
-                <span className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#9dd8f5" }}>
-                  <Paperclip size={13} /> Drop images to attach
-                </span>
-              </div>
-            )}
-            <textarea
-              ref={commentTextareaRef}
-              value={commentBody}
-              onChange={handleCommentChange}
-              onKeyDown={handleCommentKeyDown}
-              onPaste={handleCommentPaste}
-              onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-              placeholder="Leave a comment, ask a question, or @mention someone... (paste images anywhere — they appear inline)"
-              rows={6}
-              className="bg-transparent text-sm outline-none resize-y"
-              style={{ color: "#cce4ff", minHeight: 110 }}
-            />
-            {mentionQuery !== null && mentionCandidates.length > 0 && (
-              <MentionDropdown
-                candidates={mentionCandidates}
-                activeIndex={mentionIndex}
-                onPick={insertMention}
-                className="absolute left-2 bottom-full mb-1"
-              />
-            )}
-            {commentFiles.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {commentFiles.map((f, fi) => {
-                  const isImg = f.type.startsWith("image/");
-                  return isImg ? (
-                    <div key={fi} className="relative rounded-lg overflow-hidden" style={{ border: "1px solid #1c3248" }}>
-                      <img src={window.URL.createObjectURL(f)} alt={f.name} className="object-cover" style={{ width: 72, height: 72 }} />
-                      <button
-                        onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
-                        className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center"
-                        style={{ background: "#000000a0", color: "#fff" }} title="Remove">
-                        <X size={9} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div key={fi} className="flex items-center gap-2 px-2 py-1 rounded text-xs"
-                      style={{ background: "#0a1626", color: "#cce4ff", border: "1px solid #1c3248" }}>
-                      <Paperclip size={11} style={{ color: "#38b6e8" }} />
-                      <span className="truncate max-w-[160px]">{f.name}</span>
-                      <button onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== fi))}
-                        style={{ color: "#ef4444" }} title="Remove"><X size={11} /></button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {uploadingCommentImgs > 0 && (
-              <p className="text-xs flex items-center gap-1.5" style={{ color: "#38b6e8" }}>
-                <Loader2 size={11} className="animate-spin" /> Uploading image{uploadingCommentImgs > 1 ? "s" : ""}…
-              </p>
-            )}
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer hover:opacity-80"
-                style={{ color: "#4a7090" }}>
-                <Paperclip size={12} />
-                Attach files
-                <input ref={commentFileRef} type="file" className="hidden" multiple
-                  accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files ?? []);
-                    const imgs = picked.filter((f) => f.type.startsWith("image/"));
-                    if (imgs.length) void insertCommentInlineImages(imgs, "new");
-                    const others = picked.filter((f) => !f.type.startsWith("image/"));
-                    if (others.length) setCommentFiles((prev) => [...prev, ...others]);
-                    e.target.value = "";
-                  }} />
-              </label>
-              <div className="flex-1" />
-              <button onClick={handlePostComment}
-                disabled={postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
-                style={{
-                  background: "#38b6e8", color: "#fff",
-                  opacity: postingComment || uploadingCommentImgs > 0 || (!commentBody.trim() && commentFiles.length === 0) ? 0.5 : 1,
-                }}>
-                {postingComment ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                Post
-              </button>
-            </div>
-          </div>
-          {commentError && (
-            <p className="text-xs mt-1.5 px-1" style={{ color: "#ef4444" }}>⚠ {commentError}</p>
           )}
         </div>
 
