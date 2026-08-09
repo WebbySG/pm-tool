@@ -27,7 +27,7 @@ import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
 import { subscribeToPush, notifyPush } from "@/lib/push";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, FILE_ACCEPT } from "@/lib/utils";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
   Hash, Users as UsersIcon, MessageSquare, MessageCircle, Plus, Send, Paperclip, Search,
@@ -1870,7 +1870,7 @@ function Composer({
       <div className="flex items-end gap-2">
         <label className="cursor-pointer">
           <input ref={fileRef} type="file" className="hidden" multiple
-            accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+            accept={FILE_ACCEPT}
             onChange={(e) => {
               const picked = Array.from(e.target.files ?? []);
               const imgs = picked.filter((f) => f.type.startsWith("image/"));

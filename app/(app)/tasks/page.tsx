@@ -8,6 +8,7 @@ import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircl
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { errorMessage, FILE_ACCEPT } from "@/lib/utils";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -824,7 +825,7 @@ export default function TasksPage() {
                       {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
                     </span>
                     <input type="file" multiple className="hidden"
-                      accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+                      accept={FILE_ACCEPT}
                       onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
                   </label>
                   {newTaskFiles.length > 0 && (
@@ -870,8 +871,9 @@ export default function TasksPage() {
                       setNewTaskPriority(5);
                       setNewTaskFiles([]);
                     } catch (err) {
-                      const e = err as { message?: string };
-                      alert(`Couldn't save: ${e?.message || "Unknown error"}`);
+                      // errorMessage(): Supabase errors are plain objects, so a
+                      // bare .message check can render "[object Object]".
+                      alert(`Couldn't save: ${errorMessage(err)}`);
                     } finally {
                       setCreating(false);
                     }

@@ -17,6 +17,7 @@ import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDelet
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
+import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
 
 interface LiveStaff {
   id: string;
@@ -61,7 +62,7 @@ export default function ProjectDetailPage() {
   const taskQueryId = searchParams.get("task");
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, initialized, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, addMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, initialized, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, uploadProjectMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
   // The URL segment may be the readable slug ("asc-racking") or the UUID —
   // resolve once and use the real UUID for every DB call below.
   const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
@@ -82,6 +83,10 @@ export default function ProjectDetailPage() {
   const [showAddTask, setShowAddTask] = useState(false);
   const [addTaskError, setAddTaskError] = useState<string | null>(null);
   const [newTaskFiles, setNewTaskFiles] = useState<File[]>([]);
+  // Project Files tab upload state
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaDragActive, setMediaDragActive] = useState(false);
   const [showAddPin, setShowAddPin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", channelId: null as string | null, startDate: "", dueDate: "" });
@@ -251,22 +256,43 @@ export default function ProjectDetailPage() {
     }
   }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      const type = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image" : ["mp4", "mov", "webm"].includes(ext) ? "video" : "document";
-      addMedia(project.id, {
-        name: file.name,
-        type,
-        url: URL.createObjectURL(file),
-        size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-        uploadedBy: user?.id ?? "",
-        uploadedAt: new Date().toISOString(),
-      });
-    });
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
+    if (!files.length) return;
+    await uploadProjectFiles(files);
+  }
+
+  // Shared by the file picker and the drag-and-drop zone. Uploads to Supabase
+  // Storage and writes a pm_project_media row per file, so the files persist and
+  // every member of the project sees them.
+  async function uploadProjectFiles(files: File[]) {
+    if (!project) return;
+    setMediaError(null);
+
+    const tooBig = files.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig.length) {
+      setMediaError(
+        `${tooBig.map((f) => `${f.name} (${formatBytes(f.size)})`).join(", ")} ` +
+        `${tooBig.length > 1 ? "are" : "is"} over the ${MAX_UPLOAD_MB} MB limit and ${tooBig.length > 1 ? "were" : "was"} not uploaded.`
+      );
+    }
+    const toUpload = files.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    if (!toUpload.length) return;
+
+    setMediaUploading(true);
+    const uploadedBy = user?.id ?? "";
+    const failed: string[] = [];
+    for (const file of toUpload) {
+      try {
+        await uploadProjectMedia(project.id, file, uploadedBy);
+      } catch (err) {
+        console.error("project file upload failed", file.name, err);
+        failed.push(`${file.name} (${errorMessage(err)})`);
+      }
+    }
+    if (failed.length) setMediaError((prev) => [prev, `Couldn't upload ${failed.join(", ")}`].filter(Boolean).join(" "));
+    setMediaUploading(false);
   }
 
   function handleAddPin() {
@@ -539,17 +565,47 @@ export default function ProjectDetailPage() {
             <div className="flex flex-col gap-5">
               <label
                 className="flex flex-col items-center justify-center gap-3 rounded-xl p-8 cursor-pointer hover:opacity-80 transition-opacity"
-                style={{ border: "2px dashed #1c3248" }}
+                style={{
+                  border: `2px dashed ${mediaDragActive ? "#38b6e8" : "#1c3248"}`,
+                  background: mediaDragActive ? "#38b6e810" : "transparent",
+                  opacity: mediaUploading ? 0.6 : 1,
+                  pointerEvents: mediaUploading ? "none" : "auto",
+                }}
+                onDragOver={(e) => {
+                  if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+                  e.preventDefault();
+                  setMediaDragActive(true);
+                }}
+                onDragLeave={() => setMediaDragActive(false)}
+                onDrop={(e) => {
+                  const dropped = Array.from(e.dataTransfer?.files ?? []);
+                  if (!dropped.length) return;
+                  e.preventDefault();
+                  setMediaDragActive(false);
+                  void uploadProjectFiles(dropped);
+                }}
               >
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: "#38b6e820" }}>
-                  <Upload size={22} style={{ color: "#38b6e8" }} />
+                  {mediaUploading
+                    ? <Loader2 size={22} className="animate-spin" style={{ color: "#38b6e8" }} />
+                    : <Upload size={22} style={{ color: "#38b6e8" }} />}
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>Upload files</p>
-                  <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>Images, videos, documents</p>
+                  <p className="text-sm font-medium" style={{ color: "#cce4ff" }}>
+                    {mediaUploading ? "Uploading…" : "Upload files"}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
+                    Images, videos, documents, spreadsheets — or drag &amp; drop
+                  </p>
                 </div>
-                <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf" onChange={handleFileUpload} />
+                <input ref={fileInputRef} type="file" className="hidden" multiple accept={FILE_ACCEPT} onChange={handleFileUpload} />
               </label>
+
+              {mediaError && (
+                <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "#ef444415", border: "1px solid #ef444440", color: "#fca5a5" }}>
+                  {mediaError}
+                </div>
+              )}
 
               {project.media.length > 0 && (
                 <div>
@@ -560,22 +616,35 @@ export default function ProjectDetailPage() {
                       const uploader = liveStaff.find((s) => staffAuthId(s) === file.uploadedBy);
                       return (
                         <div key={file.id} className="rounded-xl overflow-hidden group" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
-                          <div className="h-36 flex items-center justify-center relative" style={{ background: "#0e1e30" }}>
-                            {file.type === "image" && file.url.startsWith("blob:") ? (
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="h-36 flex items-center justify-center relative"
+                            style={{ background: "#0e1e30" }}
+                            title={`Open ${file.name}`}
+                          >
+                            {file.type === "image" ? (
                               <img src={file.url} alt={file.name} className="w-full h-full object-cover" />
                             ) : (
                               <Icon size={36} style={{ color: "#1c3248" }} />
                             )}
                             <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                               <button
-                                onClick={() => removeMedia(project.id, file.id)}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  removeMedia(project.id, file.id).catch((err) =>
+                                    setMediaError(`Couldn't delete ${file.name}: ${errorMessage(err)}`)
+                                  );
+                                }}
+                                title="Delete file"
                                 className="w-7 h-7 rounded-lg flex items-center justify-center"
                                 style={{ background: "#ef444420", color: "#ef4444" }}
                               >
                                 <X size={13} />
                               </button>
                             </div>
-                          </div>
+                          </a>
                           <div className="px-3 py-2.5">
                             <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{file.name}</p>
                             <div className="flex items-center justify-between mt-0.5">
@@ -1021,7 +1090,7 @@ export default function ProjectDetailPage() {
                       {newTaskFiles.length > 0 ? `${newTaskFiles.length} file${newTaskFiles.length === 1 ? "" : "s"} selected` : "Click to attach files"}
                     </span>
                     <input type="file" multiple className="hidden"
-                      accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+                      accept={FILE_ACCEPT}
                       onChange={(e) => setNewTaskFiles(Array.from(e.target.files ?? []))} />
                   </label>
                   {newTaskFiles.length > 0 && (

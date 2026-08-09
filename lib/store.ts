@@ -18,7 +18,7 @@ import {
   type Article, type ArticleStatus,
 } from "./mock-data";
 import * as db from "./db";
-import { uploadAttachment, supabase } from "./supabase";
+import { uploadAttachment, uploadProjectFile, supabase } from "./supabase";
 import { notifyPush } from "./push";
 import { errorMessage } from "./utils";
 
@@ -108,9 +108,10 @@ interface Store {
   assignStaff: (projectId: string, userId: string) => Promise<void>;
   removeStaff: (projectId: string, userId: string) => Promise<void>;
 
-  // Media/pinned (local only for now)
-  addMedia: (projectId: string, media: Omit<ProjectMedia, "id">) => void;
-  removeMedia: (projectId: string, mediaId: string) => void;
+  // Project Files tab — persisted to storage + pm_project_media.
+  uploadProjectMedia: (projectId: string, file: File, uploadedBy: string) => Promise<void>;
+  removeMedia: (projectId: string, mediaId: string) => Promise<void>;
+  // Pinned items are still local-only (no DB table yet).
   addPinnedItem: (projectId: string, item: Omit<PinnedItem, "id" | "pinnedAt">) => void;
   removePinnedItem: (projectId: string, itemId: string) => void;
 
@@ -191,7 +192,6 @@ function findInTemplateTree(tasks: TaskTemplate[], taskId: string): TaskTemplate
   return null;
 }
 
-let mediaCounter = 100;
 let pinCounter = 100;
 
 // When a pending-review task is resolved (approved, sent back for revision, or
@@ -924,6 +924,10 @@ export const useStore = create<Store>()(
     const attachment: TaskAttachment = {
       id, name, type, url, size: size ?? "", uploadedBy, uploadedAt: new Date().toISOString(),
     };
+    // Persist BEFORE showing it. Previously this insert was fire-and-forget and
+    // dbAddAttachment swallowed its error, so a failed insert left the file
+    // visible until the next refresh and then it was gone for good.
+    await db.dbAddAttachment(id, taskId, attachment);
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
         ...p, tasks: patchTaskInTree(p.tasks, taskId, {
@@ -931,10 +935,10 @@ export const useStore = create<Store>()(
         }),
       })),
     }));
-    db.dbAddAttachment(id, taskId, attachment);
   },
 
   deleteAttachment: async (projectId, taskId, attachmentId) => {
+    const prev = findTaskInTree(get().projects.find((p) => p.id === projectId)?.tasks ?? [], taskId)?.attachments ?? [];
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
         ...p, tasks: patchTaskInTree(p.tasks, taskId, {
@@ -942,7 +946,17 @@ export const useStore = create<Store>()(
         }),
       })),
     }));
-    await db.dbDeleteAttachment(attachmentId);
+    try {
+      await db.dbDeleteAttachment(attachmentId);
+    } catch (err) {
+      // Restore — don't leave the UI claiming a delete that never happened.
+      set((s) => ({
+        projects: patchProject(s.projects, projectId, (p) => ({
+          ...p, tasks: patchTaskInTree(p.tasks, taskId, { attachments: prev }),
+        })),
+      }));
+      throw err;
+    }
   },
 
   // ─── Projects ────────────────────────────────────────────────────────────
@@ -1000,15 +1014,39 @@ export const useStore = create<Store>()(
     await db.dbUpdateProject(projectId, { assignedStaff });
   },
 
-  // ─── Media / Pinned (local only) ─────────────────────────────────────────
+  // ─── Media (project Files tab) ───────────────────────────────────────────
+  // Real uploads: the file goes to the pm-attachments bucket under
+  // projects/<id>/ and a pm_project_media row makes it visible to everyone and
+  // survive a refresh. This used to be blob-only local state, so files silently
+  // vanished on the next navigation and no one else ever saw them.
 
-  addMedia: (projectId, mediaData) => {
-    const id = `m-${++mediaCounter}`;
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, media: [...p.media, { id, ...mediaData }] })) }));
+  uploadProjectMedia: async (projectId, file, uploadedBy) => {
+    const uploaded = await uploadProjectFile(file, projectId);
+    const id = uuid();
+    const media: ProjectMedia = {
+      id,
+      name: uploaded.name,
+      // pm_project_media has no "link" kind — uploads are always a real file.
+      type: uploaded.type === "link" ? "document" : uploaded.type,
+      url: uploaded.url,
+      size: uploaded.size,
+      uploadedBy,
+      uploadedAt: new Date().toISOString(),
+    };
+    await db.dbAddProjectMedia(id, projectId, media);
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, media: [media, ...p.media] })) }));
   },
 
-  removeMedia: (projectId, mediaId) => {
+  removeMedia: async (projectId, mediaId) => {
+    const prev = get().projects.find((p) => p.id === projectId)?.media ?? [];
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, media: p.media.filter((m) => m.id !== mediaId) })) }));
+    try {
+      await db.dbDeleteProjectMedia(mediaId);
+    } catch (err) {
+      // Put it back so the UI doesn't claim a delete that never happened.
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, media: prev })) }));
+      throw err;
+    }
   },
 
   addPinnedItem: (projectId, itemData) => {

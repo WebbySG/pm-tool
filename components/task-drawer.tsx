@@ -10,8 +10,8 @@ import {
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
-import { supabase, uploadAttachment } from "@/lib/supabase";
-import { errorMessage } from "@/lib/utils";
+import { supabase, uploadAttachment, dataUrlToFile } from "@/lib/supabase";
+import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
 import {
   dbListTaskComments, dbAddTaskComment, dbUpdateTaskComment, dbDeleteTaskComment, type TaskComment,
   type CommentAttachment,
@@ -347,6 +347,8 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
 
   function handlePaste(e: React.ClipboardEvent) {
     if (!onUploadFile) return;
+
+    // Case 1: a real clipboard file (screenshot, copied file) — upload directly.
     const imgs: File[] = [];
     for (const item of Array.from(e.clipboardData?.items ?? [])) {
       if (item.kind === "file" && item.type.startsWith("image/")) {
@@ -354,9 +356,61 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
         if (f) imgs.push(f);
       }
     }
-    if (imgs.length === 0) return; // allow normal text/html paste
+    if (imgs.length > 0) {
+      e.preventDefault();
+      void insertUploadedFiles(imgs);
+      return;
+    }
+
+    // Case 2: an image copied from a WEB PAGE, Word or Google Docs. The browser
+    // hands this over as text/html containing <img src="data:image/...;base64,…">,
+    // NOT as a clipboard file — so it used to be pasted straight into the row.
+    // That inflated descriptions to over 1.4 MB each, which every user then
+    // downloaded on every navigation (loadAll selects * from pm_tasks) and which
+    // made the save itself fail. Extract the data: URIs, upload them as real
+    // files, and paste the HTML with storage URLs in their place.
+    const html = e.clipboardData?.getData("text/html");
+    if (!html || !/src\s*=\s*["']data:image\//i.test(html)) return; // normal paste
     e.preventDefault();
-    void insertUploadedFiles(imgs);
+    void pasteHtmlWithUploadedImages(html);
+  }
+
+  // Replace every data: image in pasted HTML with an uploaded storage URL, then
+  // insert the result. Images that fail to upload are dropped rather than
+  // inlined — keeping a multi-MB base64 blob in the row is what caused the bug.
+  async function pasteHtmlWithUploadedImages(html: string) {
+    setUploadingFile(true);
+    try {
+      const holder = document.createElement("div");
+      holder.innerHTML = html;
+      const imgEls = Array.from(holder.querySelectorAll("img"));
+      for (const el of imgEls) {
+        const src = el.getAttribute("src") ?? "";
+        if (!src.startsWith("data:image/")) continue;
+        const file = dataUrlToFile(src, "pasted-image");
+        const uploaded = file && onUploadFile ? await onUploadFile(file) : null;
+        if (uploaded) {
+          el.setAttribute("src", uploaded.url);
+          el.removeAttribute("srcset");
+          el.style.maxWidth = "100%";
+          el.style.borderRadius = "8px";
+          el.style.margin = "6px 0";
+        } else {
+          el.remove();
+        }
+      }
+      const frag = document.createDocumentFragment();
+      const clean = document.createElement("template");
+      clean.innerHTML = sanitizeHtml(holder.innerHTML);
+      frag.appendChild(clean.content);
+      insertNodeAtCursor(frag);
+      if (ref.current) {
+        const out = sanitizeHtml(ref.current.innerHTML);
+        onSave(out === "<br>" ? "" : out);
+      }
+    } finally {
+      setUploadingFile(false);
+    }
   }
 
   function handleBlur() {
@@ -471,7 +525,7 @@ function RichEditor({ initialHtml, onSave, onUploadFile }: {
               {uploadingFile ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
             </button>
             <input ref={fileInputRef} type="file" className="hidden"
-              accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+              accept={FILE_ACCEPT}
               onChange={handleEditorFile} />
           </>
         )}
@@ -628,10 +682,22 @@ function TaskPanel({
   const { user } = useAuth();
 
   const isAdmin = user?.pmRole === "admin";
-  const isMyTask = task.assigneeId === user?.id;
-  const canEdit = isAdmin || isMyTask;
+  const isMyTask = !!user?.id && task.assigneeId === user.id;
   // Staff may only request deletion of tasks THEY created (created_by = their uid).
   const isCreator = !!task.createdBy && task.createdBy === user?.id;
+  // Nobody is on the hook for this task. Happens after revokeStaff reassigns a
+  // revoked user's work and finds no live admin target (app/actions/invite.ts),
+  // and on any task an admin clears the assignee on.
+  const isUnassigned = !task.assigneeId;
+  // Who may edit the title / description / due date / add child tasks.
+  // Admins always; otherwise the assignee, the person who CREATED the task, or
+  // anyone when it's unassigned. Creator and unassigned were missing, which left
+  // staff staring at content they couldn't edit with no way to fix it — an
+  // unassigned task was editable by admins ONLY, so a revocation could silently
+  // freeze a whole project's tasks for every staff member.
+  // Staff only ever reach tasks in projects they're assigned to, so this stays
+  // inside the existing visibility boundary.
+  const canEdit = isAdmin || isMyTask || isCreator || isUnassigned;
   const deletionPending = !!task.deletionRequestedBy;
 
   const [newSubtask, setNewSubtask] = useState("");
@@ -649,6 +715,8 @@ function TaskPanel({
   const [descEditing, setDescEditing] = useState(false);
   const [descDragActive, setDescDragActive] = useState(false);
   const [descUploading, setDescUploading] = useState(false);
+  const [descSaving, setDescSaving] = useState(false);
+  const [descSaveError, setDescSaveError] = useState<string | null>(null);
   const [commentDragActive, setCommentDragActive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDeleteRequest, setConfirmDeleteRequest] = useState(false);
@@ -1311,21 +1379,38 @@ function TaskPanel({
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
+    if (fileRef.current) fileRef.current.value = "";
     if (!files.length) return;
-    setUploading(true);
     setUploadError(null);
-    const uploadedBy = user?.id ?? "";
-    try {
-      for (const file of files) {
-        await uploadTaskAttachment(projectId, task.id, file, uploadedBy);
-      }
-    } catch (err: unknown) {
-      const msg = errorMessage(err);
-      setUploadError(msg || "Upload failed. Please try again.");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+
+    // Reject oversized files up front with a message that names the file and its
+    // size, instead of letting storage return an opaque error mid-batch.
+    const tooBig = files.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig.length) {
+      setUploadError(
+        `${tooBig.map((f) => `${f.name} (${formatBytes(f.size)})`).join(", ")} ` +
+        `${tooBig.length > 1 ? "are" : "is"} over the ${MAX_UPLOAD_MB} MB limit and ${tooBig.length > 1 ? "were" : "was"} not uploaded.`
+      );
     }
+    const toUpload = files.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    if (!toUpload.length) return;
+
+    setUploading(true);
+    const uploadedBy = user?.id ?? "";
+    // Report per-file so one bad file doesn't discard the whole batch.
+    const failed: string[] = [];
+    for (const file of toUpload) {
+      try {
+        await uploadTaskAttachment(projectId, task.id, file, uploadedBy);
+      } catch (err: unknown) {
+        console.error("attachment upload failed", file.name, err);
+        failed.push(`${file.name} (${errorMessage(err)})`);
+      }
+    }
+    if (failed.length) {
+      setUploadError((prev) => [prev, `Couldn't upload ${failed.join(", ")}`].filter(Boolean).join(" "));
+    }
+    setUploading(false);
   }
 
   return (
@@ -1705,7 +1790,20 @@ function TaskPanel({
               key={task.id}
               initialHtml={task.description}
               onSave={(html) => {
-                if (html !== task.description) updateTaskDescription(projectId, task.id, html);
+                // Must be reported, not fire-and-forget. This save previously
+                // dropped its promise while dbUpdateTask discarded the error, so
+                // a failed save (e.g. an oversized description) looked fine until
+                // the next refresh silently reverted it — losing uploaded images.
+                if (html !== task.description) {
+                  setDescSaveError(null);
+                  setDescSaving(true);
+                  updateTaskDescription(projectId, task.id, html)
+                    .catch((err) => {
+                      console.error("description save failed", err);
+                      setDescSaveError(errorMessage(err) || "Couldn't save the description.");
+                    })
+                    .finally(() => setDescSaving(false));
+                }
                 setDescEditing(false);
               }}
               onUploadFile={async (file) => {
@@ -1761,6 +1859,18 @@ function TaskPanel({
                   </span>
                 </div>
               )}
+            </div>
+          )}
+          {descSaving && (
+            <p className="text-xs mt-1.5 flex items-center gap-1.5" style={{ color: "#4a7090" }}>
+              <Loader2 size={11} className="animate-spin" /> Saving description…
+            </p>
+          )}
+          {descSaveError && (
+            <div className="mt-1.5 rounded-lg px-2.5 py-2 text-xs" style={{ background: "#ef444415", border: "1px solid #ef444440", color: "#fca5a5" }}>
+              ⚠ Description not saved — {descSaveError}
+              <br />
+              <span style={{ color: "#ef9a9a" }}>Copy your text before closing this task, then try again.</span>
             </div>
           )}
         </div>
@@ -2027,7 +2137,7 @@ function TaskPanel({
                 <Paperclip size={12} />
                 Attach files
                 <input ref={commentFileRef} type="file" className="hidden" multiple
-                  accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+                  accept={FILE_ACCEPT}
                   onChange={(e) => {
                     const picked = Array.from(e.target.files ?? []);
                     const imgs = picked.filter((f) => f.type.startsWith("image/"));
@@ -2264,7 +2374,7 @@ function TaskPanel({
               <p className="text-xs" style={{ color: "#8b90a750" }}>Images, videos, PDFs, Word docs, text files · max 50 MB</p>
             </div>
             <input ref={fileRef} type="file" className="hidden" multiple
-              accept="image/*,video/*,text/*,.pdf,.doc,.docx,.txt,.text,.log,.md,.csv,.rtf"
+              accept={FILE_ACCEPT}
               onChange={handleFileChange}
               disabled={uploading} />
           </label>
@@ -2383,7 +2493,9 @@ function TaskPanel({
               </button>
               <button
                 onClick={() => {
-                  deleteAttachment(projectId, task.id, confirmDeleteAttachmentId);
+                  setUploadError(null);
+                  deleteAttachment(projectId, task.id, confirmDeleteAttachmentId)
+                    .catch((err) => setUploadError(errorMessage(err) || "Couldn't delete the attachment."));
                   setConfirmDeleteAttachmentId(null);
                 }}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold"

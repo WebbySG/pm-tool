@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import type {
   Project, Task, TaskStatus, TaskPriority, Client, Channel,
   Credential, ProjectTemplate, TaskTemplate, Notification, TaskAttachment,
-  Article, ArticleComment, ArticleStatus, ClientApproval, PostType,
+  Article, ArticleComment, ArticleStatus, ClientApproval, PostType, ProjectMedia,
 } from "./mock-data";
 
 type Row = Record<string, unknown>;
@@ -39,7 +39,19 @@ function rowToTask(row: Row): Task {
   };
 }
 
-function rowToProject(row: Row, tasks: Task[] = []): Project {
+function rowToProjectMedia(row: Row): ProjectMedia {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    type: (row.type as ProjectMedia["type"]) ?? "document",
+    url: row.url as string,
+    size: (row.size as string) ?? "",
+    uploadedBy: (row.uploaded_by as string) ?? "",
+    uploadedAt: row.uploaded_at as string,
+  };
+}
+
+function rowToProject(row: Row, tasks: Task[] = [], media: ProjectMedia[] = []): Project {
   return {
     id: row.id as string,
     slug: (row.slug as string | null) ?? null,
@@ -53,7 +65,7 @@ function rowToProject(row: Row, tasks: Task[] = []): Project {
     dueDate: (row.due_date as string | null) ?? "",
     assignedStaff: (row.assigned_staff as string[]) ?? [],
     tasks,
-    media: [],
+    media,
     pinnedItems: [],
     archivedAt: (row.archived_at as string | null) ?? null,
   };
@@ -73,6 +85,7 @@ export async function loadAll() {
     { data: tplTaskRows },
     { data: notifRows },
     { data: articleRows },
+    { data: mediaRows },
   ] = await Promise.all([
     supabase.from("pm_clients").select("*"),
     supabase.from("pm_channels").select("*").order("order"),
@@ -84,6 +97,7 @@ export async function loadAll() {
     supabase.from("pm_task_templates").select("*"),
     supabase.from("pm_notifications").select("*").order("created_at", { ascending: false }),
     supabase.from("pm_articles").select("*").order("created_at", { ascending: false }),
+    supabase.from("pm_project_media").select("*").order("uploaded_at", { ascending: false }),
   ]);
 
   const clients: Client[] = (clientRows ?? []).map((r: Row) => ({
@@ -126,8 +140,20 @@ export async function loadAll() {
     }
   }
 
+  // Project Files tab. Rows are already newest-first from the query.
+  const mediaByProject = new Map<string, ProjectMedia[]>();
+  for (const r of (mediaRows ?? []) as Row[]) {
+    const pid = r.project_id as string;
+    if (!mediaByProject.has(pid)) mediaByProject.set(pid, []);
+    mediaByProject.get(pid)!.push(rowToProjectMedia(r));
+  }
+
   const projects: Project[] = (projectRows ?? []).map((r: Row) =>
-    rowToProject(r, projectTaskMap.get(r.id as string) ?? [])
+    rowToProject(
+      r,
+      projectTaskMap.get(r.id as string) ?? [],
+      mediaByProject.get(r.id as string) ?? [],
+    )
   );
 
   const credentials: Credential[] = (credRows ?? []).map((r: Row) => ({
@@ -273,7 +299,11 @@ export async function dbAddTask(id: string, projectId: string, data: Partial<Tas
 }
 
 export async function dbUpdateTask(taskId: string, patch: Row) {
-  await supabase.from("pm_tasks").update(patch).eq("id", taskId);
+  const { error } = await supabase.from("pm_tasks").update(patch).eq("id", taskId);
+  // Must throw: every caller updates Zustand optimistically first, so a discarded
+  // error looks like a successful save until the next refresh reverts it. This
+  // silently lost description edits (incl. freshly uploaded images) for months.
+  if (error) throw error;
 }
 
 export async function dbUpdateTasksBulk(taskIds: string[], patch: Row) {
@@ -325,11 +355,29 @@ export async function dbAddAttachment(id: string, taskId: string, att: Omit<Task
     id, task_id: taskId, name: att.name, type: att.type, url: att.url,
     size: att.size, uploaded_by: att.uploadedBy,
   });
-  if (error) console.error("dbAddAttachment", error);
+  // Must throw, not log: the caller shows the attachment optimistically, so a
+  // swallowed error means the file silently disappears on the next refresh.
+  if (error) throw error;
 }
 
 export async function dbDeleteAttachment(attachmentId: string) {
-  await supabase.from("pm_task_attachments").delete().eq("id", attachmentId);
+  const { error } = await supabase.from("pm_task_attachments").delete().eq("id", attachmentId);
+  if (error) throw error;
+}
+
+// ─── Project media (Files tab) ────────────────────────────────────────────────
+
+export async function dbAddProjectMedia(id: string, projectId: string, media: Omit<ProjectMedia, "id">) {
+  const { error } = await supabase.from("pm_project_media").insert({
+    id, project_id: projectId, name: media.name, type: media.type,
+    url: media.url, size: media.size, uploaded_by: media.uploadedBy || null,
+  });
+  if (error) throw error;
+}
+
+export async function dbDeleteProjectMedia(mediaId: string) {
+  const { error } = await supabase.from("pm_project_media").delete().eq("id", mediaId);
+  if (error) throw error;
 }
 
 // ─── Recent-activity feeds (admin Activity Log page) ─────────────────────────

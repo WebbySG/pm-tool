@@ -22,6 +22,39 @@ export function projectPath(p: { id: string; slug?: string | null }): string {
   return `/projects/${p.slug || p.id}`;
 }
 
+/**
+ * `accept` for every file picker in the app (task attachments, comments, the
+ * description editor, chat, project Files).
+ *
+ * Keep this permissive. The old list omitted spreadsheets, presentations and
+ * archives, so an SEO staffer clicking the paperclip to attach a .xlsx keyword
+ * sheet found it greyed out in the OS dialog and reported "I can't upload".
+ * Note `accept` only filters the picker — drag-and-drop and paste bypass it
+ * entirely, which is why some .xlsx files got in anyway.
+ */
+export const FILE_ACCEPT = [
+  "image/*", "video/*", "audio/*", "text/*",
+  ".pdf", ".doc", ".docx", ".rtf", ".txt", ".text", ".log", ".md",
+  ".xls", ".xlsx", ".xlsm", ".csv", ".ods",
+  ".ppt", ".pptx", ".odp", ".odt",
+  ".zip", ".rar", ".7z",
+  ".json", ".xml", ".svg", ".psd", ".ai", ".fig", ".sketch",
+].join(",");
+
+/**
+ * Supabase Storage rejects uploads above the project's global file-size limit
+ * (50 MB by default — none of the buckets set their own `file_size_limit`).
+ * Check against this BEFORE uploading so the user gets a message naming the file
+ * and its size rather than an opaque storage error.
+ */
+export const MAX_UPLOAD_MB = 50;
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 export function errorMessage(e: unknown): string {
   if (e == null) return "Unknown error";
   if (typeof e === "string") return e;
