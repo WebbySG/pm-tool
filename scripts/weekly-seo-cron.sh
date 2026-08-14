@@ -3,12 +3,21 @@
 # Daily weekly-SEO task generator trigger for pm-tool.
 #
 # Runs ON THE VPS (via cron). It POSTs to the local app, which ensures every
-# project enrolled in pm_weekly_seo_plans has the current week's SEO task set
-# (Article Upload (Week N) + Article 1/2/3 subtasks + Backlinks + GMB Post),
-# carries unfinished articles forward into the new week (tagged carried-over)
-# and writes a `missed` tombstone into the vacated slot so missed articles
-# stay visible. Idempotent — safe to run daily; weekend runs no-op; if the VPS
-# was down on Monday, the next weekday run catches up.
+# project enrolled in pm_weekly_seo_plans has its SEO task set:
+#   "<Month> (Week N)" parent + its Mon/Wed/Fri article subtasks, plus
+#   "Backlinks — <Month> (Week N)" and "GMB Post — <Month> (Week N)".
+#
+# Which weeks a run covers (Asia/Singapore):
+#   • Mon–Fri      → the CURRENT week (catch-up for a failed run or a project
+#                    enrolled mid-week).
+#   • Fri/Sat/Sun  → NEXT week as well. THIS IS THE POINT OF THE 17:00 UTC
+#                    SCHEDULE: 17:00 UTC Thursday = 01:00 SGT Friday, so the
+#                    coming week's tasks are published at the start of Friday.
+#                    Sat/Sun repeat it (idempotent) so a failed Friday still
+#                    lands before Monday.
+#
+# Unfinished work is NEVER carried forward — it stays under its own week's
+# parent and runs overdue. Idempotent, so running it more often is harmless.
 #
 # One-time setup on the VPS:
 #   1) Add to /root/pm-tool/.env.local (server-only, gitignored):
@@ -19,6 +28,12 @@
 #   2) chmod +x /root/pm-tool/scripts/weekly-seo-cron.sh
 #   3) Schedule daily at 01:00 SGT (17:00 UTC):
 #        ( crontab -l 2>/dev/null; echo "0 17 * * * /bin/bash /root/pm-tool/scripts/weekly-seo-cron.sh" ) | crontab -
+#      Verify it took:  crontab -l | grep weekly-seo
+#
+# NOTE (2026-08-11): no pm_tasks row has ever been written by this cron on the
+# live box — the newest generated week is 2026-07-20, which was seeded by hand.
+# Confirm step 3 actually ran; without it nothing generates and admins have to
+# use the "Generate now" button on /weekly-seo.
 #
 # Test without waiting for cron (dry run — reports what WOULD happen):
 #   curl -sS -X POST "http://127.0.0.1:3000/api/weekly-seo/run?dry=1" -H "x-cron-secret: $WEEKLY_SEO_CRON_SECRET"

@@ -4,17 +4,38 @@
 -- mcp__supabase__* MCP (migration `weekly_seo_engine_and_task_archive`).
 -- Idempotent — re-run this on any fresh Supabase project for pm-tool.
 --
--- • pm_tasks.status gains 'missed' (weekly-article tombstone: slot never posted)
+-- • pm_tasks.status CHECK — the full status list (see lib/mock-data.ts
+--   TaskStatus). This constraint is dropped and recreated below, so it MUST
+--   stay in sync with every task-status migration:
+--     task-status-pending-client-approval.sql · task-pending-article-post.sql
+--     task-status-rejected.sql · task-status-to-be-discussed.sql
+--   (Updated 2026-08-11 — it previously listed only the original six statuses,
+--    so re-running this file would have silently broken the live database.)
 -- • pm_tasks.archived_at — admin archive/unarchive of completed tasks
 -- • pm_tasks.seo_week/seo_slot — generator identity (Monday date + slot name:
 --   'articles-parent' | 'article-1..3' | 'backlinks' | 'gmb')
 -- • pm_weekly_seo_plans — which projects get the weekly SEO set + assignee
--- The generator itself is app/api/weekly-seo/run/route.ts (VPS cron, daily).
+--
+-- The generator itself is app/api/weekly-seo/run/route.ts (VPS cron, daily);
+-- the month/week naming rules live in lib/weekly-seo.ts and the admin UI is
+-- /weekly-seo plus each project's "Weekly SEO" tab. No schema change was
+-- needed for the 2026-08-11 rework — enrolment has always been these columns.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 alter table pm_tasks drop constraint if exists pm_tasks_status_check;
 alter table pm_tasks add constraint pm_tasks_status_check
-  check (status = any (array['todo'::text,'in_progress'::text,'pending_review'::text,'revision_required'::text,'done'::text,'missed'::text]));
+  check (status = any (array[
+    'todo'::text,
+    'in_progress'::text,
+    'to_be_discussed'::text,
+    'pending_review'::text,
+    'pending_client_approval'::text,
+    'pending_article_post'::text,
+    'revision_required'::text,
+    'done'::text,
+    'missed'::text,
+    'rejected'::text
+  ]));
 
 alter table pm_tasks add column if not exists archived_at timestamptz;
 alter table pm_tasks add column if not exists seo_week date;
