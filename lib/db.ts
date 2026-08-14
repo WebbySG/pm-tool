@@ -252,7 +252,11 @@ export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "n
   if (data.startDate !== undefined) patch.start_date = data.startDate || null;
   if (data.dueDate !== undefined) patch.due_date = data.dueDate || null;
   if (data.assignedStaff !== undefined) patch.assigned_staff = data.assignedStaff;
-  await supabase.from("pm_projects").update(patch).eq("id", id);
+  // Must throw: every caller updates Zustand optimistically first, so a
+  // swallowed error looks exactly like success until the next refresh silently
+  // reverts it (staff assignment, project edits, channel moves).
+  const { error } = await supabase.from("pm_projects").update(patch).eq("id", id);
+  if (error) throw error;
 }
 
 // Archive / unarchive a project. Only the project row is stamped — its tasks
@@ -933,4 +937,153 @@ export async function dbUpdateWeeklyReport(id: string, patch: { summaryNotes?: s
 
 export async function dbDeleteWeeklyReport(id: string): Promise<void> {
   await supabase.from("pm_weekly_reports").delete().eq("id", id);
+}
+
+// ─── Weekly SEO plans (which projects are in the weekly loop) ─────────────────
+// The generator (app/api/weekly-seo/run/route.ts) reads these rows with the
+// service role; the admin UI (/weekly-seo and the project's Weekly SEO tab)
+// reads and writes them through the helpers below. RLS is pm_allow_all, and
+// every write path is admin-gated in the UI.
+
+export interface WeeklySeoPlan {
+  id: string;
+  projectId: string;
+  enabled: boolean;
+  assigneeId: string | null;
+  includeArticles: boolean;
+  includeBacklinks: boolean;
+  includeGmb: boolean;
+  createdAt: string;
+}
+
+export interface WeeklySeoPlanPatch {
+  enabled?: boolean;
+  assigneeId?: string | null;
+  includeArticles?: boolean;
+  includeBacklinks?: boolean;
+  includeGmb?: boolean;
+}
+
+function rowToWeeklySeoPlan(r: Row): WeeklySeoPlan {
+  return {
+    id: r.id as string,
+    projectId: r.project_id as string,
+    enabled: (r.enabled as boolean) ?? true,
+    assigneeId: (r.assignee_id as string | null) ?? null,
+    includeArticles: (r.include_articles as boolean) ?? true,
+    includeBacklinks: (r.include_backlinks as boolean) ?? true,
+    includeGmb: (r.include_gmb as boolean) ?? true,
+    createdAt: r.created_at as string,
+  };
+}
+
+export async function dbListWeeklySeoPlans(): Promise<WeeklySeoPlan[]> {
+  const { data, error } = await supabase.from("pm_weekly_seo_plans").select("*");
+  if (error) throw error;
+  return (data ?? []).map((r) => rowToWeeklySeoPlan(r as Row));
+}
+
+export async function dbGetWeeklySeoPlan(projectId: string): Promise<WeeklySeoPlan | null> {
+  const { data, error } = await supabase
+    .from("pm_weekly_seo_plans").select("*").eq("project_id", projectId).maybeSingle();
+  if (error) throw error;
+  return data ? rowToWeeklySeoPlan(data as Row) : null;
+}
+
+/** Enrol a project in the weekly loop, or update its settings. project_id is unique. */
+export async function dbSaveWeeklySeoPlan(projectId: string, patch: WeeklySeoPlanPatch): Promise<WeeklySeoPlan> {
+  const row: Record<string, unknown> = { project_id: projectId };
+  if (patch.enabled !== undefined) row.enabled = patch.enabled;
+  if (patch.assigneeId !== undefined) row.assignee_id = patch.assigneeId || null;
+  if (patch.includeArticles !== undefined) row.include_articles = patch.includeArticles;
+  if (patch.includeBacklinks !== undefined) row.include_backlinks = patch.includeBacklinks;
+  if (patch.includeGmb !== undefined) row.include_gmb = patch.includeGmb;
+  const { data, error } = await supabase
+    .from("pm_weekly_seo_plans")
+    .upsert(row, { onConflict: "project_id" })
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToWeeklySeoPlan(data as Row);
+}
+
+export async function dbDeleteWeeklySeoPlan(projectId: string): Promise<void> {
+  const { error } = await supabase.from("pm_weekly_seo_plans").delete().eq("project_id", projectId);
+  if (error) throw error;
+}
+
+/**
+ * Point already-generated upcoming weekly-SEO tasks at a new assignee.
+ * Scoped to untouched (`todo`) generator rows from `fromWeekIso` onwards, so
+ * work someone has already started or submitted is never yanked away.
+ * Returns how many tasks moved.
+ */
+export async function dbReassignFutureWeeklySeoTasks(
+  projectId: string, assigneeId: string | null, fromWeekIso: string,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("pm_tasks")
+    .update({ assignee_id: assigneeId || null })
+    .eq("project_id", projectId)
+    .eq("status", "todo")
+    .gte("seo_week", fromWeekIso)
+    .not("seo_slot", "is", null)
+    .is("archived_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
+/**
+ * How many generator-owned tasks exist per project for each of the given
+ * Monday dates — powers the "generated / not generated" column on /weekly-seo.
+ * Returns { [projectId]: { [weekIso]: count } }.
+ */
+export async function dbWeeklySeoTaskCounts(weekIsos: string[]): Promise<Record<string, Record<string, number>>> {
+  if (weekIsos.length === 0) return {};
+  const { data, error } = await supabase
+    .from("pm_tasks")
+    .select("project_id,seo_week")
+    .in("seo_week", weekIsos)
+    .not("seo_slot", "is", null)
+    .is("archived_at", null);
+  if (error) throw error;
+  const out: Record<string, Record<string, number>> = {};
+  for (const r of (data ?? []) as Row[]) {
+    const pid = r.project_id as string;
+    const wk = r.seo_week as string;
+    if (!out[pid]) out[pid] = {};
+    out[pid][wk] = (out[pid][wk] ?? 0) + 1;
+  }
+  return out;
+}
+
+export interface WeeklySeoRunResult {
+  ok: boolean;
+  reason?: string;
+  dryRun?: boolean;
+  weeks?: { weekStarting: string; label: string }[];
+  plans?: number;
+  failed?: number;
+  results?: { project: string; created?: number; closed?: number; tasks?: string[]; error?: string }[];
+}
+
+/**
+ * Admin "Generate now" — runs the generator immediately instead of waiting for
+ * the daily cron. Authorises with the caller's own Supabase access token; the
+ * route re-checks admin server-side.
+ */
+export async function runWeeklySeoNow(projectId?: string): Promise<WeeklySeoRunResult> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not signed in.");
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const res = await fetch(`/api/weekly-seo/run${qs}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const body = await res.json().catch(() => ({ ok: false, reason: `HTTP ${res.status}` }));
+  if (!res.ok || body?.ok === false) {
+    throw new Error(body?.reason ? String(body.reason) : `Generator failed (HTTP ${res.status}).`);
+  }
+  return body as WeeklySeoRunResult;
 }

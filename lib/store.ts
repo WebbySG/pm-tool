@@ -169,6 +169,19 @@ function patchProject(projects: Project[], projectId: string, fn: (p: Project) =
   return projects.map((p) => p.id === projectId ? fn(p) : p);
 }
 
+// Write a new assigned-staff list optimistically, then persist. On failure the
+// previous list is restored and the error rethrown — the UI must never keep
+// showing an assignment Postgres refused.
+async function setAssignedStaff(set: StoreSet, projectId: string, previous: string[], next: string[]) {
+  set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, assignedStaff: next })) }));
+  try {
+    await db.dbUpdateProject(projectId, { assignedStaff: next });
+  } catch (e) {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, assignedStaff: previous })) }));
+    throw e;
+  }
+}
+
 function appendChildInTemplateTree(tasks: TaskTemplate[], parentId: string, child: TaskTemplate): TaskTemplate[] {
   return tasks.map((t) => {
     if (t.id === parentId) return { ...t, subtasks: [...t.subtasks, child] };
@@ -365,8 +378,15 @@ export const useStore = create<Store>()(
   },
 
   moveProjectToChannel: async (projectId, channelId) => {
+    const previous = get().projects.find((p) => p.id === projectId)?.channelId ?? null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, channelId })) }));
-    await db.dbUpdateProject(projectId, { channelId });
+    try {
+      await db.dbUpdateProject(projectId, { channelId });
+    } catch (e) {
+      // Snap the card back to the channel it's actually in.
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, channelId: previous })) }));
+      throw e;
+    }
   },
 
   // ─── Templates ────────────────────────────────────────────────────────────
@@ -976,8 +996,21 @@ export const useStore = create<Store>()(
   },
 
   updateProject: async (projectId, data) => {
+    const before = get().projects.find((p) => p.id === projectId);
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, ...data })) }));
-    await db.dbUpdateProject(projectId, data);
+    try {
+      await db.dbUpdateProject(projectId, data);
+    } catch (e) {
+      // Revert only the fields this call touched — the rest of the project
+      // (tasks, media) may have changed since the snapshot was taken.
+      if (before) {
+        const revert = Object.fromEntries(
+          Object.keys(data).map((k) => [k, (before as unknown as Record<string, unknown>)[k]])
+        ) as Partial<Project>;
+        set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, ...revert })) }));
+      }
+      throw e;
+    }
   },
 
   deleteProject: async (projectId) => {
@@ -998,20 +1031,19 @@ export const useStore = create<Store>()(
     await get().refresh();
   },
 
+  // Assign / remove roll BACK the optimistic patch if the write fails and
+  // rethrow, so the caller can surface the reason. Without this the avatar would
+  // sit there looking assigned until the next refresh quietly removed it.
   assignStaff: async (projectId, userId) => {
     const project = get().projects.find((p) => p.id === projectId);
     if (!project || project.assignedStaff.includes(userId)) return;
-    const assignedStaff = [...project.assignedStaff, userId];
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, assignedStaff })) }));
-    await db.dbUpdateProject(projectId, { assignedStaff });
+    await setAssignedStaff(set, projectId, project.assignedStaff, [...project.assignedStaff, userId]);
   },
 
   removeStaff: async (projectId, userId) => {
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
-    const assignedStaff = project.assignedStaff.filter((id) => id !== userId);
-    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, assignedStaff })) }));
-    await db.dbUpdateProject(projectId, { assignedStaff });
+    await setAssignedStaff(set, projectId, project.assignedStaff, project.assignedStaff.filter((id) => id !== userId));
   },
 
   // ─── Media (project Files tab) ───────────────────────────────────────────

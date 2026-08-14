@@ -11,8 +11,9 @@ import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
   Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2, FileEdit, CheckCircle2, Clock, AlertCircle,
-  BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip,
+  BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip, CalendarDays,
 } from "lucide-react";
+import { WeeklySeoPanel } from "@/components/weekly-seo-panel";
 import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
@@ -44,6 +45,9 @@ const mediaIcon: Record<string, React.FC<{ size: number; style?: React.CSSProper
   image: Image, video: Video, document: FileText,
 };
 
+// "weekly-seo" is admin-only — it manages this project's pm_weekly_seo_plans row.
+type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "reports" | "weekly-seo";
+
 type NewTaskForm = {
   title: string;
   description: string;
@@ -68,7 +72,7 @@ export default function ProjectDetailPage() {
   const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
   const projectId = projectRaw?.id ?? params.id;
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [activeTab, setActiveTab] = useState<"board" | "schedule" | "files" | "pinned" | "content" | "reports">("board");
+  const [activeTab, setActiveTab] = useState<ProjectTab>("board");
   // ── Weekly reports state ──────────────────────────────────────────────────
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
@@ -96,6 +100,8 @@ export default function ProjectDetailPage() {
   const [applyTemplateError, setApplyTemplateError] = useState("");
   const [applyingTemplates, setApplyingTemplates] = useState(false);
   const [showAssignMenu, setShowAssignMenu] = useState(false);
+  const [staffError, setStaffError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [addTaskCol, setAddTaskCol] = useState("todo");
   const [pinForm, setPinForm] = useState({ type: "link" as "link" | "document" | "message", title: "", content: "", url: "" });
   const initialTask: NewTaskForm = {
@@ -302,6 +308,19 @@ export default function ProjectDetailPage() {
     setPinForm({ type: "link", title: "", content: "", url: "" });
   }
 
+  // Assign / remove is optimistic in the store and rolls back if the write
+  // fails — surface the reason instead of letting the avatar quietly revert.
+  async function handleToggleStaff(s: LiveStaff, assigned: boolean) {
+    if (!project) return;
+    setStaffError(null);
+    try {
+      if (assigned) await removeStaff(project.id, staffAuthId(s));
+      else await assignStaff(project.id, staffAuthId(s));
+    } catch (err) {
+      setStaffError(`Couldn't ${assigned ? "remove" : "assign"} ${staffName(s)}: ${errorMessage(err)}`);
+    }
+  }
+
   function openEdit() {
     setEditForm({
       name: project.name,
@@ -316,14 +335,22 @@ export default function ProjectDetailPage() {
 
   async function handleSaveEdit() {
     if (!editForm.name.trim()) return;
-    await updateProject(project.id, {
-      name: editForm.name.trim(),
-      description: editForm.description,
-      type: editForm.type,
-      channelId: editForm.channelId,
-      startDate: editForm.startDate,
-      dueDate: editForm.dueDate,
-    });
+    setEditError(null);
+    try {
+      await updateProject(project.id, {
+        name: editForm.name.trim(),
+        description: editForm.description,
+        type: editForm.type,
+        channelId: editForm.channelId,
+        startDate: editForm.startDate,
+        dueDate: editForm.dueDate,
+      });
+    } catch (err) {
+      // The store rolls the optimistic patch back, so keep the dialog open with
+      // the user's text rather than silently discarding the edit.
+      setEditError(`Couldn't save the project: ${errorMessage(err)}`);
+      return;
+    }
     setShowEdit(false);
   }
 
@@ -422,28 +449,47 @@ export default function ProjectDetailPage() {
                 <p className="text-sm" style={{ color: "#4a7090" }}>{project.description}</p>
               </div>
 
-              {/* Assigned staff */}
+              {/* Assigned staff — editing is ADMIN-ONLY (project staffing is an
+                  admin decision, and it drives who can see the project at all).
+                  Staff see the same avatars read-only. */}
               <div className="flex flex-col items-end gap-2 relative">
                 <div className="flex items-center gap-1">
                   <span className="text-xs mr-1" style={{ color: "#4a7090" }}>Assigned:</span>
-                  {assignedUsers.map((s) => (
+                  {assignedUsers.length === 0 && (
+                    <span className="text-xs" style={{ color: "#2d4a64" }}>Nobody</span>
+                  )}
+                  {assignedUsers.map((s) =>
+                    isAdmin ? (
+                      <button
+                        key={s.id}
+                        onClick={() => handleToggleStaff(s, true)}
+                        title={`Remove ${staffName(s)} from this project`}
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 hover:opacity-70 transition-opacity"
+                        style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}
+                      >
+                        {staffInitials(s)}
+                      </button>
+                    ) : (
+                      <div
+                        key={s.id}
+                        title={staffName(s)}
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2"
+                        style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}
+                      >
+                        {staffInitials(s)}
+                      </div>
+                    )
+                  )}
+                  {isAdmin && (
                     <button
-                      key={s.id}
-                      onClick={() => removeStaff(project.id, staffAuthId(s))}
-                      title={`Remove ${staffName(s)}`}
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 hover:opacity-70 transition-opacity"
-                      style={{ background: "#38b6e8", color: "#fff", borderColor: "#0f1d2e" }}
-                    >
-                      {staffInitials(s)}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setShowAssignMenu(!showAssignMenu)}
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-base hover:opacity-70"
-                    style={{ background: "#1c3248", color: "#4a7090" }}
-                  >+</button>
+                      onClick={() => setShowAssignMenu(!showAssignMenu)}
+                      title="Assign staff to this project"
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-base hover:opacity-70"
+                      style={{ background: "#1c3248", color: "#4a7090" }}
+                    >+</button>
+                  )}
                 </div>
-                {showAssignMenu && (
+                {isAdmin && showAssignMenu && (
                   <div className="absolute top-full right-0 mt-1 rounded-lg z-20 shadow-lg overflow-hidden" style={{ background: "#0e1e30", border: "1px solid #1c3248", minWidth: "180px" }}>
                     {liveStaff.length === 0 ? (
                       <p className="px-3 py-2 text-sm" style={{ color: "#4a7090" }}>Loading staff…</p>
@@ -452,7 +498,7 @@ export default function ProjectDetailPage() {
                     ) : unassignedUsers.map((s) => (
                       <button
                         key={s.id}
-                        onClick={() => { assignStaff(project.id, staffAuthId(s)); setShowAssignMenu(false); }}
+                        onClick={() => { setShowAssignMenu(false); handleToggleStaff(s, false); }}
                         className="flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:opacity-80"
                         style={{ color: "#cce4ff" }}
                       >
@@ -463,6 +509,9 @@ export default function ProjectDetailPage() {
                       </button>
                     ))}
                   </div>
+                )}
+                {staffError && (
+                  <p className="text-xs max-w-[260px] text-right" style={{ color: "#f87171" }}>{staffError}</p>
                 )}
                 <span className="text-xs" style={{ color: "#4a7090" }}>
                   {project.dueDate && !isNaN(new Date(project.dueDate).getTime())
@@ -482,7 +531,10 @@ export default function ProjectDetailPage() {
 
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
-            {(["board", "schedule", "files", "pinned", "content", "reports"] as const).map((tab) => {
+            {([
+              "board", "schedule", "files", "pinned", "content", "reports",
+              ...(isAdmin ? (["weekly-seo"] as const) : []),
+            ] as ProjectTab[]).map((tab) => {
               const projectArticles = articles.filter((a) => a.projectId === project.id);
               const pendingCount = projectArticles.filter((a) => a.status === "pending_review").length;
               return (
@@ -502,6 +554,11 @@ export default function ProjectDetailPage() {
                     : tab === "reports" ? (
                       <span className="flex items-center gap-1.5">
                         <BarChart2 size={13} />Reports
+                      </span>
+                    )
+                    : tab === "weekly-seo" ? (
+                      <span className="flex items-center gap-1.5">
+                        <CalendarDays size={13} />Weekly SEO
                       </span>
                     )
                     : tab === "content" ? (
@@ -958,6 +1015,14 @@ export default function ProjectDetailPage() {
               </div>
             );
           })()}
+
+          {/* WEEKLY SEO — admin only; manages this project's pm_weekly_seo_plans row */}
+          {activeTab === "weekly-seo" && isAdmin && (
+            <WeeklySeoPanel
+              projectId={project.id}
+              staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
+            />
+          )}
         </div>
       </div>
 
@@ -1236,6 +1301,12 @@ export default function ProjectDetailPage() {
                   />
                 </div>
               </div>
+
+              {editError && (
+                <p className="px-3 py-2 rounded-lg text-xs" style={{ background: "#ef444415", border: "1px solid #ef444440", color: "#fca5a5" }}>
+                  {editError}
+                </p>
+              )}
 
               <div className="flex gap-2 pt-1">
                 <button

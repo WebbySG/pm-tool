@@ -4,15 +4,17 @@ import {
   type DragStartEvent, type DragEndEvent, useDroppable, useDraggable,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
 import { type Project, type Channel } from "@/lib/mock-data";
-import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical, AlertTriangle, Archive } from "lucide-react";
+import { Calendar, CheckSquare, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight, GripVertical, AlertTriangle, Archive, UserPlus, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
+import { errorMessage } from "@/lib/utils";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -23,8 +25,184 @@ function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boo
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
+// Keyed off the person's position in the full staff list, not their position in
+// one project's assignees — so the same person is the same colour on every card
+// and inside the assign popup.
+function staffColor(s: LiveStaff, all: LiveStaff[]) {
+  const i = all.findIndex((x) => x.id === s.id);
+  return AVATAR_COLORS[(i < 0 ? 0 : i) % AVATAR_COLORS.length];
+}
 
 const CHANNEL_COLORS = ["#38b6e8", "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
+
+// ─── Assign / remove staff popup (admin) ──────────────────────────────────
+// Rendered through a PORTAL to document.body on purpose: the project card is
+// `overflow-hidden` (and gets a dnd-kit transform while dragging), either of
+// which would clip or re-anchor a nested dropdown — the same trap the
+// credentials page hit. Position is fixed against the trigger's rect.
+function StaffAssignMenu({
+  project, liveStaff, anchor, triggerRef, onClose,
+}: {
+  project: Project;
+  liveStaff: LiveStaff[];
+  anchor: DOMRect;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  const { assignStaff, removeStaff } = useStore();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    function onPointerDown(e: MouseEvent) {
+      const t = e.target as Node;
+      // Leave the trigger alone — it toggles itself, and closing here first
+      // would make the click that follows reopen the menu immediately.
+      if (panelRef.current?.contains(t) || triggerRef.current?.contains(t)) return;
+      onClose();
+      // The click that dismisses the popup lands on a project card, which is a
+      // <Link> — without this it would navigate into the project, exactly what
+      // this popup exists to avoid. preventDefault only kills the anchor's
+      // navigation (next/link bails on defaultPrevented); React onClick
+      // handlers still run, so clicking ANOTHER card's staff button closes this
+      // menu and opens that one in a single click.
+      const swallow = (ev: MouseEvent) => ev.preventDefault();
+      document.addEventListener("click", swallow, { capture: true, once: true });
+      // Safety net for a press with no click (drag, right-click) — otherwise the
+      // listener would linger and eat an unrelated click later.
+      window.setTimeout(() => document.removeEventListener("click", swallow, true), 400);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    // The rect is captured once at open time, so page scroll/resize would leave
+    // the panel floating away from its card — close instead of chasing it.
+    // Scrolling INSIDE the staff list must not count.
+    function onScroll(e: Event) {
+      if (panelRef.current?.contains(e.target as Node)) return;
+      onClose();
+    }
+    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [onClose, triggerRef]);
+
+  async function toggle(s: LiveStaff) {
+    const authId = staffAuthId(s);
+    const assigned = project.assignedStaff.includes(authId);
+    setBusyId(authId);
+    setError(null);
+    try {
+      if (assigned) await removeStaff(project.id, authId);
+      else await assignStaff(project.id, authId);
+    } catch (e) {
+      setError(`Couldn't ${assigned ? "remove" : "assign"} ${staffName(s)}: ${errorMessage(e)}`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const WIDTH = 250;
+  const searchable = liveStaff.length > 6;
+  const q = query.trim().toLowerCase();
+  const shown = q ? liveStaff.filter((s) => staffName(s).toLowerCase().includes(q) || s.email.toLowerCase().includes(q)) : liveStaff;
+
+  // Flip above the trigger when there isn't room below it.
+  const spaceBelow = window.innerHeight - anchor.bottom;
+  const openUp = spaceBelow < 280 && anchor.top > spaceBelow;
+  const left = Math.min(Math.max(8, anchor.left), window.innerWidth - WIDTH - 8);
+
+  const panel = (
+    <div
+      ref={panelRef}
+      className="fixed rounded-xl shadow-2xl overflow-hidden flex flex-col"
+      style={{
+        left,
+        ...(openUp ? { bottom: window.innerHeight - anchor.top + 6 } : { top: anchor.bottom + 6 }),
+        width: WIDTH,
+        maxHeight: 340,
+        background: "var(--bg-card)",
+        border: "1px solid var(--border)",
+        zIndex: 60,
+      }}
+    >
+      <div className="px-3 py-2 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+        <UserPlus size={12} style={{ color: "var(--text-muted)" }} />
+        <span className="text-xs font-semibold flex-1 truncate" style={{ color: "var(--text)" }} title={project.name}>
+          Staff on {project.name}
+        </span>
+        <button onClick={onClose} className="p-0.5 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }} title="Close">
+          <X size={12} />
+        </button>
+      </div>
+
+      {searchable && (
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search staff…"
+          className="mx-2 mt-2 px-2 py-1.5 rounded-lg text-xs outline-none"
+          style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+      )}
+
+      <div className="flex-1 overflow-y-auto py-1">
+        {liveStaff.length === 0 ? (
+          <p className="px-3 py-3 text-xs" style={{ color: "var(--text-muted)" }}>Loading staff…</p>
+        ) : shown.length === 0 ? (
+          <p className="px-3 py-3 text-xs" style={{ color: "var(--text-muted)" }}>No staff match “{query}”.</p>
+        ) : shown.map((s) => {
+          const authId = staffAuthId(s);
+          const assigned = project.assignedStaff.includes(authId);
+          const busy = busyId === authId;
+          return (
+            <button
+              key={s.id}
+              onClick={() => toggle(s)}
+              disabled={busy}
+              className="flex items-center gap-2 w-full px-2.5 py-2 text-left hover:opacity-80 transition-opacity"
+              style={{ background: assigned ? "#38b6e812" : "transparent", opacity: busy ? 0.5 : 1 }}
+              title={assigned ? `Remove ${staffName(s)} from this project` : `Assign ${staffName(s)} to this project`}
+            >
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                style={{ background: staffColor(s, liveStaff), color: "#fff" }}
+              >
+                {staffInitials(s)}
+              </div>
+              <span className="text-xs flex-1 truncate" style={{ color: assigned ? "var(--text)" : "var(--text-muted)" }}>
+                {staffName(s)}
+              </span>
+              {busy ? (
+                <Loader2 size={13} className="animate-spin shrink-0" style={{ color: "var(--text-muted)" }} />
+              ) : assigned ? (
+                <Check size={13} className="shrink-0" style={{ color: "#22c55e" }} />
+              ) : (
+                <Plus size={13} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {error && (
+        <p className="px-3 py-2 text-[11px]" style={{ borderTop: "1px solid var(--border)", background: "#ef444415", color: "#f87171" }}>
+          {error}
+        </p>
+      )}
+    </div>
+  );
+
+  return typeof document === "undefined" ? null : createPortal(panel, document.body);
+}
 
 // ─── Draggable project card ───────────────────────────────────────────────
 function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Project; isAdmin: boolean; liveStaff: LiveStaff[] }) {
@@ -33,6 +211,8 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.3 : 1, touchAction: "none" };
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const staffBtnRef = useRef<HTMLButtonElement>(null);
+  const [staffAnchor, setStaffAnchor] = useState<DOMRect | null>(null);
 
 
   const done = project.tasks.filter((t) => t.status === "done").length;
@@ -137,34 +317,79 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
 
         {/* Footer */}
         <div className="px-4 pb-4 flex items-center justify-between gap-3 pt-2" style={{ borderTop: "1px solid #1c324850" }}>
-          {/* Staff avatars */}
-          <div className="flex items-center gap-1.5">
-            {assignedStaff.length === 0 ? (
-              <span className="text-xs" style={{ color: "#2d4a64" }}>Unassigned</span>
-            ) : (
-              <>
-                <div className="flex -space-x-2">
-                  {assignedStaff.slice(0, 4).map((s, si) => (
-                    <div
-                      key={s.id}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2"
-                      style={{
-                        background: AVATAR_COLORS[si % AVATAR_COLORS.length],
-                        color: "#fff",
-                        borderColor: "var(--bg-card)",
-                      }}
-                      title={staffName(s)}
-                    >
-                      {staffInitials(s)}
-                    </div>
-                  ))}
-                </div>
-                {assignedStaff.length > 4 && (
-                  <span className="text-xs" style={{ color: "#4a7090" }}>+{assignedStaff.length - 4}</span>
-                )}
-              </>
-            )}
-          </div>
+          {/* Staff avatars — admins click through to the assign/remove popup
+              without leaving the projects list. */}
+          {isAdmin ? (
+            <button
+              ref={staffBtnRef}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setStaffAnchor(staffAnchor ? null : (staffBtnRef.current?.getBoundingClientRect() ?? null));
+              }}
+              title="Assign or remove staff on this project"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg transition-colors"
+              style={{
+                background: staffAnchor ? "#38b6e820" : "var(--bg-surface)",
+                border: `1px solid ${staffAnchor ? "#38b6e8" : "var(--border)"}`,
+              }}
+            >
+              {assignedStaff.length === 0 ? (
+                <span className="text-xs font-medium" style={{ color: staffAnchor ? "#38b6e8" : "#4a7090" }}>Assign staff</span>
+              ) : (
+                <>
+                  <div className="flex -space-x-2">
+                    {assignedStaff.slice(0, 4).map((s) => (
+                      <div
+                        key={s.id}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2"
+                        style={{
+                          background: staffColor(s, liveStaff),
+                          color: "#fff",
+                          borderColor: "var(--bg-card)",
+                        }}
+                        title={staffName(s)}
+                      >
+                        {staffInitials(s)}
+                      </div>
+                    ))}
+                  </div>
+                  {assignedStaff.length > 4 && (
+                    <span className="text-xs" style={{ color: "#4a7090" }}>+{assignedStaff.length - 4}</span>
+                  )}
+                </>
+              )}
+              <UserPlus size={12} style={{ color: staffAnchor ? "#38b6e8" : "#4a7090" }} />
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              {assignedStaff.length === 0 ? (
+                <span className="text-xs" style={{ color: "#2d4a64" }}>Unassigned</span>
+              ) : (
+                <>
+                  <div className="flex -space-x-2">
+                    {assignedStaff.slice(0, 4).map((s) => (
+                      <div
+                        key={s.id}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2"
+                        style={{
+                          background: staffColor(s, liveStaff),
+                          color: "#fff",
+                          borderColor: "var(--bg-card)",
+                        }}
+                        title={staffName(s)}
+                      >
+                        {staffInitials(s)}
+                      </div>
+                    ))}
+                  </div>
+                  {assignedStaff.length > 4 && (
+                    <span className="text-xs" style={{ color: "#4a7090" }}>+{assignedStaff.length - 4}</span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 text-xs" style={{ color: "#4a7090" }}>
@@ -180,6 +405,16 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
           </div>
         </div>
       </Link>
+
+      {isAdmin && staffAnchor && (
+        <StaffAssignMenu
+          project={project}
+          liveStaff={liveStaff}
+          anchor={staffAnchor}
+          triggerRef={staffBtnRef}
+          onClose={() => setStaffAnchor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -285,6 +520,7 @@ function ProjectsPageInner() {
     : allProjects.filter((p) => p.assignedStaff.includes(user?.id ?? ""));
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
 
   // Filters live in the URL (?type=seo&staff=<uuid>) so the selection survives
   // navigating into a project and pressing back, and filtered views can be
@@ -337,7 +573,11 @@ function ProjectsPageInner() {
     const newChannelId = over.id === "ungrouped" ? null : String(over.id);
     const project = projects.find((p) => p.id === active.id);
     if (project && project.channelId !== newChannelId) {
-      moveProjectToChannel(String(active.id), newChannelId);
+      // The store snaps the card back if the write fails — say why, otherwise
+      // the card silently jumps home with no explanation.
+      moveProjectToChannel(String(active.id), newChannelId).catch((err) =>
+        setPageError(`Couldn't move "${project.name}": ${errorMessage(err)}`)
+      );
     }
   }
 
@@ -377,6 +617,16 @@ function ProjectsPageInner() {
     <>
       <Topbar title="Projects" action={isAdmin ? { label: "New Project", href: "/projects/new" } : undefined} />
       <div className="p-6 flex flex-col gap-6">
+        {pageError && (
+          <div className="flex items-start gap-2 px-4 py-3 rounded-xl" style={{ background: "#ef444415", border: "1px solid #ef444440" }}>
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" style={{ color: "#f87171" }} />
+            <p className="flex-1 text-sm" style={{ color: "#fca5a5" }}>{pageError}</p>
+            <button onClick={() => setPageError(null)} className="hover:opacity-70" style={{ color: "#fca5a5" }}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>
