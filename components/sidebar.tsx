@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock, History,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock, CalendarDays, History, ReceiptText,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -17,7 +17,9 @@ const ALL_NAV = [
   { href: "/content",     label: "Content",       icon: FileEdit,        color: "#10b981", adminOnly: false },
   { href: "/archive",     label: "Archive",       icon: Archive,         color: "#6b7280", adminOnly: false },
   { href: "/invoices",    label: "Invoices",      icon: Receipt,         color: "#fbbf24", adminOnly: true  },
+  { href: "/expenses",    label: "Expenses",      icon: ReceiptText,     color: "#4ade80", adminOnly: true  },
   { href: "/renewals",    label: "Renewals",      icon: CalendarClock,   color: "#f59e0b", adminOnly: true  },
+  { href: "/weekly-seo",  label: "Weekly SEO",    icon: CalendarDays,   color: "#2dd4bf", adminOnly: true  },
   { href: "/templates",   label: "Templates",     icon: ListChecks,      color: "#a78bfa", adminOnly: true  },
   { href: "/credentials", label: "Credentials",   icon: Key,             color: "#f472b6", adminOnly: false },
   { href: "/team",        label: "Team",          icon: Users,           color: "#22d3ee", adminOnly: true  },

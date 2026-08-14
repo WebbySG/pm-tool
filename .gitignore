@@ -45,3 +45,13 @@ next-env.d.ts
 
 # One-off backup written by scripts/migrate-base64-descriptions.mjs
 scripts/base64-descriptions-backup.json
+
+# Generated/downloaded invoice + quote PDFs. These contain client billing data
+# and must never enter git history — financials are owner-only (see CLAUDE.md,
+# "Owner-Only Financial Data"). Keep them out of the repo and off the VPS.
+WSG-*.pdf
+WSGQ-*.pdf
+*-invoice.pdf
+
+# Local agent/tool scratch config
+.codex/

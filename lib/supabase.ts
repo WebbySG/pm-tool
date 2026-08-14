@@ -60,6 +60,14 @@ export async function uploadProjectFile(file: File, projectId: string): Promise<
   return uploadToBucket(file, `projects/${projectId}`);
 }
 
+// Expense receipts (IRAS source documents). Same public bucket as everything
+// else; the pm_expense_receipts row created by addExpenseReceipt is what makes
+// the file durable and visible. These must survive for 5+ years — nothing in the
+// app ever deletes the storage object, only the row.
+export async function uploadExpenseReceipt(file: File, expenseId: string): Promise<UploadedFile> {
+  return uploadToBucket(file, `expenses/${expenseId}`);
+}
+
 type AttachmentType = "image" | "video" | "document" | "link";
 
 // Everything that isn't an image or video is a "document" — including the
