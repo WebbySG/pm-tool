@@ -10,17 +10,18 @@ import { supabase } from "@/lib/supabase";
 import {
   loadInvoice, updateInvoice, deleteInvoice, markInvoicePaid, markInvoiceUnpaid,
   addInvoicePayment, deleteInvoicePayment,
-  duplicateInvoice, logInvoiceEvent, loadInvoiceLogs,
-  setQuoteStatus, convertQuoteToInvoice,
+  logInvoiceEvent, loadInvoiceLogs,
+  setQuoteStatus, convertQuoteToInvoice, setInvoiceDocType,
 } from "@/lib/invoice-db";
-import type { Invoice, InvoiceLog, DiscountType, QuoteStatus } from "@/lib/invoice-types";
+import type { Invoice, InvoiceLog, DiscountType, QuoteStatus, DocType } from "@/lib/invoice-types";
 import {
   computeDerivedStatus, computeInvoiceTotals, computeAmountPaid, computeBalanceDue,
+  docTypeSwitchBlocker, statusForDocType,
 } from "@/lib/invoice-types";
 import { errorMessage } from "@/lib/utils";
 import {
   Loader2, Save, Trash2, Copy, CheckCircle2, RotateCcw, Send, Mail, Wallet, Plus,
-  ArrowRightLeft, Check, X, ExternalLink,
+  ArrowRightLeft, Check, X, ExternalLink, Lock,
 } from "lucide-react";
 import { InvoicePdfActions } from "@/components/invoice-pdf-actions";
 
@@ -90,6 +91,11 @@ export default function InvoiceDetailPage() {
   const [convertDueDate, setConvertDueDate] = useState("");
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
+
+  // Invoice ⇄ quotation type switch (in place, until money is recorded)
+  const [typeTarget, setTypeTarget] = useState<DocType | null>(null);
+  const [switchingType, setSwitchingType] = useState(false);
+  const [typeError, setTypeError] = useState<string | null>(null);
 
   // Record-payment dialog
   const [showPayDialog, setShowPayDialog] = useState(false);
@@ -232,6 +238,20 @@ export default function InvoiceDetailPage() {
     }
   }
 
+  async function handleSwitchType() {
+    if (!inv || !typeTarget) return;
+    setSwitchingType(true); setTypeError(null);
+    try {
+      await setInvoiceDocType(inv.id, typeTarget, user?.id ?? null);
+      setTypeTarget(null);
+      await reload();
+    } catch (e: unknown) {
+      setTypeError(errorMessage(e));
+    } finally {
+      setSwitchingType(false);
+    }
+  }
+
   const amountPaid = useMemo(() => (inv ? computeAmountPaid(inv.payments) : 0), [inv]);
   const balanceDue = useMemo(() => (inv ? computeBalanceDue(inv) : 0), [inv]);
 
@@ -327,6 +347,8 @@ export default function InvoiceDetailPage() {
 
   const color = STATUS_COLOR[derivedStatus];
   const isQuote = inv.docType === "quote";
+  // Null while the document can still be switched between the two types.
+  const typeLock = docTypeSwitchBlocker(inv);
 
   return (
     <AdminOnly>
@@ -347,6 +369,39 @@ export default function InvoiceDetailPage() {
         {/* Header with status + actions */}
         <div className="rounded-xl p-4 flex flex-wrap items-center gap-3"
           style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+
+          {/* Document type — switchable in place until money is recorded */}
+          <div className="flex items-center rounded-lg overflow-hidden"
+            style={{ border: "1px solid var(--border)" }}>
+            {(["invoice", "quote"] as DocType[]).map((t) => {
+              const on = inv.docType === t;
+              const label = t === "quote" ? "Quotation" : "Invoice";
+              return (
+                <button
+                  key={t}
+                  onClick={() => { if (!on && !typeLock) { setTypeError(null); setTypeTarget(t); } }}
+                  disabled={on || !!typeLock}
+                  title={on ? `This document is a${t === "invoice" ? "n" : ""} ${label.toLowerCase()}`
+                    : typeLock ?? `Change this into a ${label.toLowerCase()}`}
+                  className="text-xs font-semibold px-3 py-1.5 transition-opacity"
+                  style={{
+                    background: on ? "var(--accent)" : "transparent",
+                    color: on ? "#04121d" : "var(--text-muted)",
+                    cursor: on ? "default" : typeLock ? "not-allowed" : "pointer",
+                    opacity: !on && typeLock ? 0.4 : 1,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {typeLock && (
+            <span className="flex items-center gap-1 text-xs" title={typeLock} style={{ color: "var(--text-muted)" }}>
+              <Lock size={11} /> Type locked
+            </span>
+          )}
+
           <span className="text-xs px-2 py-1 rounded font-semibold uppercase tracking-wide"
             style={{ background: `${color}25`, color }}>
             {STATUS_LABEL[derivedStatus]}
@@ -706,6 +761,62 @@ export default function InvoiceDetailPage() {
       )}
 
       {/* Convert quote → invoice dialog */}
+      {/* Invoice ⇄ quotation type switch */}
+      {typeTarget && (() => {
+        const toQuote = typeTarget === "quote";
+        const newStatus = statusForDocType(inv.status);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
+            style={{ background: "#000000b0" }}
+            onClick={() => !switchingType && setTypeTarget(null)}>
+            <div className="rounded-2xl p-6 w-full max-w-md flex flex-col gap-4"
+              style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
+              onClick={(e) => e.stopPropagation()}>
+              <div>
+                <h3 className="font-semibold text-base" style={{ color: "var(--text)" }}>
+                  Change to {toQuote ? "quotation" : "invoice"}?
+                </h3>
+                <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                  <span className="font-mono">{inv.invoiceNumber}</span> becomes a{toQuote ? "" : "n"}{" "}
+                  {toQuote ? "quotation" : "invoice"}. You can change it back at any time until a payment is recorded.
+                </p>
+              </div>
+              <ul className="flex flex-col gap-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                <li>
+                  • A new <span className="font-mono">{toQuote ? "WSGQ-" : "WSG-"}</span> number is issued —{" "}
+                  <span className="font-mono">{inv.invoiceNumber}</span> is released.
+                </li>
+                {newStatus !== inv.status && (
+                  <li>
+                    • Status resets from <strong style={{ color: "var(--text)" }}>{STATUS_LABEL[inv.status] ?? inv.status}</strong>
+                    {" "}to <strong style={{ color: "var(--text)" }}>Draft</strong> — {toQuote ? "quotations" : "invoices"} don&apos;t
+                    use that status.
+                  </li>
+                )}
+                {(inv.convertedToInvoiceId || inv.convertedFromQuoteId) && (
+                  <li>• The link to the related document is removed.</li>
+                )}
+                <li>• Line items, discount, bill-to, project, notes and history are all kept.</li>
+              </ul>
+              {typeError && <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {typeError}</p>}
+              <div className="flex gap-2">
+                <button onClick={handleSwitchType} disabled={switchingType}
+                  className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2"
+                  style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))", opacity: switchingType ? 0.7 : 1 }}>
+                  {switchingType ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+                  Change to {toQuote ? "quotation" : "invoice"}
+                </button>
+                <button onClick={() => setTypeTarget(null)} disabled={switchingType}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold"
+                  style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showConvertDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
           style={{ background: "#000000b0" }}

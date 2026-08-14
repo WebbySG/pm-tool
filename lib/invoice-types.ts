@@ -151,6 +151,50 @@ export function computeBalanceDue(
   return balance < 0 ? 0 : balance;
 }
 
+// ─── Switching a document between invoice and quotation ──────────────────────
+// A pm_invoices row can be flipped between doc_type='invoice' and 'quote' in
+// place (setInvoiceDocType in lib/invoice-db.ts) for as long as no money has
+// been recorded against it. The rules below are shared by the DB layer and the
+// UI so the button state and the write can't disagree.
+
+export function docTypeLabel(t: DocType): string {
+  return t === "quote" ? "quotation" : "invoice";
+}
+
+/**
+ * Why this document's type is locked, or null when it can still be switched.
+ * The line in the sand is money: a quotation cannot hold payments, so once any
+ * payment is recorded (or the row is marked paid) the type is fixed until
+ * those payments are removed.
+ */
+export function docTypeSwitchBlocker(
+  inv: Pick<Invoice, "docType" | "status" | "convertedToInvoiceId"> & { payments?: Array<{ amount: number }> },
+): string | null {
+  const paymentCount = (inv.payments ?? []).length;
+  if (paymentCount > 0) {
+    return `This invoice has ${paymentCount} recorded payment${paymentCount === 1 ? "" : "s"}. `
+      + "Remove them in the Payments card before changing the document type.";
+  }
+  if (inv.status === "paid") {
+    return "A paid invoice can't be turned into a quotation. Mark it unpaid first.";
+  }
+  if (inv.docType === "quote" && inv.convertedToInvoiceId) {
+    return "This quotation has already been converted into a separate invoice. "
+      + "Delete that invoice first, or edit it instead.";
+  }
+  return null;
+}
+
+/**
+ * The status the row must take on after a type switch. `draft` and `sent` exist
+ * in both lifecycles and are kept; every other status belongs to only one of
+ * them (paid/void · accepted/declined/expired) and resets to draft, because the
+ * document is being reissued under a new number.
+ */
+export function statusForDocType(status: DocStatus): DocStatus {
+  return status === "draft" || status === "sent" ? status : "draft";
+}
+
 export type DerivedStatus = DocStatus | "overdue" | "partial" | "converted";
 
 /**

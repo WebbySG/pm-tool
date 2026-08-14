@@ -3,7 +3,7 @@ import type {
   Invoice, InvoiceLineItem, InvoicePayment, InvoiceTemplate, InvoiceTemplateLineItem,
   InvoiceStatus, InvoiceLog, InvoiceLogEvent, DiscountType, DocType, DocStatus, QuoteStatus,
 } from "./invoice-types";
-import { computeInvoiceTotals } from "./invoice-types";
+import { computeInvoiceTotals, docTypeLabel, docTypeSwitchBlocker, statusForDocType } from "./invoice-types";
 
 type Row = Record<string, unknown>;
 
@@ -432,6 +432,10 @@ export async function duplicateInvoice(sourceId: string, opts: {
     clientId: src.clientId,
     projectId: src.projectId,
     templateId: src.templateId,
+    // Duplicating a quote must make a quote (WSGQ- number), not an invoice.
+    // The conversion back-link is deliberately NOT copied — the copy is a new
+    // document, not the one that quote produced.
+    docType: src.docType,
     issueDate: opts.issueDate,
     dueDate: opts.dueDate,
     billToName: src.billToName,
@@ -527,6 +531,75 @@ export async function convertQuoteToInvoice(quoteId: string, opts: {
   const newNumber = (newRow as { invoice_number?: string } | null)?.invoice_number ?? "";
   await logInvoiceEvent(quoteId, "converted", `Converted to invoice ${newNumber}`, opts.actor);
   return newId;
+}
+
+/**
+ * Flip an existing document between invoice and quotation IN PLACE, keeping its
+ * line items, discount, bill-to, project, notes and history. Distinct from
+ * convertQuoteToInvoice, which creates a SECOND document and keeps the quote as
+ * an audit record — this is for a document that was simply raised as the wrong
+ * type, and stays available until money is recorded against it
+ * (docTypeSwitchBlocker is the gate; the UI shows the same reason).
+ *
+ * The number is always reissued, because the WSG- / WSGQ- prefix is how the two
+ * are told apart — the old number is released back into the pool and recorded
+ * in the activity log. Status maps via statusForDocType; conversion links are
+ * dropped on both sides, since an in-place change dissolves any quote→invoice
+ * pairing this row was part of.
+ */
+export async function setInvoiceDocType(
+  id: string, target: DocType, actor: string | null,
+): Promise<{ invoiceNumber: string; status: DocStatus }> {
+  const cur = await loadInvoice(id);
+  if (!cur) throw new Error("Document not found.");
+  if (cur.docType === target) return { invoiceNumber: cur.invoiceNumber, status: cur.status };
+
+  const blocker = docTypeSwitchBlocker(cur);
+  if (blocker) throw new Error(blocker);
+
+  const invoiceNumber = target === "quote" ? await nextQuoteNumber() : await nextInvoiceNumber();
+  const status = statusForDocType(cur.status);
+
+  const updates: Record<string, unknown> = {
+    doc_type: target,
+    invoice_number: invoiceNumber,
+    // doc_type and status must move together — the pm_invoices status CHECK is
+    // doc_type-aware, so setting either one alone would violate it.
+    status,
+    converted_to_invoice_id: null,
+    converted_from_quote_id: null,
+    paid_at: null,
+    paid_by: null,
+    paid_note: null,
+    updated_at: new Date().toISOString(),
+  };
+  // Reissued as a draft under a new number ⇒ what was sent is no longer this
+  // document. (A doc that stays 'sent' keeps its sent_at.)
+  if (status === "draft") {
+    updates.sent_at = null;
+    updates.sent_to_email = null;
+  }
+
+  const { error } = await supabase.from("pm_invoices").update(updates).eq("id", id);
+  if (error) throw error;
+
+  // If a quote pointed at this row as the invoice it produced, that link is now
+  // stale — clear it so the quote is convertible again.
+  if (cur.convertedFromQuoteId) {
+    const { error: linkErr } = await supabase.from("pm_invoices")
+      .update({ converted_to_invoice_id: null, updated_at: new Date().toISOString() })
+      .eq("id", cur.convertedFromQuoteId)
+      .eq("converted_to_invoice_id", id);
+    if (linkErr) throw linkErr;
+  }
+
+  await logInvoiceEvent(
+    id, "updated",
+    `Changed from ${docTypeLabel(cur.docType)} ${cur.invoiceNumber} to ${docTypeLabel(target)} ${invoiceNumber}`
+      + (status !== cur.status ? ` · status ${cur.status} → ${status}` : ""),
+    actor,
+  );
+  return { invoiceNumber, status };
 }
 
 // ─── Templates ────────────────────────────────────────────────────────────────
