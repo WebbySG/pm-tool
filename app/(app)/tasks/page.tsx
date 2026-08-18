@@ -4,11 +4,12 @@ import { type Task, isClosedStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { TaskDrawer } from "@/components/task-drawer";
-import { Calendar, AlertTriangle, Archive, FileEdit, CheckCircle2, Clock, XCircle, Plus, X, Paperclip } from "lucide-react";
+import { Calendar, AlertTriangle, Archive, Clock, XCircle, Plus, X, Paperclip } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { errorMessage, FILE_ACCEPT } from "@/lib/utils";
+import { useDiscardGuard } from "@/components/discard-guard";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -19,6 +20,17 @@ function staffName(s: LiveStaff) { return [s.first_name, s.last_name].filter(Boo
 function staffInitials(s: LiveStaff) { return s.avatar_initials || staffName(s).slice(0, 2).toUpperCase(); }
 
 type TaskWithProject = Task & { projectName: string; projectId: string; parentTitle?: string };
+
+// Task type filtering is SERVICE-based, mirroring the projects page (user
+// preference 2026-07-29): "Web Dev" and "SEO" each also match a combined
+// "Web + SEO" task, because such a task IS web dev work and IS SEO work.
+// With strict equality a `both` task — which the Add Task dialog can create —
+// fell out of BOTH filters and was reachable only via "All Types".
+function matchesTypeFilter(taskType: string | null | undefined, filter: string): boolean {
+  if (filter === "all") return true;
+  if (filter === "both") return taskType === "both"; // isolate the combined ones
+  return taskType === filter || taskType === "both";
+}
 
 function priorityColor(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -69,8 +81,13 @@ function TaskGroup({
           const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
           const avatarColor = AVATAR_COLORS[liveStaff.indexOf(assignee!) % AVATAR_COLORS.length] ?? "#818cf8";
           const sc = statusConfig[task.status];
-          // to_be_discussed is admin-parked — don't red-flag its due date.
-          const overdue = task.status !== "done" && task.status !== "to_be_discussed" && !!task.dueDate && new Date(task.dueDate) < new Date();
+          // to_be_discussed and pending_client_approval are parked waiting on
+          // someone else (an internal discussion / the client) — don't red-flag
+          // their due dates. pending_article_post IS flagged: staff owes the link.
+          const overdue = task.status !== "done"
+            && task.status !== "to_be_discussed"
+            && task.status !== "pending_client_approval"
+            && !!task.dueDate && new Date(task.dueDate) < new Date();
           return (
             <div
               key={task.id}
@@ -174,7 +191,7 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, articles, updateTaskStatus, requestTaskApproval, approveArticleAsAdmin, updateArticleStatus, addTask, addProject, uploadTaskAttachment } = useStore();
+  const { projects, updateTaskStatus, requestTaskApproval, addTask, addProject, uploadTaskAttachment } = useStore();
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskProject, setNewTaskProject] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -190,7 +207,7 @@ export default function TasksPage() {
   const [projError, setProjError] = useState<string | null>(null);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const [activeTab, setActiveTab] = useState<"tasks" | "content" | "review" | "revision" | "discuss">("tasks");
+  const [activeTab, setActiveTab] = useState<"tasks" | "review" | "client" | "article" | "revision" | "discuss">("tasks");
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -222,15 +239,20 @@ export default function TasksPage() {
   const activeTasks = allTasks.filter((t) => !isClosedStatus(t.status));
   const doneCount = allTasks.filter((t) => t.status === "done").length;
 
-  // to_be_discussed does NOT roll up onto the parent (the admin parks a child
-  // without touching the top-level task), so parked SUBTASKS would be invisible
-  // in the top-level lists above. Surface every parked descendant as its own
-  // row, tagged with its parent's title; clicking one opens the CHILD drawer.
-  const parkedDescendants: TaskWithProject[] = projects.flatMap((p) => {
+  // Only pending_review and revision_required roll up onto the top-level task
+  // (rollupTopStatus in lib/store.ts). These three do NOT — the admin parks or
+  // approves a CHILD without touching its parent — so such subtasks would be
+  // invisible in the top-level lists above. That bites hardest on
+  // pending_article_post: the weekly SEO engine creates Article 1/2/3 as
+  // SUBTASKS, so approving one leaves the "waiting to be posted" work with no
+  // row anywhere. Surface every such descendant as its own row, tagged with its
+  // parent's title; clicking one opens the CHILD drawer (findDeep below).
+  const SURFACED_CHILD_STATUSES = ["to_be_discussed", "pending_client_approval", "pending_article_post"] as const;
+  const surfacedDescendants: TaskWithProject[] = projects.flatMap((p) => {
     const out: TaskWithProject[] = [];
     const walk = (t: Task) => {
       for (const c of t.subtasks) {
-        if (c.status === "to_be_discussed" && (isAdmin || c.assigneeId === user?.id)) {
+        if ((SURFACED_CHILD_STATUSES as readonly string[]).includes(c.status) && (isAdmin || c.assigneeId === user?.id)) {
           out.push({ ...c, projectName: p.name, projectId: p.id, parentTitle: t.title });
         }
         walk(c);
@@ -239,11 +261,12 @@ export default function TasksPage() {
     for (const t of p.tasks) walk(t);
     return out;
   });
+  const surfacedOf = (status: string) => surfacedDescendants.filter((t) => t.status === status);
 
   const passesBarFilters = (t: TaskWithProject) => {
     if (filterProject !== "all" && t.projectId !== filterProject) return false;
     if (filterMember !== "all" && t.assigneeId !== filterMember) return false;
-    if (filterType !== "all" && t.type !== filterType) return false;
+    if (!matchesTypeFilter(t.type, filterType)) return false;
     if (filterStatus !== "all" && t.status !== filterStatus) return false;
     if (filterPriority !== "all") {
       const p = typeof t.priority === "number" ? t.priority : 5;
@@ -261,10 +284,10 @@ export default function TasksPage() {
   const statusCounts = {
     todo: activeTasks.filter((t) => t.status === "todo").length,
     in_progress: activeTasks.filter((t) => t.status === "in_progress").length,
-    to_be_discussed: activeTasks.filter((t) => t.status === "to_be_discussed").length + parkedDescendants.length,
+    to_be_discussed: activeTasks.filter((t) => t.status === "to_be_discussed").length + surfacedOf("to_be_discussed").length,
     pending_review: activeTasks.filter((t) => t.status === "pending_review").length,
-    pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length,
-    pending_article_post: activeTasks.filter((t) => t.status === "pending_article_post").length,
+    pending_client_approval: activeTasks.filter((t) => t.status === "pending_client_approval").length + surfacedOf("pending_client_approval").length,
+    pending_article_post: activeTasks.filter((t) => t.status === "pending_article_post").length + surfacedOf("pending_article_post").length,
     revision_required: activeTasks.filter((t) => t.status === "revision_required").length,
   };
 
@@ -278,11 +301,13 @@ export default function TasksPage() {
   const bySubmission = (a: TaskWithProject, b: TaskWithProject) =>
     new Date(a.statusChangedAt ?? a.createdAt).getTime() - new Date(b.statusChangedAt ?? b.createdAt).getTime();
   const pendingReviewTasks  = filtered.filter((t) => t.status === "pending_review").sort(bySubmission);
-  const pendingClientTasks  = filtered.filter((t) => t.status === "pending_client_approval").sort(bySubmission);
-  const pendingArticleTasks = filtered.filter((t) => t.status === "pending_article_post").sort(bySubmission);
   const revisionTasks       = filtered.filter((t) => t.status === "revision_required").sort(bySubmission);
-  // Parked top-level tasks AND parked subtasks (which don't roll up) together.
-  const toDiscussTasks      = [...filtered.filter((t) => t.status === "to_be_discussed"), ...parkedDescendants.filter(passesBarFilters)].sort(bySubmission);
+  // Top-level tasks AND the surfaced subtasks (which don't roll up) together.
+  const withSurfaced = (status: string) =>
+    [...filtered.filter((t) => t.status === status), ...surfacedOf(status).filter(passesBarFilters)].sort(bySubmission);
+  const pendingClientTasks  = withSurfaced("pending_client_approval");
+  const pendingArticleTasks = withSurfaced("pending_article_post");
+  const toDiscussTasks      = withSurfaced("to_be_discussed");
   const dateGroupable       = filtered.filter((t) => t.status !== "pending_review" && t.status !== "pending_client_approval" && t.status !== "pending_article_post" && t.status !== "revision_required" && t.status !== "to_be_discussed");
 
   const grouped = {
@@ -348,6 +373,30 @@ export default function TasksPage() {
     setProjError(null);
   }
 
+  // Dismissing the dialog for real also drops what was typed — otherwise the
+  // draft survives, and the next open would be "dirty" before it's touched.
+  function discardNewTaskForm() {
+    resetNewTaskForm();
+    setNewTaskTitle("");
+    setNewTaskDueDate("");
+    setNewTaskPriority(5);
+    setNewTaskFiles([]);
+  }
+
+  // Backdrop / ✕ / Cancel: instant on an untouched form, asks once anything
+  // has been typed or a file staged.
+  const { requestClose: requestCloseNewTask, guard: newTaskGuard } = useDiscardGuard({
+    dirty:
+      newTaskTitle.trim() !== ""
+      || newTaskFiles.length > 0
+      || newTaskDueDate !== ""
+      || newProjName.trim() !== "",
+    busy: creating || savingProject,
+    onClose: discardNewTaskForm,
+    title: "Discard this task?",
+    message: "You've started filling in this task. Closing now will lose the title, date and any files you've attached.",
+  });
+
   // Keep selected task in sync with store updates. Deep search — the selected
   // row may be a SUBTASK (parked to_be_discussed children get their own rows),
   // and its drawer must open on the child, not the parent.
@@ -362,27 +411,6 @@ export default function TasksPage() {
   const liveSelectedTask = selectedTask
     ? findDeep(projects.find((p) => p.id === selectedTask.projectId)?.tasks ?? [], selectedTask.id)
     : null;
-
-  // Content approval data
-  const contentArticles = isAdmin
-    ? articles
-    : articles.filter((a) => a.submittedById === user?.id);
-  const pendingContentCount = contentArticles.filter((a) => a.status === "pending_review").length;
-
-  const articleStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-    draft:              { label: "Draft",             color: "#64748b", bg: "#64748b20", icon: <FileEdit size={12} /> },
-    pending_review:     { label: "Pending Review",    color: "#f59e0b", bg: "#f59e0b20", icon: <Clock size={12} /> },
-    changes_requested:  { label: "Changes Requested", color: "#ef4444", bg: "#ef444420", icon: <XCircle size={12} /> },
-    approved:           { label: "Approved",          color: "#22c55e", bg: "#22c55e20", icon: <CheckCircle2 size={12} /> },
-    published:          { label: "Published",         color: "#38b6e8", bg: "#38b6e820", icon: <CheckCircle2 size={12} /> },
-  };
-
-  const articlesByProject = contentArticles.reduce<Record<string, typeof contentArticles>>((acc, a) => {
-    const key = a.projectId ?? "__none__";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(a);
-    return acc;
-  }, {});
 
   return (
     <>
@@ -415,6 +443,34 @@ export default function TasksPage() {
             )}
           </button>
           <button
+            onClick={() => setActiveTab("client")}
+            title="Pending Client Approval"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "client" ? "#1c3248" : "transparent",
+              color: activeTab === "client" ? "#ec4899" : "#4a7090",
+            }}
+          >
+            Client Approval
+            {statusCounts.pending_client_approval > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#ec489920", color: "#ec4899" }}>{statusCounts.pending_client_approval}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("article")}
+            title="Pending Article Post"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: activeTab === "article" ? "#1c3248" : "transparent",
+              color: activeTab === "article" ? "#f97316" : "#4a7090",
+            }}
+          >
+            Article Post
+            {statusCounts.pending_article_post > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f9731620", color: "#f97316" }}>{statusCounts.pending_article_post}</span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab("revision")}
             className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
             style={{
@@ -440,19 +496,6 @@ export default function TasksPage() {
               <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#06b6d420", color: "#06b6d4" }}>{statusCounts.to_be_discussed}</span>
             )}
           </button>
-          <button
-            onClick={() => setActiveTab("content")}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
-            style={{
-              background: activeTab === "content" ? "#1c3248" : "transparent",
-              color: activeTab === "content" ? "#cce4ff" : "#4a7090",
-            }}
-          >
-            Content Approval
-            {pendingContentCount > 0 && (
-              <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{pendingContentCount}</span>
-            )}
-          </button>
         </div>
 
         {/* PROJECT TASKS TAB */}
@@ -471,6 +514,7 @@ export default function TasksPage() {
                 <option value="all">All Types</option>
                 <option value="webdev">Web Dev</option>
                 <option value="seo">SEO</option>
+                <option value="both">Web + SEO</option>
               </select>
               <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "#0f1d2e", border: "1px solid #1c3248", color: "#cce4ff" }}>
                 <option value="all">All Priorities</option>
@@ -543,24 +587,25 @@ export default function TasksPage() {
           </>
         )}
 
-        {/* REVIEW / REVISION / TO-BE-DISCUSSED TABS — single-status quick filters */}
-        {(activeTab === "review" || activeTab === "revision" || activeTab === "discuss") && (() => {
-          const statusFilter = activeTab === "review" ? "pending_review" : activeTab === "revision" ? "revision_required" : "to_be_discussed";
-          const accent = activeTab === "review" ? "#a855f7" : activeTab === "revision" ? "#f59e0b" : "#06b6d4";
-          const title = activeTab === "review" ? "Pending Review" : activeTab === "revision" ? "Revision Required" : "To Be Discussed";
-          const empty = activeTab === "review"
-            ? "Nothing pending review right now."
-            : activeTab === "revision"
-            ? "No tasks need revision right now."
-            : "Nothing parked for discussion right now.";
-          // The discuss tab also lists parked SUBTASKS — to_be_discussed doesn't
-          // roll up, so without them a parked child would be invisible here.
-          const pool = activeTab === "discuss"
-            ? [...activeTasks.filter((t) => t.status === statusFilter), ...parkedDescendants]
-            : activeTasks.filter((t) => t.status === statusFilter);
+        {/* REVIEW / CLIENT / ARTICLE / REVISION / TO-BE-DISCUSSED TABS — single-status quick filters */}
+        {(activeTab === "review" || activeTab === "client" || activeTab === "article" || activeTab === "revision" || activeTab === "discuss") && (() => {
+          const tabMeta = {
+            review:   { status: "pending_review",          accent: "#a855f7", title: "Pending Review",          empty: "Nothing pending review right now." },
+            client:   { status: "pending_client_approval", accent: "#ec4899", title: "Pending Client Approval", empty: "Nothing waiting on client approval right now." },
+            article:  { status: "pending_article_post",    accent: "#f97316", title: "Pending Article Post",    empty: "No approved articles waiting to be posted." },
+            revision: { status: "revision_required",       accent: "#f59e0b", title: "Revision Required",       empty: "No tasks need revision right now." },
+            discuss:  { status: "to_be_discussed",         accent: "#06b6d4", title: "To Be Discussed",         empty: "Nothing parked for discussion right now." },
+          }[activeTab];
+          const { status: statusFilter, accent, title, empty } = tabMeta;
+          // These tabs also list SUBTASKS in the status — it doesn't roll up onto
+          // the parent, so without them a parked/approved child would be invisible.
+          const pool = [
+            ...activeTasks.filter((t) => t.status === statusFilter),
+            ...surfacedOf(statusFilter),
+          ];
           const matched = pool
             .filter((t) => filterMember === "all" || t.assigneeId === filterMember)
-            .filter((t) => filterType === "all" || t.type === filterType);
+            .filter((t) => matchesTypeFilter(t.type, filterType));
 
           const matchedNow = new Date();
           const matchedToday = matchedNow.toDateString();
@@ -582,14 +627,16 @@ export default function TasksPage() {
                   <option value="all">All Types</option>
                   <option value="webdev">Web Dev</option>
                   <option value="seo">SEO</option>
+                  <option value="both">Web + SEO</option>
                 </select>
                 <span className="text-sm" style={{ color: "#4a7090" }}>{matched.length} task{matched.length !== 1 ? "s" : ""} {activeTab === "discuss" ? "parked for discussion" : `in ${title.toLowerCase()}`}</span>
               </div>
 
-              {activeTab === "discuss" ? (
-                // Parked tasks aren't due-date-driven (admin-parked, never overdue-flagged) —
-                // one FIFO queue, oldest-parked first, matching the main-tab group order.
-                <TaskGroup title="To Be Discussed" tasks={[...matched].sort(bySubmission)} accent={accent} icon={<Clock size={14} style={{ color: accent }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
+              {activeTab === "discuss" || activeTab === "client" ? (
+                // These two wait on someone else (an internal discussion / the client),
+                // so they're never overdue-flagged and date groups would mislead —
+                // one FIFO queue, oldest first, matching the main-tab group order.
+                <TaskGroup title={title} tasks={[...matched].sort(bySubmission)} accent={accent} icon={<Clock size={14} style={{ color: accent }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
               ) : (
                 <>
                   <TaskGroup title="Overdue" tasks={matchedGroups.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
@@ -607,101 +654,6 @@ export default function TasksPage() {
             </>
           );
         })()}
-
-        {/* CONTENT APPROVAL TAB */}
-        {activeTab === "content" && (
-          <div className="flex flex-col gap-6">
-            {/* Status summary */}
-            <div className="flex items-center gap-3 flex-wrap">
-              {(["pending_review", "approved", "changes_requested", "draft", "published"] as const).map((s) => {
-                const count = contentArticles.filter((a) => a.status === s).length;
-                const sc = articleStatusConfig[s];
-                if (!count) return null;
-                return (
-                  <div key={s} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: sc.bg, color: sc.color }}>
-                    {sc.icon} {sc.label}: {count}
-                  </div>
-                );
-              })}
-              {contentArticles.length === 0 && (
-                <p className="text-sm" style={{ color: "#4a7090" }}>No articles yet.</p>
-              )}
-            </div>
-
-            {/* Articles grouped by project */}
-            {Object.entries(articlesByProject).map(([projectId, projectArticles]) => {
-              const proj = projects.find((p) => p.id === projectId);
-              const projName = proj?.name ?? "No Project";
-              const pendingInProject = projectArticles.filter((a) => a.status === "pending_review").length;
-              return (
-                <div key={projectId}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="text-sm font-semibold" style={{ color: "#cce4ff" }}>{projName}</h3>
-                    {pendingInProject > 0 && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{pendingInProject} pending</span>
-                    )}
-                  </div>
-                  <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1c3248" }}>
-                    {projectArticles.map((article, i) => {
-                      const sc = articleStatusConfig[article.status] ?? articleStatusConfig.draft;
-                      return (
-                        <div
-                          key={article.id}
-                          className="flex items-center gap-4 px-4 py-3"
-                          style={{
-                            background: "#0f1d2e",
-                            borderBottom: i < projectArticles.length - 1 ? "1px solid #1c3248" : "none",
-                          }}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate" style={{ color: "#cce4ff" }}>{article.title}</p>
-                            <p className="text-xs mt-0.5" style={{ color: "#4a7090" }}>
-                              by {article.submittedByName || "Unknown"} · {new Date(article.updatedAt).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.color }}>
-                              {sc.icon} {sc.label}
-                            </span>
-                            {isAdmin && article.status === "pending_review" && (
-                              <>
-                                <button
-                                  onClick={() => approveArticleAsAdmin(article.id)}
-                                  className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
-                                  style={{ background: "#22c55e20", color: "#22c55e", border: "1px solid #22c55e40" }}
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  onClick={() => updateArticleStatus(article.id, "changes_requested")}
-                                  className="px-2 py-1 rounded-lg text-xs font-medium hover:opacity-80 transition-opacity"
-                                  style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
-                                >
-                                  Changes
-                                </button>
-                              </>
-                            )}
-                            <Link href={`/content/${article.id}`} className="text-xs hover:opacity-80" style={{ color: "#38b6e8" }}>
-                              View →
-                            </Link>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-
-            {contentArticles.length === 0 && (
-              <div className="text-center py-16 flex flex-col items-center gap-3">
-                <FileEdit size={32} style={{ color: "#1c3248" }} />
-                <p className="text-sm" style={{ color: "#4a7090" }}>No articles yet. Staff can create articles from the Content page.</p>
-                <Link href="/content" className="text-sm hover:opacity-80" style={{ color: "#38b6e8" }}>Go to Content →</Link>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       <TaskDrawer
@@ -712,12 +664,13 @@ export default function TasksPage() {
 
       {showNewTask && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={resetNewTaskForm} />
+          {newTaskGuard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={requestCloseNewTask} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-md flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Task</h3>
-                <button onClick={resetNewTaskForm} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={requestCloseNewTask} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               <div>
@@ -882,7 +835,7 @@ export default function TasksPage() {
                   style={{ background: "#38b6e8", color: "#fff" }}>
                   {creating ? "Creating…" : "Create Task"}
                 </button>
-                <button onClick={resetNewTaskForm} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                <button onClick={requestCloseNewTask} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
                   Cancel
                 </button>
               </div>
