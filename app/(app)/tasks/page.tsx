@@ -57,6 +57,7 @@ const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#
 
 function TaskGroup({
   title, tasks, accent, icon, onSelect, onComplete, onRequestApproval, isAdmin, liveStaff,
+  hideProject = false,
 }: {
   title: string;
   tasks: TaskWithProject[];
@@ -67,6 +68,9 @@ function TaskGroup({
   onRequestApproval: (task: TaskWithProject) => void;
   isAdmin: boolean;
   liveStaff: LiveStaff[];
+  /** Set when the GROUP HEADING is already the project name (the status tabs
+   *  group by project), so each row doesn't repeat it. */
+  hideProject?: boolean;
 }) {
   if (tasks.length === 0) return null;
   return (
@@ -127,9 +131,9 @@ function TaskGroup({
                   {task.title}
                 </p>
                 <p className="text-xs truncate" style={{ color: "#4a7090" }}>
-                  {task.projectName}
+                  {!hideProject && task.projectName}
                   {/* Subtask surfaced on its own row (e.g. a parked child) — show which parent it lives under */}
-                  {task.parentTitle && <span>{" › "}{task.parentTitle}</span>}
+                  {task.parentTitle && <span>{hideProject ? "" : " › "}{task.parentTitle}</span>}
                   {/* When it was submitted — distinguishes a fresh review request from one already seen */}
                   {task.status === "pending_review" && task.statusChangedAt && (
                     <span style={{ color: "#a855f7" }}>
@@ -607,14 +611,19 @@ export default function TasksPage() {
             .filter((t) => filterMember === "all" || t.assigneeId === filterMember)
             .filter((t) => matchesTypeFilter(t.type, filterType));
 
-          const matchedNow = new Date();
-          const matchedToday = matchedNow.toDateString();
-          const matchedGroups = {
-            overdue:  matched.filter((t) => t.dueDate && new Date(t.dueDate) < matchedNow && new Date(t.dueDate).toDateString() !== matchedToday),
-            today:    matched.filter((t) => t.dueDate && new Date(t.dueDate).toDateString() === matchedToday),
-            upcoming: matched.filter((t) => t.dueDate && new Date(t.dueDate) > matchedNow),
-            noDate:   matched.filter((t) => !t.dueDate),
-          };
+          // Grouped by PROJECT (user request 2026-08-18) — everything waiting for
+          // the same client sits together, so a project is reviewed in one pass
+          // instead of its tasks being scattered across date buckets.
+          // Insertion order comes from the bySubmission sort, so within a group
+          // the FIFO queue order holds AND the project holding the
+          // longest-waiting task floats to the top.
+          const byProject = new Map<string, TaskWithProject[]>();
+          for (const t of [...matched].sort(bySubmission)) {
+            const existing = byProject.get(t.projectId);
+            if (existing) existing.push(t);
+            else byProject.set(t.projectId, [t]);
+          }
+          const projectGroups = [...byProject.values()];
 
           return (
             <>
@@ -632,19 +641,21 @@ export default function TasksPage() {
                 <span className="text-sm" style={{ color: "#4a7090" }}>{matched.length} task{matched.length !== 1 ? "s" : ""} {activeTab === "discuss" ? "parked for discussion" : `in ${title.toLowerCase()}`}</span>
               </div>
 
-              {activeTab === "discuss" || activeTab === "client" ? (
-                // These two wait on someone else (an internal discussion / the client),
-                // so they're never overdue-flagged and date groups would mislead —
-                // one FIFO queue, oldest first, matching the main-tab group order.
-                <TaskGroup title={title} tasks={[...matched].sort(bySubmission)} accent={accent} icon={<Clock size={14} style={{ color: accent }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-              ) : (
-                <>
-                  <TaskGroup title="Overdue" tasks={matchedGroups.overdue} accent="#ef4444" icon={<AlertTriangle size={14} style={{ color: "#ef4444" }} />} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-                  <TaskGroup title="Due Today" tasks={matchedGroups.today} accent="#f59e0b" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-                  <TaskGroup title="Upcoming" tasks={matchedGroups.upcoming} accent={accent} onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-                  <TaskGroup title="No Due Date" tasks={matchedGroups.noDate} accent="#4a7090" onSelect={setSelectedTask} onComplete={handleComplete} onRequestApproval={handleRequestApproval} isAdmin={isAdmin} liveStaff={liveStaff} />
-                </>
-              )}
+              {projectGroups.map((group) => (
+                <TaskGroup
+                  key={group[0].projectId}
+                  title={group[0].projectName}
+                  tasks={group}
+                  accent={accent}
+                  icon={<Clock size={14} style={{ color: accent }} />}
+                  onSelect={setSelectedTask}
+                  onComplete={handleComplete}
+                  onRequestApproval={handleRequestApproval}
+                  isAdmin={isAdmin}
+                  liveStaff={liveStaff}
+                  hideProject
+                />
+              ))}
 
               {matched.length === 0 && (
                 <div className="text-center py-16">
