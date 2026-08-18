@@ -278,6 +278,40 @@ async function cascadeDescendantsClosed(set: StoreSet, get: () => Store, project
   await db.dbUpdateTasksBulk(ids, { status });
 }
 
+// "Sending the parent back for revision sends everything under it back too"
+// (user rule 2026-08-18): putting a task into revision_required marks EVERY
+// descendant revision_required, locally + in the DB.
+//
+// Deliberately BROADER than cascadeDescendantsClosed: that one closes only
+// still-open descendants and protects done/missed/rejected/pending_article_post,
+// because closing a parent must never silently discard a record. Revision is the
+// opposite instruction — the work under this task has to be redone — so a done,
+// missed, rejected or awaiting-link child is reopened too. Anything already in
+// revision_required is skipped (nothing to change).
+async function cascadeDescendantsRevision(set: StoreSet, get: () => Store, projectId: string, taskId: string) {
+  const proj = get().projects.find((p) => p.id === projectId);
+  if (!proj) return;
+  const t = findTaskInTree(proj.tasks, taskId);
+  if (!t) return;
+  const ids: string[] = [];
+  const walk = (x: Task) => {
+    for (const s of x.subtasks) {
+      if (s.status !== "revision_required") ids.push(s.id);
+      walk(s);
+    }
+  };
+  walk(t);
+  if (ids.length === 0) return;
+  set((s) => ({
+    projects: patchProject(s.projects, projectId, (p) => {
+      let tasks = p.tasks;
+      for (const id of ids) tasks = patchTaskInTree(tasks, id, statusPatch("revision_required"));
+      return { ...p, tasks };
+    }),
+  }));
+  await db.dbUpdateTasksBulk(ids, { status: "revision_required" });
+}
+
 // Roll a child's review state up to its TOP-LEVEL task so pending work is
 // impossible to miss at board level:
 //   any descendant revision_required → top revision_required (reopens a done top)
@@ -636,6 +670,8 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("revision_required")) })) }));
     await db.dbUpdateTask(taskId, { status: "revision_required" });
     await clearTaskApprovalRequests(get, taskId);
+    // Request Revision on a parent sends everything under it back too.
+    await cascadeDescendantsRevision(set, get, projectId, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Revision Required",
@@ -727,6 +763,7 @@ export const useStore = create<Store>()(
     await db.dbUpdateTask(taskId, { status });
     if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
     if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, taskId, status);
+    if (status === "revision_required") await cascadeDescendantsRevision(set, get, projectId, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
   },
 
@@ -878,6 +915,7 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, statusPatch(status)) })) }));
     await db.dbUpdateTask(subtaskId, { status });
     if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, subtaskId, status);
+    if (status === "revision_required") await cascadeDescendantsRevision(set, get, projectId, subtaskId);
     await rollupTopStatus(set, get, projectId, subtaskId);
   },
 
