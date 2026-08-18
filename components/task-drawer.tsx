@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   X, Plus, Paperclip, RefreshCw, ChevronDown, Check, Trash2,
@@ -12,6 +12,7 @@ import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase, uploadAttachment, dataUrlToFile } from "@/lib/supabase";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
+import { useDiscardGuard } from "@/components/discard-guard";
 import {
   dbListTaskComments, dbAddTaskComment, dbUpdateTaskComment, dbDeleteTaskComment, type TaskComment,
   type CommentAttachment,
@@ -607,12 +608,41 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
   }
   function popTask() { setStack((s) => s.slice(0, -1)); }
 
+  // Which open panels are holding unsaved work. The drafts (comment body,
+  // staged files, typed subtask…) live inside each TaskPanel, but the backdrop
+  // that dismisses them all lives here — so panels report up.
+  const [dirtyPanels, setDirtyPanels] = useState<string[]>([]);
+  const [busyPanels, setBusyPanels] = useState<string[]>([]);
+  const reportPanelState = useCallback((taskId: string, dirty: boolean, busy: boolean) => {
+    const apply = (prev: string[], on: boolean) => {
+      const has = prev.includes(taskId);
+      if (on === has) return prev;
+      return on ? [...prev, taskId] : prev.filter((x) => x !== taskId);
+    };
+    setDirtyPanels((prev) => apply(prev, dirty));
+    setBusyPanels((prev) => apply(prev, busy));
+  }, []);
+
+  // Backdrop / ✕ / Done all go through this: an untouched drawer closes at
+  // once, one holding an unposted comment or a typed-but-unadded subtask asks
+  // first. Post-action closes (delete, archive, move) still call onClose
+  // directly — the work is already committed, so there's nothing to protect.
+  const { requestClose, guard } = useDiscardGuard({
+    dirty: dirtyPanels.length > 0,
+    busy: busyPanels.length > 0,
+    onClose,
+    title: "Close this task?",
+    message: "You've got unsaved work here — a comment you haven't posted, a file you haven't attached, or an edit you haven't saved. Closing now will lose it.",
+    discardLabel: "Close anyway",
+  });
+
   // Side-by-side layout: drawers don't overlap
   const drawerWidth = stack.length === 1 ? 600 : stack.length === 2 ? 520 : 440;
 
   return (
     <>
-      <div className="fixed inset-0 z-40" style={{ background: "#00000060" }} onClick={onClose} />
+      {guard}
+      <div className="fixed inset-0 z-40" style={{ background: "#00000060" }} onClick={requestClose} />
       <div className="fixed top-0 right-0 h-screen z-50" style={{ pointerEvents: "none" }}>
         {stack.map((stackEntry, i) => {
           const live = liveTask(stackEntry.id) ?? stackEntry;
@@ -644,6 +674,8 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
                 parentTask={parentTask}
                 onGoBack={popTask}
                 onClose={onClose}
+                onRequestClose={requestClose}
+                onDirtyChange={reportPanelState}
                 onOpenChild={(child) => pushTask(child, i)}
                 liveStaff={liveStaff}
               />
@@ -657,7 +689,7 @@ function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; project
 
 // ─── Single task panel ────────────────────────────────────────────────────────
 function TaskPanel({
-  task, projectId, isTop, canGoBack, depth, parentTask, onGoBack, onClose, onOpenChild, liveStaff,
+  task, projectId, isTop, canGoBack, depth, parentTask, onGoBack, onClose, onRequestClose, onDirtyChange, onOpenChild, liveStaff,
 }: {
   task: Task;
   projectId: string;
@@ -666,7 +698,12 @@ function TaskPanel({
   depth: number;
   parentTask?: Task;
   onGoBack: () => void;
+  /** Close immediately — for after an action that already committed (delete, archive, move). */
   onClose: () => void;
+  /** Close as a user gesture — confirms first if this panel holds unsaved work. */
+  onRequestClose: () => void;
+  /** Report unsaved-work / in-flight-upload state up to the stack's backdrop guard. */
+  onDirtyChange: (taskId: string, dirty: boolean, busy: boolean) => void;
   onOpenChild: (task: Task) => void;
   liveStaff: LiveStaff[];
 }) {
@@ -964,6 +1001,43 @@ function TaskPanel({
   // Pasted/dropped images upload immediately and insert an [img:url] token at
   // the caret, so text and images interleave line-by-line (like chat).
   const [uploadingCommentImgs, setUploadingCommentImgs] = useState(0);
+
+  // ── Unsaved-work guard ──────────────────────────────────────────────────────
+  // What a stray backdrop click would silently bin. The comment draft is the
+  // one that has actually cost someone their work before (CLAUDE.md Known
+  // Recurring Mistake #12 — a pasted link, Enter, drawer closed, gone).
+  const editingCommentOriginal = editingCommentId
+    ? comments.find((c) => c.id === editingCommentId)?.body ?? ""
+    : "";
+  const panelDirty =
+    commentBody.trim() !== ""
+    || commentFiles.length > 0
+    || (editingCommentId !== null && editingCommentBody !== editingCommentOriginal)
+    || newSubtask.trim() !== ""
+    || (titleEditing && titleDraft !== task.title)
+    || articleUrlDraft.trim() !== ""
+    || noteDraft !== (task.discussionNote ?? "");
+  // The description editor commits on blur, so a click outside has already
+  // saved it — only a write still in flight is worth refusing to close on.
+  const panelBusy =
+    uploading || descUploading || descSaving || postingComment
+    || uploadingCommentImgs > 0 || postingArticle || noteSaving;
+
+  useEffect(() => { onDirtyChange(task.id, panelDirty, panelBusy); }, [onDirtyChange, task.id, panelDirty, panelBusy]);
+  // Stop vouching for a panel that's been closed/popped off the stack.
+  useEffect(() => () => onDirtyChange(task.id, false, false), [onDirtyChange, task.id]);
+
+  // Going Back pops THIS panel off the stack, which discards its draft just as
+  // surely as closing the drawer — so it gets the same question, scoped to this
+  // panel only (the stack's own guard covers the backdrop / ✕ / Done).
+  const { requestClose: requestGoBack, guard: goBackGuard } = useDiscardGuard({
+    dirty: panelDirty,
+    busy: panelBusy,
+    onClose: onGoBack,
+    title: "Leave this subtask?",
+    message: "You've got unsaved work here — a comment you haven't posted or an edit you haven't saved. Going back will lose it.",
+    discardLabel: "Go back anyway",
+  });
 
   async function insertCommentInlineImages(files: File[], target: "new" | "edit") {
     setUploadingCommentImgs((n) => n + files.length);
@@ -1415,6 +1489,7 @@ function TaskPanel({
 
   return (
     <div className="flex flex-col h-full">
+      {goBackGuard}
       {/* Child breadcrumb bar */}
       {depth > 0 && parentTask && (
         <div className="flex items-center gap-1.5 px-5 pt-3 pb-0 shrink-0">
@@ -1426,7 +1501,7 @@ function TaskPanel({
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3.5 shrink-0" style={{ borderBottom: `1px solid ${depth > 0 ? "#1c3a52" : "#1c3248"}` }}>
         {canGoBack && (
-          <button onClick={onGoBack} className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: "#4a7090" }}>
+          <button onClick={requestGoBack} className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: "#4a7090" }}>
             ←
           </button>
         )}
@@ -1468,7 +1543,7 @@ function TaskPanel({
                 Deletion requested
               </span>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:opacity-70" style={{ color: "#4a7090" }}>
+            <button onClick={onRequestClose} className="p-1.5 rounded-lg hover:opacity-70" style={{ color: "#4a7090" }}>
               <X size={16} />
             </button>
           </>
@@ -2624,7 +2699,7 @@ function TaskPanel({
         )}
         <div className="flex items-center gap-2">
           {canGoBack && (
-            <button onClick={onGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
+            <button onClick={requestGoBack} className="py-2 px-4 rounded-lg text-sm font-medium" style={{ background: "#1c3248", color: "#cce4ff" }}>← Back</button>
           )}
           {/* Staff on own task: request review or show pending state
               (pending_article_post uses the Mark-as-Posted panel above instead;
@@ -2663,7 +2738,7 @@ function TaskPanel({
           )}
           {/* Default close button */}
           {(isAdmin ? task.status !== "pending_review" : (!isMyTask || task.status === "done" || task.status === "rejected")) && !canGoBack && (
-            <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Done</button>
+            <button onClick={onRequestClose} className="flex-1 py-2 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Done</button>
           )}
         </div>
       </div>

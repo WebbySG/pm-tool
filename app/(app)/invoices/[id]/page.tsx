@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { AdminOnly } from "@/components/admin-guard";
 import { LineItemsEditor, type LineItemDraft } from "@/components/invoice-line-items-editor";
 import { useStore } from "@/lib/store";
@@ -104,6 +105,26 @@ export default function InvoiceDetailPage() {
   const [payNote, setPayNote] = useState("");
   const [payError, setPayError] = useState<string | null>(null);
   const [savingPay, setSavingPay] = useState(false);
+
+  // Both dialogs below follow the app-wide rule: an untouched one closes on a
+  // backdrop click, an edited one asks first.
+  const convertGuard = useDiscardGuard({
+    dirty: convertIssueDate !== todayISO() || convertDueDate !== addDaysISO(todayISO(), 14),
+    busy: converting,
+    onClose: () => setShowConvertDialog(false),
+    title: "Discard this conversion?",
+    message: "You've adjusted the dates for the new invoice but haven't created it yet.",
+  });
+
+  // Backdrop / Cancel — a payment being keyed in doesn't vanish to a stray
+  // click (app-wide rule). Untouched, the dialog just closes.
+  const payGuard = useDiscardGuard({
+    dirty: payAmount.trim() !== "" || payNote.trim() !== "",
+    busy: savingPay,
+    onClose: () => setShowPayDialog(false),
+    title: "Discard this payment?",
+    message: "You've started recording a payment that hasn't been saved yet.",
+  });
 
   useEffect(() => { reload(); }, [id]);
 
@@ -707,7 +728,8 @@ export default function InvoiceDetailPage() {
       {showPayDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
           style={{ background: "#000000b0" }}
-          onClick={() => setShowPayDialog(false)}>
+          onClick={payGuard.requestClose}>
+          {payGuard.guard}
           <div className="rounded-2xl p-6 w-full max-w-md flex flex-col gap-4"
             style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
             onClick={(e) => e.stopPropagation()}>
@@ -750,7 +772,7 @@ export default function InvoiceDetailPage() {
                 {savingPay ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
                 Record payment
               </button>
-              <button onClick={() => setShowPayDialog(false)}
+              <button onClick={payGuard.requestClose}
                 className="px-4 py-2 rounded-lg text-sm font-semibold"
                 style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
                 Cancel
@@ -820,7 +842,8 @@ export default function InvoiceDetailPage() {
       {showConvertDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
           style={{ background: "#000000b0" }}
-          onClick={() => setShowConvertDialog(false)}>
+          onClick={convertGuard.requestClose}>
+          {convertGuard.guard}
           <div className="rounded-2xl p-6 w-full max-w-md flex flex-col gap-4"
             style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
             onClick={(e) => e.stopPropagation()}>
@@ -850,7 +873,7 @@ export default function InvoiceDetailPage() {
                 {converting ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
                 Create invoice
               </button>
-              <button onClick={() => setShowConvertDialog(false)}
+              <button onClick={convertGuard.requestClose}
                 className="px-4 py-2 rounded-lg text-sm font-semibold"
                 style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
                 Cancel

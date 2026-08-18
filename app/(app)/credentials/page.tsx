@@ -6,6 +6,7 @@ import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { Eye, EyeOff, Copy, Check, Shield, Lock, Trash2, LogIn, CheckCircle2, Pencil, X, Loader2, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { errorMessage } from "@/lib/utils";
 
 interface LiveStaff {
@@ -31,6 +32,23 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
   const [savingEdit, setSavingEdit] = useState(false);
 
   const allowedUsers = liveStaff.filter((s) => cred.allowedStaff.includes(staffAuthId(s)));
+
+  // Backdrop / ✕ / Cancel — an untouched dialog closes at once, an edited one
+  // asks first (app-wide rule). Credentials are retyped by hand, so losing a
+  // half-entered password to a stray click is especially annoying.
+  const editGuard = useDiscardGuard({
+    dirty:
+      editForm.client !== (cred.client ?? "")
+      || editForm.label !== cred.label
+      || editForm.url !== (cred.url ?? "")
+      || editForm.username !== (cred.username ?? "")
+      || editForm.password !== (cred.password ?? "")
+      || editForm.notes !== (cred.notes ?? ""),
+    busy: savingEdit,
+    onClose: () => setShowEdit(false),
+    title: "Discard these changes?",
+    message: "You've edited this credential and haven't saved it yet.",
+  });
 
   // The access menu is rendered with position:fixed (anchored to the Manage
   // button) so it escapes the card's `overflow-hidden` clipping — otherwise the
@@ -291,12 +309,13 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
       {/* Edit Credential Modal */}
       {showEdit && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => !savingEdit && setShowEdit(false)} />
+          {editGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={editGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6 max-h-[85vh] overflow-y-auto" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Edit Credential</h3>
-                <button onClick={() => setShowEdit(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={editGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               {/* Client */}
@@ -392,7 +411,7 @@ function CredentialRow({ cred, isLast, liveStaff, isAdmin }: { cred: Credential;
                   {savingEdit ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save Changes</>}
                 </button>
                 <button
-                  onClick={() => setShowEdit(false)}
+                  onClick={editGuard.requestClose}
                   disabled={savingEdit}
                   className="px-4 py-2.5 rounded-lg text-sm disabled:opacity-60"
                   style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}

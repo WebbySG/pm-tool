@@ -18,6 +18,7 @@ import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDelet
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
 
 interface LiveStaff {
@@ -197,6 +198,53 @@ export default function ProjectDetailPage() {
     const t = findDeep(projectRaw.tasks);
     if (t) setSelectedTask(t);
   }, [taskQueryId, projectRaw?.id, projectRaw?.tasks.length]);
+
+  // ── Dismiss guards ──────────────────────────────────────────────────────────
+  // App-wide rule: a backdrop click / ✕ / Cancel closes an untouched dialog
+  // straight away, but asks first once there's unsaved work in it. Declared
+  // ABOVE the cold-load early return below — a hook after a conditional return
+  // would change hook order between the spinner render and the loaded one.
+  const newReportGuard = useDiscardGuard({
+    dirty: newReportNotes.trim() !== "",
+    busy: savingReport,
+    onClose: () => { setShowNewReport(false); setNewReportNotes(""); },
+    title: "Discard this report?",
+    message: "The notes you've written for this weekly report haven't been saved yet.",
+  });
+  // The task fields are draft-persisted (useDraft restores them on reopen), so
+  // the staged FILES are the only thing a close would actually destroy.
+  const addTaskGuard = useDiscardGuard({
+    dirty: newTaskFiles.length > 0,
+    onClose: () => { setShowAddTask(false); setNewTaskFiles([]); },
+    title: "Discard attached files?",
+    message: "Those files haven't been uploaded yet — closing now discards them. What you typed is kept as a draft either way.",
+  });
+  const addPinGuard = useDiscardGuard({
+    dirty: pinForm.title.trim() !== "" || pinForm.content.trim() !== "" || pinForm.url.trim() !== "",
+    onClose: () => { setShowAddPin(false); setPinForm({ type: "link", title: "", content: "", url: "" }); },
+    title: "Discard this pin?",
+    message: "What you've typed here hasn't been pinned yet.",
+  });
+  const editProjectGuard = useDiscardGuard({
+    dirty: !!projectRaw && (
+      editForm.name !== projectRaw.name
+      || editForm.description !== projectRaw.description
+      || editForm.type !== projectRaw.type
+      || editForm.channelId !== (projectRaw.channelId ?? null)
+      || editForm.startDate !== (projectRaw.startDate ?? "")
+      || editForm.dueDate !== (projectRaw.dueDate ?? "")
+    ),
+    onClose: () => setShowEdit(false),
+    title: "Discard these changes?",
+    message: "You've edited this project's details and haven't saved them yet.",
+  });
+  const applyTemplateGuard = useDiscardGuard({
+    dirty: applyTemplateIds.length > 0,
+    busy: applyingTemplates,
+    onClose: () => { setShowApplyTemplate(false); setApplyTemplateIds([]); },
+    title: "Discard this selection?",
+    message: "You've picked templates to apply but haven't applied them yet.",
+  });
 
   if (!projectRaw) {
     // Cold load (new tab / hard refresh / shared link): the store persists to
@@ -1029,12 +1077,13 @@ export default function ProjectDetailPage() {
       {/* New Report Modal */}
       {showNewReport && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowNewReport(false)} />
+          {newReportGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={newReportGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-sm flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Week Report</h3>
-                <button onClick={() => setShowNewReport(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={newReportGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
               <div>
                 <label className="text-xs block mb-1.5" style={{ color: "#4a7090" }}>Week Starting (Monday)</label>
@@ -1053,7 +1102,7 @@ export default function ProjectDetailPage() {
                   style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setShowNewReport(false)}
+                <button onClick={newReportGuard.requestClose}
                   className="flex-1 py-2.5 rounded-lg text-sm font-medium"
                   style={{ background: "#1c3248", color: "#cce4ff" }}>Cancel</button>
                 <button onClick={handleCreateReport} disabled={savingReport || !newReportWeek}
@@ -1071,12 +1120,13 @@ export default function ProjectDetailPage() {
       {/* Add Task Modal */}
       {showAddTask && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowAddTask(false)} />
+          {addTaskGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={addTaskGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-md flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>New Task</h3>
-                <button onClick={() => setShowAddTask(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={addTaskGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               {taskRestored && (
@@ -1174,7 +1224,7 @@ export default function ProjectDetailPage() {
                 <button onClick={handleAddTask} className="flex-1 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>
                   Create Task
                 </button>
-                <button onClick={() => setShowAddTask(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                <button onClick={addTaskGuard.requestClose} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
                   Cancel
                 </button>
               </div>
@@ -1186,14 +1236,15 @@ export default function ProjectDetailPage() {
       {/* Add Pin Modal */}
       {showAddPin && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowAddPin(false)} />
+          {addPinGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={addPinGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-md flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>
                   Pin {pinForm.type === "message" ? "Note" : pinForm.type.charAt(0).toUpperCase() + pinForm.type.slice(1)}
                 </h3>
-                <button onClick={() => setShowAddPin(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={addPinGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
               <input type="text" placeholder="Title *" value={pinForm.title} onChange={(e) => setPinForm({ ...pinForm, title: e.target.value })} className="w-full px-3 py-2.5 rounded-lg text-sm outline-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} autoFocus />
               <textarea placeholder="Content / note" value={pinForm.content} onChange={(e) => setPinForm({ ...pinForm, content: e.target.value })} rows={3} className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#cce4ff" }} />
@@ -1202,7 +1253,7 @@ export default function ProjectDetailPage() {
               )}
               <div className="flex gap-2">
                 <button onClick={handleAddPin} className="flex-1 py-2.5 rounded-lg text-sm font-medium" style={{ background: "#38b6e8", color: "#fff" }}>Pin it</button>
-                <button onClick={() => setShowAddPin(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>Cancel</button>
+                <button onClick={addPinGuard.requestClose} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>Cancel</button>
               </div>
             </div>
           </div>
@@ -1212,12 +1263,13 @@ export default function ProjectDetailPage() {
       {/* Edit Project Modal */}
       {showEdit && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowEdit(false)} />
+          {editProjectGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={editProjectGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Edit Project</h3>
-                <button onClick={() => setShowEdit(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={editProjectGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               {/* Name */}
@@ -1318,7 +1370,7 @@ export default function ProjectDetailPage() {
                   <Check size={14} /> Save Changes
                 </button>
                 <button
-                  onClick={() => setShowEdit(false)}
+                  onClick={editProjectGuard.requestClose}
                   className="px-4 py-2.5 rounded-lg text-sm"
                   style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}
                 >
@@ -1333,12 +1385,13 @@ export default function ProjectDetailPage() {
       {/* Apply Template Modal */}
       {showApplyTemplate && (
         <>
-          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={() => setShowApplyTemplate(false)} />
+          {applyTemplateGuard.guard}
+          <div className="fixed inset-0 z-40" style={{ background: "#00000070" }} onClick={applyTemplateGuard.requestClose} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-lg flex flex-col gap-4 p-6 max-h-[80vh] overflow-y-auto" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Apply Template to Project</h3>
-                <button onClick={() => setShowApplyTemplate(false)} style={{ color: "#4a7090" }}><X size={16} /></button>
+                <button onClick={applyTemplateGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1416,7 +1469,7 @@ export default function ProjectDetailPage() {
                 >
                   {applyingTemplates ? <><Loader2 size={14} className="animate-spin" />Applying…</> : <>Apply {applyTemplateIds.length > 0 ? `${applyTemplateIds.length} Template${applyTemplateIds.length > 1 ? "s" : ""}` : "Templates"}</>}
                 </button>
-                <button onClick={() => setShowApplyTemplate(false)} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
+                <button onClick={applyTemplateGuard.requestClose} className="px-4 py-2.5 rounded-lg text-sm" style={{ background: "#0e1e30", color: "#4a7090", border: "1px solid #1c3248" }}>
                   Cancel
                 </button>
               </div>

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/topbar";
 import { AdminOnly } from "@/components/admin-guard";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { errorMessage } from "@/lib/utils";
@@ -302,14 +303,35 @@ function ReminderForm({
   const field = "bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full";
   const fieldStyle = { color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-base)" } as const;
 
+  // A stray backdrop click must not bin a half-filled renewal (app-wide rule).
+  const dirty = initial
+    ? clientName !== initial.clientName
+      || projectId !== (initial.projectId ?? null)
+      || serviceType !== initial.serviceType
+      || amount !== (initial.amount != null ? String(initial.amount) : "")
+      || frequency !== initial.frequency
+      || nextDueDate !== initial.nextDueDate
+      || leadDays !== String(initial.leadDays)
+      || paid !== initial.paid
+      || notes !== (initial.notes ?? "")
+    : clientName.trim() !== "" || amount.trim() !== "" || notes.trim() !== "";
+  const { requestClose, guard } = useDiscardGuard({
+    dirty,
+    busy: saving,
+    onClose,
+    title: initial ? "Discard these changes?" : "Discard this renewal?",
+    message: "This renewal hasn't been saved yet. Closing now will lose what you've filled in.",
+  });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#00000070" }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#00000070" }} onClick={requestClose}>
+      {guard}
       <div className="rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 flex flex-col gap-3"
         style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <CalendarClock size={16} style={{ color: "var(--accent)" }} />
           <p className="text-base font-semibold flex-1" style={{ color: "var(--text)" }}>{initial ? "Edit renewal" : "Add renewal"}</p>
-          <button onClick={onClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
+          <button onClick={requestClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
         </div>
 
         <Lbl t="Client *">
@@ -376,7 +398,7 @@ function ReminderForm({
         {error && <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {error}</p>}
 
         <div className="flex justify-end gap-2 mt-1">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm" style={{ color: "var(--text-muted)" }}>Cancel</button>
+          <button onClick={requestClose} className="px-4 py-2 rounded-lg text-sm" style={{ color: "var(--text-muted)" }}>Cancel</button>
           <button onClick={save} disabled={saving}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-2"
             style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))", opacity: saving ? 0.6 : 1 }}>

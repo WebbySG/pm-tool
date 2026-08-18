@@ -7,6 +7,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, formatBytes } from "@/lib/utils";
 import { uploadExpenseReceipt } from "@/lib/supabase";
+import { useDiscardGuard } from "@/components/discard-guard";
 import {
   createExpense, updateExpense, deleteExpense, addExpenseReceipt, deleteExpenseReceipt,
   setExpensesSubmitted, type ExpenseDraft,
@@ -200,27 +201,43 @@ export function ExpenseForm({
 
   // Closing with files still staged would bin the only copy of a receipt the
   // user thinks they've attached — the same silent-loss trap as the task-drawer
-  // comment draft (CLAUDE.md #12). Make them confirm, and never let a stray
-  // backdrop click do it.
+  // comment draft (CLAUDE.md #12). Since 2026-08-17 this runs through the
+  // app-wide guard and also covers the typed fields, not just receipts.
   const hasUnsaved = staged.length > 0;
-  function requestClose(fromBackdrop: boolean) {
-    if (saving || uploading) return;
-    if (hasUnsaved) {
-      if (fromBackdrop) return; // a stray backdrop click must never discard receipts
-      if (!confirm(
-        `${staged.length} receipt${staged.length === 1 ? "" : "s"} not uploaded yet.`
-        + " Close and discard them? Save the expense instead to keep them.",
-      )) return;
-    }
-    onClose();
-  }
+  // On a NEW expense every filled field is unsaved work; on an edit, only what
+  // differs from the row as loaded.
+  const edited = initial
+    ? expenseDate !== initial.expenseDate
+      || vendor !== initial.vendor
+      || category !== initial.category
+      || paymentMethod !== initial.paymentMethod
+      || amount !== String(initial.amount)
+      || gst !== String(initial.gstAmount)
+      || projectId !== (initial.projectId ?? null)
+      || deductible !== initial.deductible
+      || description !== (initial.description ?? "")
+      || notes !== (initial.notes ?? "")
+      || submitted !== (initial.status === "submitted")
+    : vendor.trim() !== "" || amount.trim() !== "" || description.trim() !== "" || notes.trim() !== "";
+
+  const { requestClose, guard } = useDiscardGuard({
+    dirty: hasUnsaved || edited,
+    busy: saving || uploading,
+    onClose,
+    title: hasUnsaved ? "Discard unsaved receipts?" : "Discard this expense?",
+    message: hasUnsaved
+      ? `${staged.length} receipt${staged.length === 1 ? "" : "s"} haven't been uploaded yet — closing now discards them.`
+        + " Save the expense instead to keep them."
+      : "You've changed this expense and haven't saved it. Closing now will lose those changes.",
+  });
 
   const field = "bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full";
   const fieldStyle = { color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-base)" } as const;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#00000070" }}
-      onClick={() => requestClose(true)}>
+      onClick={requestClose}>
+      {guard}
       <div className="rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-5 flex flex-col gap-3"
         style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
         onClick={(e) => e.stopPropagation()}>
@@ -230,7 +247,7 @@ export function ExpenseForm({
           <p className="text-base font-semibold flex-1" style={{ color: "var(--text)" }}>
             {initial ? "Edit expense" : "Record expense"}
           </p>
-          <button onClick={() => requestClose(false)} disabled={saving || uploading} style={{ color: "var(--text-muted)" }}>
+          <button onClick={requestClose} disabled={saving || uploading} style={{ color: "var(--text-muted)" }}>
             <X size={16} />
           </button>
         </div>
@@ -442,7 +459,7 @@ export function ExpenseForm({
             )
           )}
           <div className="flex-1" />
-          <button onClick={() => requestClose(false)} disabled={saving || uploading}
+          <button onClick={requestClose} disabled={saving || uploading}
             className="px-4 py-2 rounded-lg text-sm" style={{ color: "var(--text-muted)" }}>
             Cancel
           </button>

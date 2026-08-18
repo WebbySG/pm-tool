@@ -27,6 +27,7 @@ import {
   getNotificationPermission, requestNotificationPermission, type WebNotificationPermission,
 } from "@/lib/web-notifications";
 import { subscribeToPush, notifyPush } from "@/lib/push";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { errorMessage, FILE_ACCEPT } from "@/lib/utils";
 import { TaskDrawer } from "@/components/task-drawer";
 import {
@@ -2338,14 +2339,26 @@ function CreateTaskFromMessageDialog({
     const mentioned = resolveMentions(message.body || "", liveStaff.map((s) => ({ id: staffAuthId(s), firstName: s.first_name })));
     return mentioned[0] ?? currentUserId;
   })();
-  const [title, setTitle] = useState(
-    cleanedBody.slice(0, 120) || (message.attachmentName ? `Review: ${message.attachmentName}` : "Task from chat"));
-  const [projectId, setProjectId] = useState(conversation.kind === "project" ? (conversation.projectId ?? "") : "");
+  const prefilledTitle = cleanedBody.slice(0, 120) || (message.attachmentName ? `Review: ${message.attachmentName}` : "Task from chat");
+  const [title, setTitle] = useState(prefilledTitle);
+  const prefilledProject = conversation.kind === "project" ? (conversation.projectId ?? "") : "";
+  const [projectId, setProjectId] = useState(prefilledProject);
   const [assigneeId, setAssigneeId] = useState(defaultAssignee);
   const [priority, setPriority] = useState(5);
   const [dueDate, setDueDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Backdrop / ✕ / Cancel: instant while everything is still as prefilled,
+  // asks once the user has actually shaped the task (app-wide rule).
+  const guard = useDiscardGuard({
+    dirty: title !== prefilledTitle || projectId !== prefilledProject
+      || assigneeId !== defaultAssignee || priority !== 5 || dueDate !== "",
+    busy: saving,
+    onClose,
+    title: "Discard this task?",
+    message: "You've adjusted this task but haven't created it yet.",
+  });
 
   async function handleCreate() {
     if (!projectId || !title.trim() || saving) return;
@@ -2386,13 +2399,14 @@ function CreateTaskFromMessageDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#000a" }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "#000a" }} onClick={guard.requestClose}>
+      {guard.guard}
       <div className="w-full max-w-md rounded-xl p-5 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}
         style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
         <div className="flex items-center gap-2">
           <ListTodo size={15} style={{ color: "var(--accent)" }} />
           <p className="text-sm font-semibold flex-1" style={{ color: "var(--text)" }}>Create task from message</p>
-          <button onClick={onClose} style={{ color: "var(--text-muted)" }}><X size={14} /></button>
+          <button onClick={guard.requestClose} style={{ color: "var(--text-muted)" }}><X size={14} /></button>
         </div>
 
         {/* The source message */}
@@ -2452,7 +2466,7 @@ function CreateTaskFromMessageDialog({
         {error && <p className="text-xs" style={{ color: "#ef4444" }}>⚠ {error}</p>}
 
         <div className="flex gap-2 pt-1">
-          <button onClick={onClose}
+          <button onClick={guard.requestClose}
             className="px-4 py-2 rounded-lg text-sm"
             style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
             Cancel
@@ -2491,6 +2505,16 @@ function NewConversationDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Nothing picked yet → closes on a backdrop click as before; once a name is
+  // typed or people are chosen, it asks (app-wide rule).
+  const guard = useDiscardGuard({
+    dirty: dmTarget !== "" || groupName.trim() !== "" || groupMembers.length > 0 || projectId !== "",
+    busy,
+    onClose,
+    title: "Discard this conversation?",
+    message: "You've started setting up a conversation that hasn't been created yet.",
+  });
+
   async function handleCreate() {
     setBusy(true); setError(null);
     try {
@@ -2517,13 +2541,14 @@ function NewConversationDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: "#000000b0" }} onClick={onClose}>
+      style={{ background: "#000000b0" }} onClick={guard.requestClose}>
+      {guard.guard}
       <div className="rounded-2xl w-full max-w-md flex flex-col gap-4 p-6"
         style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold" style={{ color: "var(--text)" }}>New conversation</h3>
-          <button onClick={onClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
+          <button onClick={guard.requestClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
         </div>
 
         {/* Kind switcher */}
@@ -2612,7 +2637,7 @@ function NewConversationDialog({
             {busy && <Loader2 size={12} className="animate-spin" />}
             Create
           </button>
-          <button onClick={onClose}
+          <button onClick={guard.requestClose}
             className="px-4 py-2 rounded-lg text-sm"
             style={{ color: "var(--text-muted)", background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
             Cancel
@@ -2641,6 +2666,16 @@ function MembersDialog({
   const [nameDraft, setNameDraft] = useState(conversation.name ?? "");
   const [adding, setAdding] = useState<string>("");
   const [busy, setBusy] = useState(false);
+
+  // The rename box is the only unsaved thing here — add/remove member actions
+  // write immediately. Untouched, a backdrop click still closes at once.
+  const guard = useDiscardGuard({
+    dirty: nameDraft.trim() !== (conversation.name ?? "").trim(),
+    busy,
+    onClose,
+    title: "Discard the new name?",
+    message: "You've typed a new name for this conversation but haven't saved it.",
+  });
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -2731,7 +2766,8 @@ function MembersDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: "#000000b0" }} onClick={onClose}>
+      style={{ background: "#000000b0" }} onClick={guard.requestClose}>
+      {guard.guard}
       <div className="rounded-2xl w-full max-w-md flex flex-col gap-4 p-6"
         style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}
         onClick={(e) => e.stopPropagation()}>
@@ -2739,7 +2775,7 @@ function MembersDialog({
           <h3 className="text-base font-semibold" style={{ color: "var(--text)" }}>
             {conversation.kind === "project" ? "Channel members" : conversation.kind === "group" ? "Group members" : "Members"}
           </h3>
-          <button onClick={onClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
+          <button onClick={guard.requestClose} style={{ color: "var(--text-muted)" }}><X size={16} /></button>
         </div>
 
         {/* Rename (groups only) */}
@@ -2851,7 +2887,7 @@ function MembersDialog({
         )}
 
         <div className="flex justify-end">
-          <button onClick={onClose}
+          <button onClick={guard.requestClose}
             className="px-4 py-2 rounded-lg text-sm"
             style={{ color: "var(--text-muted)", background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
             Done

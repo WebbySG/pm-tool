@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
 import { Topbar } from "@/components/topbar";
+import { useDiscardGuard } from "@/components/discard-guard";
 import { AdminOnly } from "@/components/admin-guard";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
@@ -160,6 +161,16 @@ function TeamContent() {
   const [pwShow, setPwShow] = useState(false);
   const [pwSaving, setPwSaving] = useState(false);
   const [pwError, setPwError] = useState("");
+
+  // Backdrop / ✕ / Cancel — a typed-but-unsaved password is worth one question
+  // (app-wide rule); an untouched dialog just closes.
+  const pwGuard = useDiscardGuard({
+    dirty: pwValue !== "",
+    busy: pwSaving,
+    onClose: () => setPwTarget(null),
+    title: "Discard this password?",
+    message: "You've typed a password but haven't set it yet. Closing now will clear it.",
+  });
 
   function openPwDialog(s: StaffMember) {
     setPwTarget(s);
@@ -421,8 +432,9 @@ function TeamContent() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.6)" }}
-          onClick={() => !pwSaving && setPwTarget(null)}
+          onClick={pwGuard.requestClose}
         >
+          {pwGuard.guard}
           <form
             onSubmit={handleSetPassword}
             onClick={(e) => e.stopPropagation()}
@@ -472,7 +484,7 @@ function TeamContent() {
               <button
                 type="button"
                 disabled={pwSaving}
-                onClick={() => setPwTarget(null)}
+                onClick={pwGuard.requestClose}
                 className="px-4 py-2 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-50"
                 style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
               >

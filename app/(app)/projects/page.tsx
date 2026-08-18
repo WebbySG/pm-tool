@@ -55,19 +55,28 @@ function StaffAssignMenu({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  // Seeded from the rect the trigger captured at open time, then kept current
+  // by the scroll/resize tracking below. (The parent unmounts this popup rather
+  // than re-anchoring it, so there's nothing to sync the prop back into.)
+  const [rect, setRect] = useState<DOMRect>(anchor);
+
   useEffect(() => {
+    // A click outside does NOT close this popup (user rule 2026-08-17). It's a
+    // batch work surface — assign three people across two projects and a stray
+    // click on the page shouldn't end the job. There's nothing typed in here to
+    // confirm discarding, so "stays open" is the equivalent of the confirm the
+    // form dialogs get. Close with ✕, Escape, or the staff button itself.
     function onPointerDown(e: MouseEvent) {
       const t = e.target as Node;
-      // Leave the trigger alone — it toggles itself, and closing here first
-      // would make the click that follows reopen the menu immediately.
       if (panelRef.current?.contains(t) || triggerRef.current?.contains(t)) return;
-      onClose();
-      // The click that dismisses the popup lands on a project card, which is a
-      // <Link> — without this it would navigate into the project, exactly what
-      // this popup exists to avoid. preventDefault only kills the anchor's
-      // navigation (next/link bails on defaultPrevented); React onClick
-      // handlers still run, so clicking ANOTHER card's staff button closes this
-      // menu and opens that one in a single click.
+      const el = t instanceof Element ? t : t.parentElement;
+      // Another card's staff button: hand over, so only one popup is ever open.
+      if (el?.closest("[data-staff-trigger]")) { onClose(); return; }
+      // Anything else stays open — but a click landing on a project card would
+      // navigate into it (the card is a <Link>), yanking the user off the page
+      // they're working on. preventDefault only kills the anchor's navigation
+      // (next/link bails on defaultPrevented); React onClick handlers still run.
+      if (!el?.closest("[data-project-card]")) return;
       const swallow = (ev: MouseEvent) => ev.preventDefault();
       document.addEventListener("click", swallow, { capture: true, once: true });
       // Safety net for a press with no click (drag, right-click) — otherwise the
@@ -75,22 +84,23 @@ function StaffAssignMenu({
       window.setTimeout(() => document.removeEventListener("click", swallow, true), 400);
     }
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
-    // The rect is captured once at open time, so page scroll/resize would leave
-    // the panel floating away from its card — close instead of chasing it.
-    // Scrolling INSIDE the staff list must not count.
-    function onScroll(e: Event) {
-      if (panelRef.current?.contains(e.target as Node)) return;
-      onClose();
+    // Scroll/resize used to CLOSE the popup, because the rect was captured once
+    // and the panel would drift away from its card. Now that a stray click no
+    // longer closes it, closing on scroll would be the same surprise by another
+    // route — so re-measure the trigger and follow it instead.
+    function track() {
+      const r = triggerRef.current?.getBoundingClientRect();
+      if (r) setRect(r);
     }
     document.addEventListener("mousedown", onPointerDown, true);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onClose);
-    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", track);
+    window.addEventListener("scroll", track, true);
     return () => {
       document.removeEventListener("mousedown", onPointerDown, true);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onClose);
-      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", track);
+      window.removeEventListener("scroll", track, true);
     };
   }, [onClose, triggerRef]);
 
@@ -115,9 +125,9 @@ function StaffAssignMenu({
   const shown = q ? liveStaff.filter((s) => staffName(s).toLowerCase().includes(q) || s.email.toLowerCase().includes(q)) : liveStaff;
 
   // Flip above the trigger when there isn't room below it.
-  const spaceBelow = window.innerHeight - anchor.bottom;
-  const openUp = spaceBelow < 280 && anchor.top > spaceBelow;
-  const left = Math.min(Math.max(8, anchor.left), window.innerWidth - WIDTH - 8);
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const openUp = spaceBelow < 280 && rect.top > spaceBelow;
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - WIDTH - 8);
 
   const panel = (
     <div
@@ -125,7 +135,7 @@ function StaffAssignMenu({
       className="fixed rounded-xl shadow-2xl overflow-hidden flex flex-col"
       style={{
         left,
-        ...(openUp ? { bottom: window.innerHeight - anchor.top + 6 } : { top: anchor.bottom + 6 }),
+        ...(openUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
         width: WIDTH,
         maxHeight: 340,
         background: "var(--bg-card)",
@@ -138,10 +148,15 @@ function StaffAssignMenu({
         <span className="text-xs font-semibold flex-1 truncate" style={{ color: "var(--text)" }} title={project.name}>
           Staff on {project.name}
         </span>
-        <button onClick={onClose} className="p-0.5 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }} title="Close">
+        <button onClick={onClose} className="p-0.5 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }} title="Close (Esc)">
           <X size={12} />
         </button>
       </div>
+
+      {/* Clicking away leaves this open on purpose, so say how to close it. */}
+      <p className="px-3 pt-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+        Stays open while you assign — press Esc or ✕ to close.
+      </p>
 
       {searchable && (
         <input
@@ -236,6 +251,9 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
 
       <Link
         href={`/projects/${project.slug || project.id}`}
+        // StaffAssignMenu looks for this to tell "clicked a project card" (whose
+        // navigation it swallows) from "clicked elsewhere in the app".
+        data-project-card
         className="rounded-xl pl-7 flex flex-col hover:shadow-lg transition-all block overflow-hidden"
         style={{
           background: "var(--bg-card)",
@@ -322,6 +340,7 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
           {isAdmin ? (
             <button
               ref={staffBtnRef}
+              data-staff-trigger
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
