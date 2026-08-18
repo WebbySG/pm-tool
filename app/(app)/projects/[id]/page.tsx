@@ -14,6 +14,7 @@ import {
   BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip, CalendarDays,
 } from "lucide-react";
 import { WeeklySeoPanel } from "@/components/weekly-seo-panel";
+import { SeoChecklistPanel } from "@/components/seo-checklist-panel";
 import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
@@ -47,7 +48,7 @@ const mediaIcon: Record<string, React.FC<{ size: number; style?: React.CSSProper
 };
 
 // "weekly-seo" is admin-only — it manages this project's pm_weekly_seo_plans row.
-type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "reports" | "weekly-seo";
+type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "seo-checklist" | "reports" | "weekly-seo";
 
 type NewTaskForm = {
   title: string;
@@ -580,7 +581,7 @@ export default function ProjectDetailPage() {
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
             {([
-              "board", "schedule", "files", "pinned", "content", "reports",
+              "board", "schedule", "files", "pinned", "content", "seo-checklist", "reports",
               ...(isAdmin ? (["weekly-seo"] as const) : []),
             ] as ProjectTab[]).map((tab) => {
               const projectArticles = articles.filter((a) => a.projectId === project.id);
@@ -607,6 +608,11 @@ export default function ProjectDetailPage() {
                     : tab === "weekly-seo" ? (
                       <span className="flex items-center gap-1.5">
                         <CalendarDays size={13} />Weekly SEO
+                      </span>
+                    )
+                    : tab === "seo-checklist" ? (
+                      <span className="flex items-center gap-1.5">
+                        <ListChecks size={13} />Technical / On-Page
                       </span>
                     )
                     : tab === "content" ? (
@@ -1063,6 +1069,19 @@ export default function ProjectDetailPage() {
               </div>
             );
           })()}
+
+          {/* TECHNICAL / ON-PAGE — the per-project SEO checklist record.
+              Visible to everyone who can see the project; editable by admins and
+              the staff actually assigned to it (they do the work, they tick it). */}
+          {activeTab === "seo-checklist" && (
+            <SeoChecklistPanel
+              projectId={project.id}
+              canEdit={isAdmin || (!!user?.id && project.assignedStaff.includes(user.id))}
+              isAdmin={isAdmin}
+              currentUserId={user?.id ?? null}
+              staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
+            />
+          )}
 
           {/* WEEKLY SEO — admin only; manages this project's pm_weekly_seo_plans row */}
           {activeTab === "weekly-seo" && isAdmin && (
