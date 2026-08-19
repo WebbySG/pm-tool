@@ -18,6 +18,7 @@ import {
   type Article, type ArticleStatus,
 } from "./mock-data";
 import * as db from "./db";
+import { isSeoProjectType, seoSetupTaskDefs } from "./seo-setup";
 import { uploadAttachment, uploadProjectFile, supabase } from "./supabase";
 import { notifyPush } from "./push";
 import { errorMessage } from "./utils";
@@ -101,6 +102,9 @@ interface Store {
 
   // Project actions
   addProject: (project: Omit<Project, "id" | "tasks" | "media" | "pinnedItems" | "archivedAt">, seedTasks?: Task[]) => Promise<string>;
+  // Standard SEO work set for a project labelled SEO / Web + SEO. Idempotent —
+  // returns true only when it actually created the tasks.
+  ensureSeoSetupTasks: (projectId: string) => Promise<boolean>;
   updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "channelId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   archiveProject: (projectId: string) => Promise<void>;
@@ -814,6 +818,7 @@ export const useStore = create<Store>()(
       articleUrl: null,
       statusChangedAt: new Date().toISOString(),
       discussionNote: null,
+      seoPhase: taskData.seoPhase ?? null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -878,6 +883,7 @@ export const useStore = create<Store>()(
       articleUrl: null,
       statusChangedAt: new Date().toISOString(),
       discussionNote: null,
+      seoPhase: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
@@ -1020,7 +1026,60 @@ export const useStore = create<Store>()(
     for (const t of seedTasks) {
       await db.dbAddTask(t.id, id, { ...t, parentId: null });
     }
+    // Labelling a project SEO is what creates the standard SEO work set.
+    if (isSeoProjectType(projectData.type)) await get().ensureSeoSetupTasks(id);
     return id;
+  },
+
+  // The standard SEO work set: a parent "SEO Setup" task with one child per
+  // phase — keyword research -> technical SEO -> on-page fixes — so the work is
+  // assignable, reviewable and visible on the board, and the next staff member
+  // can see what has been done.
+  //
+  // Idempotent, and it checks the TABLE rather than the store: archived tasks
+  // keep their seo_phase and still hold the pm_tasks_seo_phase_unique index, so
+  // a store-only check could try to insert a duplicate. Never throws — a project
+  // whose seeding failed just shows the "Create SEO setup tasks" button on its
+  // SEO Work tab.
+  ensureSeoSetupTasks: async (projectId) => {
+    const project = get().projects.find((p) => p.id === projectId);
+    if (!project || !isSeoProjectType(project.type)) return false;
+    try {
+      const existing = await db.dbListSeoPhaseTasks(projectId);
+      const have = new Map(existing.map((r) => [r.seoPhase, r.id]));
+      // Exactly one assigned staff member = the person who does it. With none
+      // or several the admin picks, so it stays unassigned — which staff can
+      // still edit (canEdit treats an unassigned task as open).
+      const assigneeId = project.assignedStaff.length === 1 ? project.assignedStaff[0] : "";
+      const { parent, children } = seoSetupTaskDefs();
+      let created = false;
+      // Fills GAPS rather than all-or-nothing: if someone deleted one phase, the
+      // tab can put that phase back without duplicating the others.
+      // dueDate "" (not undefined) means NO due date — addTask defaults an
+      // absent dueDate to today, and setup work must not run overdue on day one.
+      let parentId = have.get(parent.seoPhase);
+      if (!parentId) {
+        parentId = await get().addTask(projectId, {
+          title: parent.title, description: parent.description,
+          type: "seo", assigneeId, dueDate: "", seoPhase: parent.seoPhase,
+        });
+        created = true;
+      }
+      // Sequential on purpose: loadAll orders pm_tasks by sort_order then
+      // created_at, so inserting in order is what keeps the phases reading 1-2-3.
+      for (const child of children) {
+        if (have.has(child.seoPhase)) continue;
+        await get().addTask(projectId, {
+          parentId, title: child.title, description: child.description,
+          type: "seo", assigneeId, dueDate: "", seoPhase: child.seoPhase,
+        });
+        created = true;
+      }
+      return created;
+    } catch (e) {
+      console.error("ensureSeoSetupTasks failed", e);
+      return false;
+    }
   },
 
   updateProject: async (projectId, data) => {
@@ -1028,6 +1087,10 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, ...data })) }));
     try {
       await db.dbUpdateProject(projectId, data);
+      // Re-labelling an existing project SEO creates the work set too (no-op if
+      // it already has one). Deliberately after the write — the label landing in
+      // the DB is what triggers it.
+      if (data.type && isSeoProjectType(data.type)) await get().ensureSeoSetupTasks(projectId);
     } catch (e) {
       // Revert only the fields this call touched — the rest of the project
       // (tasks, media) may have changed since the snapshot was taken.

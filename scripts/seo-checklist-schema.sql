@@ -1,3 +1,13 @@
+-- ⚠ DEPRECATED 2026-08-19 — superseded by the SEO Setup phase TASKS.
+-- The tick-list this table backed was replaced by real tasks on the project
+-- board (a parent "SEO Setup" task with a child per phase: keyword research →
+-- technical SEO → on-page fixes). See scripts/seo-setup-phase.sql and
+-- lib/seo-setup.ts. Nothing in the app reads pm_seo_checklist_items any more.
+--
+-- The table is left in place rather than dropped so no data disappears without
+-- the owner asking. When you want it gone, run scripts/drop-seo-checklist.sql.
+-- Kept below for reference / rollback.
+
 -- Technical / On-Page SEO checklist per project.
 --
 -- Every client project has a standard set of Technical SEO and On-Page SEO work

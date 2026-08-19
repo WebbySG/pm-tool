@@ -76,3 +76,33 @@ export function errorMessage(e: unknown): string {
   }
   return String(e);
 }
+
+// ─── Stored rich text ────────────────────────────────────────────────────────
+// Task descriptions (and anything else written in the RichEditor) are stored as
+// HTML. These two live here, not in a component, because more than one surface
+// renders that stored text — the task drawer and the SEO Work record — and a
+// second copy of the sanitiser is exactly the kind of thing that drifts.
+
+// Strip dangerous HTML before rendering/storing (no script/style/event handlers/js: URLs).
+// Internal staff-only content, but defensive sanitisation is still good practice.
+export function sanitizeHtml(html: string): string {
+  if (typeof document === "undefined") return html;
+  const tmpl = document.createElement("template");
+  tmpl.innerHTML = html;
+  tmpl.content.querySelectorAll("script,style,iframe,object,embed").forEach((n) => n.remove());
+  tmpl.content.querySelectorAll<HTMLElement>("*").forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.toLowerCase();
+      if (name.startsWith("on")) el.removeAttribute(attr.name);
+      else if ((name === "href" || name === "src") && value.trim().startsWith("javascript:")) el.removeAttribute(attr.name);
+    });
+  });
+  return tmpl.innerHTML;
+}
+
+// Detect whether stored description is HTML or legacy plain text. Legacy plain-text
+// descriptions (pre-rich-text) should still render with line breaks preserved.
+export function isHtml(s: string): boolean {
+  return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span|img)\b/i.test(s);
+}

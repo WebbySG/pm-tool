@@ -162,6 +162,11 @@ export interface Task {
   // stamped optimistically client-side too). Lets the admin tell a NEW
   // pending_review submission from an old one.
   statusChangedAt: string | null;
+  // Which phase of the standard SEO work set this task is, when it is one:
+  // 'setup' (the parent) | 'keyword-research' | 'technical-seo' | 'onpage-fixes'.
+  // Identity for the SEO Work tab — never match these tasks by title. NULL for
+  // every ordinary task. See lib/seo-setup.ts.
+  seoPhase: string | null;
   // Admin's reference note while the task is parked in 'to_be_discussed'.
   // Transient by design: the pm_tasks_clear_discussion_note DB trigger nulls
   // it whenever the status moves to anything else (statusPatch mirrors this

@@ -36,6 +36,7 @@ function rowToTask(row: Row): Task {
     articleUrl: (row.article_url as string | null) ?? null,
     statusChangedAt: (row.status_changed_at as string | null) ?? null,
     discussionNote: (row.discussion_note as string | null) ?? null,
+    seoPhase: (row.seo_phase as string | null) ?? null,
   };
 }
 
@@ -295,11 +296,30 @@ export async function dbAddTask(id: string, projectId: string, data: Partial<Tas
     tags: data.tags ?? [],
     recurring: data.recurring ?? null,
     recurring_day: data.recurringDay ?? null,
+    seo_phase: data.seoPhase ?? null,
   });
   if (error) {
     console.error("dbAddTask", error);
     throw new Error(error.message || error.details || error.hint || "Unknown DB error");
   }
+}
+
+// Which phases of the standard SEO work set a project already has, and the task
+// holding each. Reads the TABLE, not the store: archived tasks keep their
+// seo_phase and still occupy the pm_tasks_seo_phase_unique index, so seeding
+// must see them or it would insert a duplicate and fail. Throws — the caller
+// decides what to do with a failure.
+export async function dbListSeoPhaseTasks(projectId: string): Promise<{ id: string; seoPhase: string }[]> {
+  const { data, error } = await supabase
+    .from("pm_tasks")
+    .select("id, seo_phase")
+    .eq("project_id", projectId)
+    .not("seo_phase", "is", null);
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    id: (r as Row).id as string,
+    seoPhase: (r as Row).seo_phase as string,
+  }));
 }
 
 export async function dbUpdateTask(taskId: string, patch: Row) {

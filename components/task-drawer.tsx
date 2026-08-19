@@ -11,7 +11,7 @@ import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase, uploadAttachment, dataUrlToFile } from "@/lib/supabase";
-import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
+import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes, sanitizeHtml, isHtml } from "@/lib/utils";
 import { useDiscardGuard } from "@/components/discard-guard";
 import {
   dbListTaskComments, dbAddTaskComment, dbUpdateTaskComment, dbDeleteTaskComment, type TaskComment,
@@ -119,30 +119,6 @@ function priorityColor(p: number): string {
   if (p <= 4) return "#f59e0b";
   if (p <= 6) return "#38b6e8";
   return "#22c55e";
-}
-
-// Strip dangerous HTML before rendering/storing (no script/style/event handlers/js: URLs).
-// Internal staff-only content, but defensive sanitisation is still good practice.
-function sanitizeHtml(html: string): string {
-  if (typeof document === "undefined") return html;
-  const tmpl = document.createElement("template");
-  tmpl.innerHTML = html;
-  tmpl.content.querySelectorAll("script,style,iframe,object,embed").forEach((n) => n.remove());
-  tmpl.content.querySelectorAll<HTMLElement>("*").forEach((el) => {
-    [...el.attributes].forEach((attr) => {
-      const name = attr.name.toLowerCase();
-      const value = attr.value.toLowerCase();
-      if (name.startsWith("on")) el.removeAttribute(attr.name);
-      else if ((name === "href" || name === "src") && value.trim().startsWith("javascript:")) el.removeAttribute(attr.name);
-    });
-  });
-  return tmpl.innerHTML;
-}
-
-// Detect whether stored description is HTML or legacy plain text. Legacy plain-text
-// descriptions (pre-rich-text) should still render with line breaks preserved.
-function isHtml(s: string): boolean {
-  return /<\/?(p|div|br|strong|em|b|i|u|h\d|ul|ol|li|a|span|img)\b/i.test(s);
 }
 
 // Escape for use in an HTML attribute / text node.

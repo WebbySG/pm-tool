@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { notFound } from "next/navigation";
 import { useParams, useSearchParams } from "next/navigation";
 import { type Task, type TaskType, type TaskStatus } from "@/lib/mock-data";
@@ -11,10 +11,12 @@ import { TaskDrawer } from "@/components/task-drawer";
 import { KanbanBoard } from "@/components/kanban-board";
 import {
   Pin, Link2, MessageSquare, FileText, Image, Video, Upload, X, ExternalLink, RotateCcw, Pencil, Check, ListChecks, ChevronDown, ChevronUp, Loader2, FileEdit, CheckCircle2, Clock, AlertCircle,
-  BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip, CalendarDays,
+  BarChart2, Plus, Copy, Trash2, ChevronRight, Paperclip, CalendarDays, Search, Sprout,
 } from "lucide-react";
 import { WeeklySeoPanel } from "@/components/weekly-seo-panel";
-import { SeoChecklistPanel } from "@/components/seo-checklist-panel";
+import { SeoWorkPanel } from "@/components/seo-work-panel";
+import { isSeoProjectType } from "@/lib/seo-setup";
+import { KeywordResearchPanel } from "@/components/keyword-research-panel";
 import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
@@ -48,7 +50,17 @@ const mediaIcon: Record<string, React.FC<{ size: number; style?: React.CSSProper
 };
 
 // "weekly-seo" is admin-only — it manages this project's pm_weekly_seo_plans row.
-type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "seo-checklist" | "reports" | "weekly-seo";
+/** Find a task anywhere in a project's tree — subtasks included. */
+function findTaskDeep(tasks: Task[], id: string): Task | null {
+  for (const t of tasks) {
+    if (t.id === id) return t;
+    const hit = findTaskDeep(t.subtasks, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "seo-work" | "keywords" | "reports" | "weekly-seo";
 
 type NewTaskForm = {
   title: string;
@@ -74,7 +86,19 @@ export default function ProjectDetailPage() {
   const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
   const projectId = projectRaw?.id ?? params.id;
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const [activeTab, setActiveTab] = useState<ProjectTab>("board");
+  const [activeTabRaw, setActiveTab] = useState<ProjectTab>("board");
+  // The SEO tabs (SEO Work, Keywords) belong to a project labelled SEO or
+  // Web + SEO. A project relabelled away from SEO keeps them while it still
+  // holds SEO work, so a record it already has never becomes unreachable.
+  const hasSeoWork = useMemo(() => {
+    const walk = (ts: Task[]): boolean => ts.some((t) => !!t.seoPhase || walk(t.subtasks));
+    return walk(projectRaw?.tasks ?? []);
+  }, [projectRaw?.tasks]);
+  const showSeoTabs = !!projectRaw && (isSeoProjectType(projectRaw.type) || hasSeoWork);
+  // Falls back to the board rather than rendering an empty pane if the selected
+  // tab has just been hidden (project relabelled while it was open).
+  const activeTab: ProjectTab =
+    !showSeoTabs && (activeTabRaw === "seo-work" || activeTabRaw === "keywords") ? "board" : activeTabRaw;
   // ── Weekly reports state ──────────────────────────────────────────────────
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
@@ -187,16 +211,8 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (!taskQueryId || !projectRaw) return;
     // Search the whole tree — notification links may point at a subtask
-    // (e.g. a child article submitted for review).
-    const findDeep = (ts: Task[]): Task | null => {
-      for (const x of ts) {
-        if (x.id === taskQueryId) return x;
-        const hit = findDeep(x.subtasks);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    const t = findDeep(projectRaw.tasks);
+    // (e.g. a child article submitted for review, or an SEO phase task).
+    const t = findTaskDeep(projectRaw.tasks, taskQueryId);
     if (t) setSelectedTask(t);
   }, [taskQueryId, projectRaw?.id, projectRaw?.tasks.length]);
 
@@ -455,10 +471,11 @@ export default function ProjectDetailPage() {
     setShowApplyTemplate(false);
   }
 
-  // Keep selected task in sync with store updates
-  const liveSelectedTask = selectedTask
-    ? project.tasks.find((t) => t.id === selectedTask.id) ?? null
-    : null;
+  // Keep selected task in sync with store updates. Searches the WHOLE tree, not
+  // just top-level tasks: notification deep links and the SEO Work tab both open
+  // subtasks, and a top-level-only lookup silently resolved those to null — the
+  // drawer never opened.
+  const liveSelectedTask = selectedTask ? findTaskDeep(project.tasks, selectedTask.id) : null;
 
   return (
     <>
@@ -581,7 +598,12 @@ export default function ProjectDetailPage() {
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
             {([
-              "board", "schedule", "files", "pinned", "content", "seo-checklist", "reports",
+              "board", "schedule", "files", "pinned", "content",
+              // The SEO tabs belong to SEO work: shown for a project labelled SEO /
+              // Web + SEO, and kept visible on a project that still holds the work
+              // set after being relabelled, so its record never becomes unreachable.
+              ...(showSeoTabs ? (["seo-work", "keywords"] as const) : []),
+              "reports",
               ...(isAdmin ? (["weekly-seo"] as const) : []),
             ] as ProjectTab[]).map((tab) => {
               const projectArticles = articles.filter((a) => a.projectId === project.id);
@@ -610,9 +632,14 @@ export default function ProjectDetailPage() {
                         <CalendarDays size={13} />Weekly SEO
                       </span>
                     )
-                    : tab === "seo-checklist" ? (
+                    : tab === "seo-work" ? (
                       <span className="flex items-center gap-1.5">
-                        <ListChecks size={13} />Technical / On-Page
+                        <Sprout size={13} />SEO Work
+                      </span>
+                    )
+                    : tab === "keywords" ? (
+                      <span className="flex items-center gap-1.5">
+                        <Search size={13} />Keywords
                       </span>
                     )
                     : tab === "content" ? (
@@ -1070,16 +1097,30 @@ export default function ProjectDetailPage() {
             );
           })()}
 
-          {/* TECHNICAL / ON-PAGE — the per-project SEO checklist record.
-              Visible to everyone who can see the project; editable by admins and
-              the staff actually assigned to it (they do the work, they tick it). */}
-          {activeTab === "seo-checklist" && (
-            <SeoChecklistPanel
+          {/* SEO WORK — the record of the standard SEO phases (keyword research →
+              technical → on-page). The phases ARE tasks on this project's board;
+              this tab just reads them, so everyone who can see the project can
+              read the record. Only an admin creates/repairs the set. */}
+          {activeTab === "seo-work" && (
+            <SeoWorkPanel
+              projectId={project.id}
+              isSeoProject={isSeoProjectType(project.type)}
+              tasks={project.tasks}
+              staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
+              canCreate={isAdmin}
+              onOpenTask={(t) => setSelectedTask(t)}
+              onOpenKeywords={() => setActiveTab("keywords")}
+            />
+          )}
+
+          {/* KEYWORDS — the project's keyword research record. Same visibility rule
+              as the Technical / On-Page tab: everyone who can see the project can
+              read it; admin + assigned staff can edit. */}
+          {activeTab === "keywords" && (
+            <KeywordResearchPanel
               projectId={project.id}
               canEdit={isAdmin || (!!user?.id && project.assignedStaff.includes(user.id))}
               isAdmin={isAdmin}
-              currentUserId={user?.id ?? null}
-              staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
             />
           )}
 

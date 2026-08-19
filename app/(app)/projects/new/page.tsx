@@ -123,6 +123,7 @@ export default function NewProjectPage() {
         requiresArticlePost: false,
         articleUrl: null,
         statusChangedAt: new Date().toISOString(),
+        seoPhase: null,
         discussionNote: null,
       }));
     });
