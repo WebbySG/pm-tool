@@ -248,26 +248,39 @@ function statusPatch(status: TaskStatus): Partial<Task> {
   };
 }
 
-// "Closing the parent closes everything under it": mark every still-open
-// descendant done (or rejected, when the parent was rejected), locally + in the
-// DB. 'missed' tombstones are a permanent record of unposted weekly articles
-// and are never touched; already-closed (done/rejected) descendants keep their
-// state. Descendants parked in 'pending_article_post' are also left alone — the
-// article still has to go up on the website; force-closing them would skip the link.
-async function cascadeDescendantsClosed(set: StoreSet, get: () => Store, projectId: string, taskId: string, status: "done" | "rejected" = "done") {
+// "A parent's status is the whole branch's status" (user rule 2026-08-19):
+// applying ANY status to a task applies that same status to EVERY descendant,
+// locally + in the DB in one bulk write. This generalises the earlier
+// done/rejected ("closing the parent closes everything under it") and
+// revision_required cascades into a single rule, so a parent can never claim
+// something different from the work sitting under it.
+//
+// There are deliberately NO protected statuses any more: a done, missed,
+// rejected or awaiting-article-link child follows its parent, because changing
+// the parent IS the instruction. Descendants already in the target status are
+// skipped (nothing to write). Returns the ids actually changed.
+//
+// Cascading a branch off pending_review also clears those descendants' unread
+// approval requests — the parent's change just decided them, so leaving them in
+// the admin tray would point at tasks that are no longer waiting on anyone.
+//
+// NOT used by rollupTopStatus: a roll-up is derived from one child's change,
+// not an instruction, so it must never push that status back down onto the
+// child's siblings.
+async function cascadeDescendantsStatus(set: StoreSet, get: () => Store, projectId: string, taskId: string, status: TaskStatus): Promise<string[]> {
   const proj = get().projects.find((p) => p.id === projectId);
-  if (!proj) return;
+  if (!proj) return [];
   const t = findTaskInTree(proj.tasks, taskId);
-  if (!t) return;
+  if (!t) return [];
   const ids: string[] = [];
   const walk = (x: Task) => {
     for (const s of x.subtasks) {
-      if (s.status !== "done" && s.status !== "missed" && s.status !== "rejected" && s.status !== "pending_article_post") ids.push(s.id);
+      if (s.status !== status) ids.push(s.id);
       walk(s);
     }
   };
   walk(t);
-  if (ids.length === 0) return;
+  if (ids.length === 0) return [];
   set((s) => ({
     projects: patchProject(s.projects, projectId, (p) => {
       let tasks = p.tasks;
@@ -276,40 +289,10 @@ async function cascadeDescendantsClosed(set: StoreSet, get: () => Store, project
     }),
   }));
   await db.dbUpdateTasksBulk(ids, { status });
-}
-
-// "Sending the parent back for revision sends everything under it back too"
-// (user rule 2026-08-18): putting a task into revision_required marks EVERY
-// descendant revision_required, locally + in the DB.
-//
-// Deliberately BROADER than cascadeDescendantsClosed: that one closes only
-// still-open descendants and protects done/missed/rejected/pending_article_post,
-// because closing a parent must never silently discard a record. Revision is the
-// opposite instruction — the work under this task has to be redone — so a done,
-// missed, rejected or awaiting-link child is reopened too. Anything already in
-// revision_required is skipped (nothing to change).
-async function cascadeDescendantsRevision(set: StoreSet, get: () => Store, projectId: string, taskId: string) {
-  const proj = get().projects.find((p) => p.id === projectId);
-  if (!proj) return;
-  const t = findTaskInTree(proj.tasks, taskId);
-  if (!t) return;
-  const ids: string[] = [];
-  const walk = (x: Task) => {
-    for (const s of x.subtasks) {
-      if (s.status !== "revision_required") ids.push(s.id);
-      walk(s);
-    }
-  };
-  walk(t);
-  if (ids.length === 0) return;
-  set((s) => ({
-    projects: patchProject(s.projects, projectId, (p) => {
-      let tasks = p.tasks;
-      for (const id of ids) tasks = patchTaskInTree(tasks, id, statusPatch("revision_required"));
-      return { ...p, tasks };
-    }),
-  }));
-  await db.dbUpdateTasksBulk(ids, { status: "revision_required" });
+  if (status !== "pending_review") {
+    for (const id of ids) await clearTaskApprovalRequests(get, id);
+  }
+  return ids;
 }
 
 // Roll a child's review state up to its TOP-LEVEL task so pending work is
@@ -584,6 +567,8 @@ export const useStore = create<Store>()(
   requestTaskApproval: async (projectId, taskId, staffName, taskTitle) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("pending_review")) })) }));
     await db.dbUpdateTask(taskId, { status: "pending_review" });
+    // Submitting a parent submits everything under it.
+    await cascadeDescendantsStatus(set, get, projectId, taskId, "pending_review");
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Task Approval Requested",
@@ -606,6 +591,7 @@ export const useStore = create<Store>()(
       set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("pending_article_post")) })) }));
       await db.dbUpdateTask(taskId, { status: "pending_article_post" });
       await clearTaskApprovalRequests(get, taskId);
+      await cascadeDescendantsStatus(set, get, projectId, taskId, "pending_article_post");
       await rollupTopStatus(set, get, projectId, taskId);
       await get().addNotification({
         title: "Approved — Post the Article",
@@ -621,7 +607,7 @@ export const useStore = create<Store>()(
 
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("done")) })) }));
     await db.dbUpdateTask(taskId, { status: "done" });
-    await cascadeDescendantsClosed(set, get, projectId, taskId);
+    await cascadeDescendantsStatus(set, get, projectId, taskId, "done");
     await clearTaskApprovalRequests(get, taskId);
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
@@ -641,7 +627,7 @@ export const useStore = create<Store>()(
   markArticlePosted: async (projectId, taskId, taskTitle, staffDisplayName, url) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { articleUrl: url, ...statusPatch("done") }) })) }));
     await db.dbUpdateTask(taskId, { article_url: url, status: "done" });
-    await cascadeDescendantsClosed(set, get, projectId, taskId);
+    await cascadeDescendantsStatus(set, get, projectId, taskId, "done");
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Article Posted",
@@ -671,7 +657,7 @@ export const useStore = create<Store>()(
     await db.dbUpdateTask(taskId, { status: "revision_required" });
     await clearTaskApprovalRequests(get, taskId);
     // Request Revision on a parent sends everything under it back too.
-    await cascadeDescendantsRevision(set, get, projectId, taskId);
+    await cascadeDescendantsStatus(set, get, projectId, taskId, "revision_required");
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Revision Required",
@@ -693,7 +679,7 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch("rejected")) })) }));
     await db.dbUpdateTask(taskId, { status: "rejected" });
     await clearTaskApprovalRequests(get, taskId);
-    await cascadeDescendantsClosed(set, get, projectId, taskId, "rejected");
+    await cascadeDescendantsStatus(set, get, projectId, taskId, "rejected");
     await rollupTopStatus(set, get, projectId, taskId);
     await get().addNotification({
       title: "Task Rejected",
@@ -762,8 +748,8 @@ export const useStore = create<Store>()(
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, statusPatch(status)) })) }));
     await db.dbUpdateTask(taskId, { status });
     if (status !== "pending_review") await clearTaskApprovalRequests(get, taskId);
-    if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, taskId, status);
-    if (status === "revision_required") await cascadeDescendantsRevision(set, get, projectId, taskId);
+    // Whatever status lands on this task lands on every task under it.
+    await cascadeDescendantsStatus(set, get, projectId, taskId, status);
     await rollupTopStatus(set, get, projectId, taskId);
   },
 
@@ -909,13 +895,17 @@ export const useStore = create<Store>()(
     if (data.dueDate) patch.due_date = data.dueDate;
     if (data.description !== undefined) patch.description = data.description;
     if (Object.keys(patch).length) await db.dbUpdateTask(subtaskId, patch);
+    if (data.status) {
+      await cascadeDescendantsStatus(set, get, projectId, subtaskId, data.status);
+      await rollupTopStatus(set, get, projectId, subtaskId);
+    }
   },
 
   updateSubtaskStatus: async (projectId, _parentTaskId, subtaskId, status) => {
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, subtaskId, statusPatch(status)) })) }));
     await db.dbUpdateTask(subtaskId, { status });
-    if (status === "done" || status === "rejected") await cascadeDescendantsClosed(set, get, projectId, subtaskId, status);
-    if (status === "revision_required") await cascadeDescendantsRevision(set, get, projectId, subtaskId);
+    // A mid-level task is a parent too — its own children follow it down.
+    await cascadeDescendantsStatus(set, get, projectId, subtaskId, status);
     await rollupTopStatus(set, get, projectId, subtaskId);
   },
 
