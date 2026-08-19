@@ -1,5 +1,9 @@
 -- Removes the deprecated Technical / On-Page CHECKLIST table.
 --
+-- APPLIED TO LIVE (tfhzuruaaymfhqmeiusr) 2026-08-19 on the owner instruction
+-- ("i dont need the check list so can remove those"). The 52 rows it held were
+-- dumped to the session transcript first; every one had done=false and no note.
+--
 -- Superseded on 2026-08-19 by the SEO Setup phase tasks (scripts/seo-setup-phase.sql):
 -- the SEO work is now real tasks on the board, recorded in the task itself, not
 -- a tick-list. No application code reads pm_seo_checklist_items any more.

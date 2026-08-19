@@ -1047,10 +1047,17 @@ export const useStore = create<Store>()(
     try {
       const existing = await db.dbListSeoPhaseTasks(projectId);
       const have = new Map(existing.map((r) => [r.seoPhase, r.id]));
-      // Exactly one assigned staff member = the person who does it. With none
-      // or several the admin picks, so it stays unassigned — which staff can
-      // still edit (canEdit treats an unassigned task as open).
-      const assigneeId = project.assignedStaff.length === 1 ? project.assignedStaff[0] : "";
+      // Who does it: the project weekly SEO plan assignee if it is enrolled
+      // (that IS the person doing this client SEO), else the project single
+      // assigned staff member. With neither, it stays unassigned for the admin
+      // to tag — which staff can still edit (canEdit treats unassigned as open).
+      let assigneeId = "";
+      try {
+        assigneeId = (await db.dbGetWeeklySeoPlan(projectId))?.assigneeId ?? "";
+      } catch {
+        // Not enrolled, or the lookup failed — fall through to project staffing.
+      }
+      if (!assigneeId && project.assignedStaff.length === 1) assigneeId = project.assignedStaff[0];
       const { parent, children } = seoSetupTaskDefs();
       let created = false;
       // Fills GAPS rather than all-or-nothing: if someone deleted one phase, the
