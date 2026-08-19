@@ -20,10 +20,10 @@
  * Work panel decides "still the prompt" vs "work recorded" by comparing against
  * that exact text. It aborts if that file stops parsing as the 4 phases.
  *
- * RUN AGAINST LIVE 2026-08-19: 56 tasks across all 14 SEO / Web + SEO projects
- * (11 assigned from their weekly SEO plan, 1 from project staffing, 2 left
- * unassigned). Verified afterwards: 4 rows per project, 1 parent each, no due
- * dates, all todo, no orphaned children.
+ * RUN AGAINST LIVE 2026-08-19: 56 tasks across all 14 SEO / Web + SEO projects.
+ * 11 sets landed on a person (9 from the weekly SEO plan, 2 from project
+ * staffing); 3 stayed unassigned. Verified afterwards: 4 rows per project,
+ * 1 parent each, no due dates, all todo, no orphaned children.
  *
  * Undo (before anyone edits them):
  *   delete from pm_tasks where seo_phase is not null;
