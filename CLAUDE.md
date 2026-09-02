@@ -403,7 +403,19 @@ app/api/weekly-seo/run/route.ts          — Node route: the generator (cron sec
 components/weekly-seo-panel.tsx          — Reusable enrol/pause/assignee/includes/preview/Generate-now panel
 app/(app)/weekly-seo/page.tsx            — Admin overview of every project in the weekly loop (adminOnly)
 scripts/weekly-seo-cron.sh               — VPS cron line that POSTs /api/weekly-seo/run daily (17:00 UTC = 01:00 SGT)
+scripts/enable-rls-seo-os-tables.sql — Enables RLS (+ owner policies) on the 12 leftover Webby SEO OS tables and sets security_invoker on ai_usage_monthly_summary. APPLIED live 2026-09-02.
 ```
+
+### ⚠ Leftover Webby SEO OS Schema In The pm-tool Project (discovered 2026-09-02)
+
+**The live pm-tool project (`tfhzuruaaymfhqmeiusr`) is NOT only pm-tool.** Alongside the `pm_*` tables it carries a complete **Webby SEO OS** schema — ~140 tables including `clients`, `keywords`, `seo_articles`, `ads_*`, `ai_*`, `article_*`, `audit_*`, `gsc_*`, `competitor*`, plus `tasks`/`templates`/`profiles`/`notifications` that shadow the `pm_`-prefixed ones. Don't mistake these for pm-tool tables, and never wire pm-tool features to them.
+
+- **That schema is DEAD here.** Every SEO-OS table last took a write in **May 2026** (latest `seo_articles` 2026-05-11), while `pm_tasks` is written daily. The SEO OS lives on the **Omnipulse** project (`wmulemkyjrjetwyzrsqq`) — this copy is the residue of the move. `pm_articles` (0 rows) is a separate unused pm-tool table; see the Task Sheet & Articles module.
+- **All 9 `clients` rows are ORPHANS** — their `user_id` points at auth users that don't exist in this project (only the 4 pm-tool staff do). So the SEO-OS ownership policies (`client_id in (select id from clients where user_id = auth.uid())`) match **zero rows for every user who can sign in here**. Useful when reading advisor output: those tables look protected and are in fact simply unreachable.
+- **RLS was DISABLED on 12 of them until 2026-09-02** ([scripts/enable-rls-seo-os-tables.sql](scripts/enable-rls-seo-os-tables.sql), applied live). An RLS-disabled table in `public` is fully exposed to `anon`/`authenticated`, and **the anon key ships in the client bundle** — so 1561 `ai_usage_logs` rows (per-call AI cost data), 62 `quality_rules`, 39 `prompt_learnings`, 20 `article_idea_suggestions`, 12 `ai_agent_insights` and 3 `meta_audit_reports` were world-readable *and writable* by anyone with that public key. Fixed by enabling RLS **with** policies mirroring the sibling tables, not by locking them dark.
+- **`ai_usage_monthly_summary` was a SECURITY DEFINER view.** Postgres views run as their owner unless `security_invoker=true`, so it read `ai_usage_logs` straight through RLS. Now `security_invoker = on`. **If you ever add a view over a protected table, set `security_invoker = on` or it becomes an RLS bypass.**
+- **Verified live 2026-09-02** with the real anon key over PostgREST: all 12 tables + the view return `[]`, INSERTs are refused `42501`, and `service_role` still reads every row (1561/62/39 intact). The advisor's ERROR-level findings went from 13 to **0**.
+- **Deleting the dead schema is the real cleanup** and was NOT done — it drops ~140 tables and thousands of rows of historical SEO data, which is the owner's call, not a side effect of a security fix. Everything is now locked down either way.
 
 ### Task Activity & Comment History Module
 
