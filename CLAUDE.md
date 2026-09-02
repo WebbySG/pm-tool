@@ -404,6 +404,7 @@ components/weekly-seo-panel.tsx          — Reusable enrol/pause/assignee/inclu
 app/(app)/weekly-seo/page.tsx            — Admin overview of every project in the weekly loop (adminOnly)
 scripts/weekly-seo-cron.sh               — VPS cron line that POSTs /api/weekly-seo/run daily (17:00 UTC = 01:00 SGT)
 scripts/enable-rls-seo-os-tables.sql — Enables RLS (+ owner policies) on the 12 leftover Webby SEO OS tables and sets security_invoker on ai_usage_monthly_summary. APPLIED live 2026-09-02.
+scripts/harden-function-privileges.sql — Revokes EXECUTE on every SECURITY DEFINER function from public/anon/authenticated (except pm_is_admin, which RLS needs) and pins search_path on all 22 unpinned functions. APPLIED live 2026-09-02.
 ```
 
 ### ⚠ Leftover Webby SEO OS Schema In The pm-tool Project (discovered 2026-09-02)
@@ -416,6 +417,21 @@ scripts/enable-rls-seo-os-tables.sql — Enables RLS (+ owner policies) on the 1
 - **`ai_usage_monthly_summary` was a SECURITY DEFINER view.** Postgres views run as their owner unless `security_invoker=true`, so it read `ai_usage_logs` straight through RLS. Now `security_invoker = on`. **If you ever add a view over a protected table, set `security_invoker = on` or it becomes an RLS bypass.**
 - **Verified live 2026-09-02** with the real anon key over PostgREST: all 12 tables + the view return `[]`, INSERTs are refused `42501`, and `service_role` still reads every row (1561/62/39 intact). The advisor's ERROR-level findings went from 13 to **0**.
 - **Deleting the dead schema is the real cleanup** and was NOT done — it drops ~140 tables and thousands of rows of historical SEO data, which is the owner's call, not a side effect of a security fix. Everything is now locked down either way.
+
+### Database Function Privileges & `search_path` (2026-09-02)
+
+The advisor's WARN tier, closed by [scripts/harden-function-privileges.sql](scripts/harden-function-privileges.sql) (applied live). Two of these were **not** cosmetic — they were anon-callable `SECURITY DEFINER` functions with real side effects:
+
+- **`migrate_lead_*` (5 functions)** — anon-callable, upserting caller-supplied `jsonb` straight into `lead_generator.*` via `jsonb_populate_recordset`. Anyone with the public anon key could write arbitrary rows into that schema.
+- **`trigger_google_ads_daily_sync`** — anon-callable, fires `net.http_post` at an external Supabase project's Edge Function.
+- **`pm_run_billing_reminders`** — anon-callable; inserts `pm_notifications` rows and stamps `last_notified_on`. Only pg_cron (as `postgres`) should run it, and it is never called from app code.
+
+- **⚠ Revoke from `public`, not just `anon`/`authenticated`.** Postgres grants `EXECUTE` to `PUBLIC` by default on every new function, so revoking the two named roles alone is a **no-op**. `service_role` is granted back explicitly (server-only secret) so server-side callers keep working.
+- **⚠ `pm_is_admin()` is DELIBERATELY EXEMPT — do not "fix" the two advisor warnings that remain about it.** 16 RLS policies on the financial and credentials tables call it, and every one applies to role `public` (which includes `anon`), so the **querying** role needs `EXECUTE` to evaluate them. Revoking would turn a clean "0 rows" into `permission denied for function pm_is_admin`. It leaks nothing — SECURITY DEFINER returning a boolean about the *caller*; anon gets `false`.
+- **Revoking `EXECUTE` does NOT stop triggers firing** — Postgres checks that privilege at `CREATE TRIGGER` time, not at fire time. Proven with a throwaway table+trigger in a rolled-back probe first, then against real data: as role `authenticated`, a `pm_tasks` status update still moved `status_changed_at` and still wrote a `pm_task_activity` row. So the 7 trigger functions were safe to close.
+- **`search_path` pinned to `public, pg_temp`** on the 22 functions that had none (`pg_temp` LAST, per the Postgres docs, so a temp object can't shadow a real one). Not `''` — several bodies reference public tables unqualified (`pm_projects`, `pm_billing_reminders`, `google_ads_connections`) while every cross-schema reference is already qualified (`lead_generator.*`, `net.http_post`). **Any new function should be created with `set search_path` from the start.**
+- **Verified live 2026-09-02** with the real anon key: the dangerous RPCs now return `401 permission denied` / `404` from PostgREST, while `pm_is_admin` still returns `false` and `pm_invoices` still returns a clean `[]` (not an error). Advisor: **13 ERROR + ~40 WARN → 3 WARN**, the survivors being the two intentional `pm_is_admin` entries and Auth's leaked-password toggle.
+- **Still open (needs the Supabase dashboard, not SQL): leaked-password protection is DISABLED** — Authentication → Providers → Password → enable "Check against HaveIBeenPwned". Worth turning on given staff passwords are set by the admin.
 
 ### Task Activity & Comment History Module
 
