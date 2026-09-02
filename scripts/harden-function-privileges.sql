@@ -5,9 +5,13 @@
 -- ones, two of which were NOT cosmetic:
 --
 --   * migrate_lead_businesses/campaigns/emails/follow_ups/scrape_log — SECURITY
---     DEFINER, callable by ANON, upserting caller-supplied jsonb straight into
---     lead_generator.* via jsonb_populate_recordset. Anyone holding the public
---     anon key could write arbitrary rows into that schema.
+--     DEFINER, callable by ANON, feeding caller-supplied jsonb into
+--     lead_generator.* via jsonb_populate_recordset. CORRECTION (2026-09-02,
+--     found while auditing schemas for the drop): the `lead_generator` schema
+--     does NOT exist in this project, so these would have raised
+--     "schema does not exist" rather than actually writing. Still revoked —
+--     an anon-callable SECURITY DEFINER writer is the wrong shape to leave
+--     lying around — but the practical exposure was lower than first stated.
 --   * trigger_google_ads_daily_sync — SECURITY DEFINER, callable by ANON, fires
 --     net.http_post at an external Supabase project's Edge Function.
 --   * pm_run_billing_reminders — SECURITY DEFINER, callable by ANON; inserts
