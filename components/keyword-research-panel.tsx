@@ -1,17 +1,33 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   listKeywords, addKeyword, importKeywords, updateKeyword, deleteKeyword,
 } from "@/lib/keyword-db";
 import {
   parseKeywordPaste, statusMeta, priorityMeta, difficultyColor,
-  KEYWORD_STATUSES, KEYWORD_PRIORITIES, type Keyword,
+  KEYWORD_STATUSES, KEYWORD_PRIORITIES, type Keyword, type KeywordField,
 } from "@/lib/keyword-types";
 import { errorMessage } from "@/lib/utils";
 import { useDiscardGuard } from "@/components/discard-guard";
 import {
-  Loader2, Plus, Trash2, X, Search, AlertCircle, ClipboardPaste, ArrowUpDown, ExternalLink,
+  Loader2, Plus, Trash2, X, Search, AlertCircle, ArrowUpDown, ExternalLink,
+  Upload, FileSpreadsheet, RefreshCw,
 } from "lucide-react";
+
+// A keyword export is a text file of a few hundred rows. Anything far past that
+// is the wrong file, and reading it into a textarea would lock the tab up.
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+
+// What each mapped column is called in the preview, so the admin can see the
+// report was understood before committing it.
+const FIELD_LABEL: Record<KeywordField, string> = {
+  searchVolume: "volume",
+  difficulty: "difficulty",
+  targetUrl: "ranking page",
+  currentRank: "position",
+  rankCheckedAt: "last checked",
+  intent: "intent",
+};
 
 interface Props {
   projectId: string;
@@ -65,6 +81,9 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
   const [importText, setImportText] = useState("");
   const [importing, setImporting] = useState(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [showAdd, setShowAdd] = useState(false);
   const [newKw, setNewKw] = useState({ keyword: "", searchVolume: "", difficulty: "", targetUrl: "" });
@@ -90,10 +109,22 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
     [importText],
   );
 
+  // What the import would actually DO, worked out against the keywords already
+  // loaded — so a rank report reads as "28 updated", not "28 skipped".
+  const importPlan = useMemo(() => {
+    if (!preview) return null;
+    const have = new Set(rows.map((r) => r.keyword.trim().toLowerCase()));
+    let fresh = 0;
+    for (const r of preview.rows) if (!have.has(r.keyword.trim().toLowerCase())) fresh++;
+    return { fresh, existing: preview.rows.length - fresh };
+  }, [preview, rows]);
+
   const importGuard = useDiscardGuard({
     dirty: importText.trim().length > 0,
     busy: importing,
-    onClose: () => { setShowImport(false); setImportText(""); setImportNotice(null); },
+    onClose: () => {
+      setShowImport(false); setImportText(""); setImportNotice(null); setImportFileName(null);
+    },
   });
   const addGuard = useDiscardGuard({
     dirty: Object.values(newKw).some((v) => v.trim().length > 0),
@@ -142,18 +173,46 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
     setRows((prev) => prev.map((r) => (r.id === next.id ? next : r)));
   }
 
+  // A CSV/TSV export is read straight into the same textarea the paste path
+  // uses, so both routes go through ONE parser and preview and can't drift.
+  async function readImportFile(file: File | null | undefined) {
+    if (!file) return;
+    setImportNotice(null);
+    if (file.size > MAX_IMPORT_BYTES) {
+      setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB — keyword exports are text files well under 5 MB. Check it's the right file.`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      if (!text.trim()) { setError(`${file.name} is empty.`); return; }
+      setImportText(text);
+      setImportFileName(file.name);
+      setError(null);
+    } catch (e) {
+      setError(`Couldn't read ${file.name}: ${errorMessage(e)}`);
+    }
+  }
+
   async function handleImport() {
     if (!preview || preview.rows.length === 0) return;
     setImporting(true);
     setError(null);
     try {
-      const res = await importKeywords(projectId, preview.rows);
-      setRows((prev) => [...prev, ...res.inserted]);
-      const bits = [`${res.inserted.length} keyword${res.inserted.length !== 1 ? "s" : ""} added`];
-      if (res.skipped) bits.push(`${res.skipped} already in this project`);
-      if (preview.duplicatesInPaste) bits.push(`${preview.duplicatesInPaste} duplicate${preview.duplicatesInPaste !== 1 ? "s" : ""} in the paste`);
-      setImportNotice(bits.join(" · "));
+      const res = await importKeywords(projectId, preview.rows, preview.mappedFields);
+      // Inserts append; updates replace in place, so the table reflects the
+      // report without a refetch.
+      const byId = new Map(res.updated.map((k) => [k.id, k]));
+      setRows((prev) => [...prev.map((r) => byId.get(r.id) ?? r), ...res.inserted]);
+
+      const bits: string[] = [];
+      if (res.inserted.length) bits.push(`${res.inserted.length} added`);
+      if (res.updated.length) bits.push(`${res.updated.length} updated`);
+      if (res.unchanged) bits.push(`${res.unchanged} unchanged`);
+      if (preview.duplicatesInPaste) bits.push(`${preview.duplicatesInPaste} duplicate${preview.duplicatesInPaste !== 1 ? "s" : ""} in the file`);
+      if (preview.unreadableDates) bits.push(`${preview.unreadableDates} date${preview.unreadableDates !== 1 ? "s" : ""} unreadable — stamped today instead`);
+      setImportNotice(bits.length ? bits.join(" · ") : "Nothing to change — the report matches what's stored.");
       setImportText("");
+      setImportFileName(null);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -272,7 +331,7 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium hover:opacity-80"
               style={{ background: "#38b6e8", color: "#fff" }}
             >
-              <ClipboardPaste size={13} /> Paste keywords
+              <Upload size={13} /> Import keywords
             </button>
           </div>
         )}
@@ -284,8 +343,9 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
           <p className="text-sm" style={{ color: "#4a7090" }}>No keyword research recorded for this project yet.</p>
           {canEdit && (
             <p className="text-xs max-w-md" style={{ color: "#4a7090" }}>
-              Paste straight from Ahrefs, SEMrush or a spreadsheet — keyword, volume and
-              difficulty columns are picked up automatically.
+              Upload a rank-tracker CSV or paste straight from Ahrefs, SEMrush or a
+              spreadsheet — keyword, volume, difficulty, position and ranking-page
+              columns are picked up automatically.
             </p>
           )}
         </div>
@@ -420,34 +480,113 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="rounded-xl w-full max-w-2xl flex flex-col gap-4 p-6" style={{ background: "#0f1d2e", border: "1px solid #1c3248" }}>
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Paste keywords</h3>
+                <h3 className="font-semibold" style={{ color: "#cce4ff" }}>Import keywords</h3>
                 <button onClick={importGuard.requestClose} style={{ color: "#4a7090" }}><X size={16} /></button>
               </div>
               <p className="text-xs" style={{ color: "#4a7090" }}>
-                Paste rows straight from Ahrefs, SEMrush, Excel or Google Sheets. A header row
-                is detected automatically; without one, columns are read as
-                keyword, volume, difficulty. Keywords already in this project are skipped.
+                Upload a rank-tracker export, or paste rows from Ahrefs, SEMrush, Excel or
+                Google Sheets. A header row is detected automatically and its columns mapped;
+                without one, columns are read as keyword, volume, difficulty.
+                <strong style={{ color: "#7ea8cc" }}> Keywords already here are updated from the report</strong>,
+                not skipped — only the columns the file actually contains are touched.
               </p>
+
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  readImportFile(e.dataTransfer?.files?.[0]);
+                }}
+                onClick={() => fileRef.current?.click()}
+                className="rounded-lg px-4 py-4 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                style={{
+                  background: dragOver ? "#38b6e815" : "#0a1520",
+                  border: `1px dashed ${dragOver ? "#38b6e8" : "#1c3248"}`,
+                }}
+              >
+                {importFileName ? (
+                  <>
+                    <FileSpreadsheet size={14} style={{ color: "#22c55e" }} />
+                    <span className="text-xs" style={{ color: "#cce4ff" }}>{importFileName}</span>
+                    <span className="text-xs" style={{ color: "#4a7090" }}>— loaded below, choose another to replace</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} style={{ color: "#38b6e8" }} />
+                    <span className="text-xs" style={{ color: "#7ea8cc" }}>
+                      Drop a CSV / TSV here, or click to choose a file
+                    </span>
+                  </>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values"
+                  className="hidden"
+                  onChange={(e) => {
+                    readImportFile(e.target.files?.[0]);
+                    // Clear it so choosing the SAME file again still fires onChange.
+                    e.target.value = "";
+                  }}
+                />
+              </div>
               <textarea
                 autoFocus
                 rows={9}
                 value={importText}
-                onChange={(e) => { setImportText(e.target.value); setImportNotice(null); }}
+                onChange={(e) => { setImportText(e.target.value); setImportFileName(null); setImportNotice(null); }}
                 placeholder={"halal restaurant sg\t2,400\t34\nmuslim catering sg\t880\t21"}
                 className="w-full px-3 py-2 rounded-lg text-sm outline-none font-mono resize-y"
                 style={{ background: "#0a1520", border: "1px solid #1c3248", color: "#cce4ff" }}
               />
               {preview && (
-                <div className="rounded-lg p-3 text-xs flex flex-col gap-1" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#4a7090" }}>
+                <div className="rounded-lg p-3 text-xs flex flex-col gap-1.5" style={{ background: "#0e1e30", border: "1px solid #1c3248", color: "#4a7090" }}>
                   <span style={{ color: "#cce4ff" }}>
                     {preview.rows.length} keyword{preview.rows.length !== 1 ? "s" : ""} detected
-                    {preview.usedHeader && " · header row mapped"}
-                    {preview.duplicatesInPaste > 0 && ` · ${preview.duplicatesInPaste} duplicate${preview.duplicatesInPaste !== 1 ? "s" : ""} in paste`}
+                    {importPlan && (
+                      <>
+                        {" — "}
+                        <strong style={{ color: "#22c55e" }}>{importPlan.fresh} new</strong>
+                        {", "}
+                        <strong style={{ color: "#38b6e8" }}>{importPlan.existing} already tracked</strong>
+                        {importPlan.existing > 0 && " (will be updated)"}
+                      </>
+                    )}
+                    {preview.duplicatesInPaste > 0 && ` · ${preview.duplicatesInPaste} duplicate${preview.duplicatesInPaste !== 1 ? "s" : ""} in the file`}
                   </span>
+
+                  {preview.usedHeader ? (
+                    <span>
+                      Columns understood:{" "}
+                      <span style={{ color: "#7ea8cc" }}>keyword</span>
+                      {preview.mappedFields.map((f) => (
+                        <span key={f}>, <span style={{ color: "#7ea8cc" }}>{FIELD_LABEL[f]}</span></span>
+                      ))}
+                      {". Any other column is ignored."}
+                    </span>
+                  ) : (
+                    <span>No header row found — reading columns as keyword, volume, difficulty.</span>
+                  )}
+
+                  {preview.mappedFields.includes("currentRank") && (
+                    <span style={{ color: "#7ea8cc" }}>
+                      <RefreshCw size={10} className="inline mr-1" />
+                      Positions will be recorded. A blank position is stored as “checked, not ranking”.
+                    </span>
+                  )}
+                  {preview.unreadableDates > 0 && (
+                    <span style={{ color: "#f59e0b" }}>
+                      {preview.unreadableDates} row{preview.unreadableDates !== 1 ? "s have" : " has"} a date
+                      that couldn’t be read — those will be stamped with today’s date instead.
+                    </span>
+                  )}
+
                   {preview.rows.slice(0, 3).map((r, i) => (
                     <span key={i}>
                       {r.keyword} — vol {NUM(r.searchVolume)}, KD {NUM(r.difficulty)}
-                      {r.currentRank !== null && `, rank ${r.currentRank}`}
+                      {preview.mappedFields.includes("currentRank") && (r.currentRank !== null ? `, rank ${r.currentRank}` : ", not ranking")}
                       {r.targetUrl && `, ${r.targetUrl}`}
                     </span>
                   ))}
@@ -466,7 +605,11 @@ export function KeywordResearchPanel({ projectId, canEdit, isAdmin }: Props) {
                   style={{ background: "#38b6e8", color: "#fff" }}
                 >
                   {importing && <Loader2 size={13} className="animate-spin" />}
-                  Import {preview?.rows.length ? `${preview.rows.length} keyword${preview.rows.length !== 1 ? "s" : ""}` : ""}
+                  {importPlan && importPlan.existing > 0 && importPlan.fresh > 0
+                    ? `Add ${importPlan.fresh}, update ${importPlan.existing}`
+                    : importPlan && importPlan.existing > 0
+                      ? `Update ${importPlan.existing} keyword${importPlan.existing !== 1 ? "s" : ""}`
+                      : `Import ${preview?.rows.length ?? 0} keyword${preview?.rows.length !== 1 ? "s" : ""}`}
                 </button>
               </div>
             </div>

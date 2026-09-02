@@ -40,7 +40,8 @@ WebbyOps is a project management SaaS tool for a web and SEO agency. It manages 
 |---|---|
 | `staff_members` | Team roster with role, status, content access flag |
 | `user_roles` | Role overrides (admin/owner) |
-| `pm_projects` | Projects with assigned_staff array (auth UUIDs) |
+| `pm_projects` | Projects with assigned_staff array (auth UUIDs) and tier_id (client package) |
+| `pm_project_tiers` | Client packages behind the tier badge — `level` (the tier ladder: 1, 2, 3…; NULL = not a numbered tier), name, icon, colour and work scope. Admin-write RLS. |
 | `pm_tasks` | Tasks with assignee_id (auth UUID), subtasks via parent_id |
 | `pm_channels` | Project grouping channels |
 | `pm_clients` | Client records |

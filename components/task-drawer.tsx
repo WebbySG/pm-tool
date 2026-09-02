@@ -688,7 +688,7 @@ function TaskPanel({
     updateTaskTitle, updateTaskDueDate, updateTaskRecurring,
     addSubtask, updateSubtaskStatus, deleteTask, uploadTaskAttachment, deleteAttachment,
     requestTaskApproval, approveTaskCompletion, rejectTask, markTaskRejected, addNotification,
-    markArticlePosted, setTaskRequiresArticlePost, setTaskDiscussionNote,
+    markArticlePosted, setTaskRequiresArticlePost, setTaskIsArticle, setTaskDiscussionNote,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
     moveTaskToProject, archiveTask, projects,
   } = useStore();
@@ -739,6 +739,8 @@ function TaskPanel({
   const [approvalLoading, setApprovalLoading] = useState(false);
   const [confirmReject, setConfirmReject] = useState(false);
   const [articleUrlDraft, setArticleUrlDraft] = useState("");
+  const [articleFlagError, setArticleFlagError] = useState<string | null>(null);
+
   const [postingArticle, setPostingArticle] = useState(false);
   const [articlePostError, setArticlePostError] = useState<string | null>(null);
   // Admin's "to be discussed" reference note (task.discussionNote)
@@ -1689,10 +1691,35 @@ function TaskPanel({
             </div>
           )}
 
+          {/* Admin: count this task on the Articles sheet (/articles and the
+              project's Articles tab). Identity for the sheet is this flag and
+              nothing else — titles are never matched. */}
+          {isAdmin && (
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Articles Sheet</p>
+              <button
+                onClick={() => { setArticleFlagError(null); setTaskIsArticle(projectId, task.id, !task.isArticle).catch((e) => setArticleFlagError(errorMessage(e))); }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"
+                style={{ background: "#0e1e30", border: `1px solid ${task.isArticle ? "#38b6e840" : "#1c3248"}`, color: task.isArticle ? "#38b6e8" : "#4a7090" }}
+                title="When on, this task is counted as an article on the Articles page and the project's Articles tab"
+              >
+                <span className="w-4 h-4 rounded flex items-center justify-center border shrink-0"
+                  style={{ borderColor: task.isArticle ? "#38b6e8" : "#4a7090", background: task.isArticle ? "#38b6e8" : "transparent" }}>
+                  {task.isArticle && <Check size={11} color="#fff" />}
+                </span>
+                {task.isArticle ? "Counted as an article" : "Not an article"}
+              </button>
+              {articleFlagError && (
+                <p className="text-xs mt-1" style={{ color: "#ef4444" }}>Not saved — {articleFlagError}</p>
+              )}
+            </div>
+          )}
+
           {/* Admin: require a live article link before this task can complete */}
           {isAdmin && (
             <div>
               <p className="text-xs mb-1.5" style={{ color: "#4a7090" }}>Article Post</p>
+
               <button
                 onClick={() => setTaskRequiresArticlePost(projectId, task.id, !task.requiresArticlePost)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm font-medium"

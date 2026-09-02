@@ -62,7 +62,17 @@ export interface ParsedKeywordRow {
   difficulty: number | null;
   targetUrl: string | null;
   currentRank: number | null;
+  /**
+   * When the rank tracker checked, from a "Last checked" column. NULL when the
+   * source has no such column (the importer then stamps the import time).
+   */
+  rankCheckedAt: string | null;
+  /** "commercial" / "local" / … from a Search intent column. Insert-only. */
+  intent: string | null;
 }
+
+/** The fields a source actually supplied — see ParsedPaste.mappedFields. */
+export type KeywordField = keyof Omit<ParsedKeywordRow, "keyword">;
 
 export interface ParsedPaste {
   rows: ParsedKeywordRow[];
@@ -70,6 +80,16 @@ export interface ParsedPaste {
   duplicatesInPaste: number;
   /** True when a header row was detected and used for column mapping. */
   usedHeader: boolean;
+  /**
+   * Which columns the source actually HAD. This is what lets a re-import tell
+   * "this report says the keyword no longer ranks" (rank column present, cell
+   * blank -> null) from "this report doesn't mention rank at all" (no column ->
+   * leave what's stored alone). Without it, importing a volume-only list would
+   * silently wipe every recorded position.
+   */
+  mappedFields: KeywordField[];
+  /** Rows whose date cell couldn't be read — the importer falls back to now. */
+  unreadableDates: number;
 }
 
 /**
@@ -90,12 +110,58 @@ export function parseSeoNumber(raw: string | undefined): number | null {
   return Math.round(n * mult);
 }
 
+/**
+ * A date as rank trackers export it. ISO (2026-08-31) and textual months
+ * ("31 Aug 2026", "Aug 31, 2026") only.
+ *
+ * Ambiguous all-numeric slash dates are deliberately REFUSED: 03/09/2026 is
+ * 3 September to this agency and 9 March to a US tool, and silently picking one
+ * would misdate a rank check by six months with nothing on screen to show for
+ * it. The caller falls back to the import time and says so.
+ */
+export function parseSeoDate(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(s);
+  if (iso) {
+    const d = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
+    // Rejects 2026-02-31 rather than letting Date roll it into March.
+    if (d.getUTCMonth() !== +iso[2] - 1 || d.getUTCDate() !== +iso[3]) return null;
+    return d.toISOString();
+  }
+  // Textual month, either order. Requires letters, so a slash date can't reach here.
+  if (!/[a-z]{3}/i.test(s)) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+
+/**
+ * Header cells as tools really label them: "Difficulty (0-100)", "Volume (US)",
+ * "Position*". The bracketed qualifier and trailing punctuation are noise for
+ * matching, and stripping them here keeps the patterns below readable instead of
+ * growing a tail of optional groups.
+ */
+function normalizeHeader(cell: string): string {
+  return cell
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[*:#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Matched against the NORMALIZED header. Alternatives are anchored whole-string
+// on purpose: "Google page" (a page NUMBER derived from position) must not match
+// the target-URL pattern, and "Ranking page" must not match the rank pattern.
 const HEADER_PATTERNS: { field: keyof ParsedKeywordRow; re: RegExp }[] = [
   { field: "keyword", re: /^(keyword|kw|term|query|search term)s?$/i },
-  { field: "searchVolume", re: /^(search )?(volume|vol|searches|monthly searches|sv)$/i },
-  { field: "difficulty", re: /^(keyword )?(difficulty|kd|comp|competition)$/i },
-  { field: "targetUrl", re: /^(target|target url|url|page|landing page|destination)$/i },
-  { field: "currentRank", re: /^(rank|ranking|position|pos|current rank|current position)$/i },
+  { field: "searchVolume", re: /^((search|monthly|avg\.? monthly|average monthly) )?(volume|vol|searches|search volume|sv)$/i },
+  { field: "difficulty", re: /^(keyword |seo )?(difficulty|kd|comp|competition)$/i },
+  { field: "targetUrl", re: /^(target|target url|url|page url|landing page|destination|ranking page|ranking url|current url|result url|ranked page)$/i },
+  { field: "currentRank", re: /^(rank|ranking|position|pos|current rank|current position|best position)$/i },
+  { field: "rankCheckedAt", re: /^(last checked|checked|checked on|check date|last update|last updated|date)$/i },
+  { field: "intent", re: /^(search intent|intent|keyword intent)$/i },
 ];
 
 /**
@@ -140,8 +206,16 @@ function splitLine(line: string, delimiter: string): string[] {
  * can't silently land in `searchVolume`.
  */
 export function parseKeywordPaste(text: string): ParsedPaste {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return { rows: [], duplicatesInPaste: 0, usedHeader: false };
+  // Strip a UTF-8 BOM before anything else. Excel writes one on every CSV it
+  // saves, and it would otherwise glue itself to the first header cell — the
+  // keyword column then fails to match, header detection is skipped, and the
+  // header row is imported as a keyword called "Keyword".
+  const clean = text.replace(/^\uFEFF/, "");
+  const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const empty: ParsedPaste = {
+    rows: [], duplicatesInPaste: 0, usedHeader: false, mappedFields: [], unreadableDates: 0,
+  };
+  if (lines.length === 0) return empty;
 
   const delimiter = lines.some((l) => l.includes("\t")) ? "\t" : lines.some((l) => l.includes(",")) ? "," : "";
 
@@ -151,7 +225,7 @@ export function parseKeywordPaste(text: string): ParsedPaste {
   if (delimiter) {
     const first = splitLine(lines[0], delimiter);
     const matched = first
-      .map((cell, i) => ({ i, hit: HEADER_PATTERNS.find((h) => h.re.test(cell)) }))
+      .map((cell, i) => ({ i, hit: HEADER_PATTERNS.find((h) => h.re.test(normalizeHeader(cell))) }))
       .filter((x) => x.hit);
     // Require the keyword column specifically — otherwise a data row whose first
     // cell happens to read "position" would be eaten as a header.
@@ -161,10 +235,19 @@ export function parseKeywordPaste(text: string): ParsedPaste {
     }
   }
 
+  // Which fields this source is authoritative for. Without a header we only
+  // trust the classic keyword/volume/difficulty order, so a positional paste can
+  // never be read as "this keyword has no rank".
+  const mappedFields: KeywordField[] = usedHeader
+    ? (["searchVolume", "difficulty", "targetUrl", "currentRank", "rankCheckedAt", "intent"] as KeywordField[])
+        .filter((f) => map[f] !== undefined)
+    : (["searchVolume", "difficulty"] as KeywordField[]);
+
   const body = usedHeader ? lines.slice(1) : lines;
   const seen = new Set<string>();
   const rows: ParsedKeywordRow[] = [];
   let duplicatesInPaste = 0;
+  let unreadableDates = 0;
 
   for (const line of body) {
     const cells = delimiter ? splitLine(line, delimiter) : [line.trim()];
@@ -178,6 +261,10 @@ export function parseKeywordPaste(text: string): ParsedPaste {
     const pick = (field: keyof ParsedKeywordRow, positional: number) =>
       usedHeader ? (map[field] === undefined ? undefined : cells[map[field]!]) : cells[positional];
 
+    const rawDate = usedHeader && map.rankCheckedAt !== undefined ? cells[map.rankCheckedAt] : undefined;
+    const rankCheckedAt = parseSeoDate(rawDate);
+    if (rawDate?.trim() && !rankCheckedAt) unreadableDates++;
+
     rows.push({
       keyword,
       searchVolume: parseSeoNumber(pick("searchVolume", 1)),
@@ -185,8 +272,10 @@ export function parseKeywordPaste(text: string): ParsedPaste {
       // Only mapped from a header — positionally guessing a URL is too risky.
       targetUrl: (usedHeader && map.targetUrl !== undefined ? cells[map.targetUrl]?.trim() : "") || null,
       currentRank: usedHeader && map.currentRank !== undefined ? parseSeoNumber(cells[map.currentRank]) : null,
+      rankCheckedAt,
+      intent: (usedHeader && map.intent !== undefined ? cells[map.intent]?.trim() : "") || null,
     });
   }
 
-  return { rows, duplicatesInPaste, usedHeader };
+  return { rows, duplicatesInPaste, usedHeader, mappedFields, unreadableDates };
 }

@@ -145,16 +145,38 @@ function ProjectGroup({ projectName, articles, onOpen, onDelete, isAdmin }: {
   );
 }
 
+/**
+ * Content is open to admins AND to staff carrying can_access_content, so this
+ * can't reuse <AdminOnly>. Same shape though: the gate is a WRAPPER and the
+ * library's hooks live in a child.
+ *
+ * It was an early `return null` sitting above five hooks. That breaks the rules
+ * of hooks for real, not just on paper: `user` is null while auth resolves, so
+ * the first render ran every hook, and the moment `user` came back as a staff
+ * member without content access the early return skipped them all and React
+ * threw "rendered fewer hooks than expected". The redirect also ran during
+ * render rather than in an effect.
+ */
 export default function ContentPage() {
+  const router = useRouter();
+  const { user } = useAuth();
+  // Undecided while auth resolves — render nothing rather than flashing the
+  // library at someone who is about to be redirected out of it.
+  const allowed = user ? user.pmRole === "admin" || user.canAccessContent : null;
+
+  useEffect(() => {
+    if (allowed === false) router.replace("/dashboard");
+  }, [allowed, router]);
+
+  if (!allowed) return null;
+  return <ContentLibrary />;
+}
+
+function ContentLibrary() {
   const router = useRouter();
   const { articles, projects, loadArticles, deleteArticle } = useStore();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-
-  if (user && !isAdmin && !user.canAccessContent) {
-    router.replace("/dashboard");
-    return null;
-  }
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<ArticleStatus | "all">("all");

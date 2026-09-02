@@ -7,7 +7,7 @@
 // EVERY helper THROWS on error (Known Recurring Mistake #13).
 
 import { supabase } from "@/lib/supabase";
-import type { Keyword, ParsedKeywordRow } from "@/lib/keyword-types";
+import type { Keyword, ParsedKeywordRow, KeywordField } from "@/lib/keyword-types";
 
 type Row = {
   id: string;
@@ -82,46 +82,112 @@ export async function addKeyword(
 
 export interface ImportResult {
   inserted: Keyword[];
-  /** Keywords the project already had — skipped rather than duplicated. */
-  skipped: number;
+  /** Existing keywords refreshed from the report. */
+  updated: Keyword[];
+  /** Existing keywords the report changed nothing on. */
+  unchanged: number;
 }
 
 /**
- * Bulk-inserts parsed rows, skipping keywords the project already holds
- * (case-insensitive). Skipping instead of erroring is deliberate: re-pasting a
- * research set that has grown by ten rows should add those ten, not fail.
+ * Imports parsed rows: NEW keywords are inserted, keywords the project already
+ * holds are UPDATED from the report (case-insensitive match on the keyword).
+ *
+ * Updating rather than skipping is the whole point of importing a rank-tracker
+ * export — a monthly ranking report is by definition news about keywords you
+ * already track, and the previous skip-everything behaviour made re-importing
+ * one a silent no-op.
+ *
+ * What an update is allowed to touch is decided by `mappedFields` — the columns
+ * the source actually had:
+ *
+ *  - A field the report doesn't have a column for is never written. Importing a
+ *    volume-only list must not wipe every recorded position.
+ *  - A field it DOES have a column for is written even when the cell is blank,
+ *    because that is the report saying "no value" — a blank Position on a rank
+ *    export means the keyword dropped out of the results, which is exactly the
+ *    news worth recording. The one exception is `targetUrl`: a blank ranking-page
+ *    cell accompanies a keyword that isn't ranking, and it is not a statement
+ *    that the page you're targeting has gone away.
+ *
+ * `rank_checked_at` is stamped whenever the report carries rank information, from
+ * the row's own "Last checked" date when it has one and the import time
+ * otherwise — so a keyword that is checked and NOT ranking is stored as
+ * rank NULL + a timestamp, which is how pm_keywords distinguishes "not ranking"
+ * from "never checked".
  */
 export async function importKeywords(
   projectId: string,
   rows: ParsedKeywordRow[],
+  mappedFields: KeywordField[] = ["searchVolume", "difficulty"],
 ): Promise<ImportResult> {
-  if (rows.length === 0) return { inserted: [], skipped: 0 };
+  if (rows.length === 0) return { inserted: [], updated: [], unchanged: 0 };
 
+  const has = (f: KeywordField) => mappedFields.includes(f);
   const existing = await listKeywords(projectId);
-  const have = new Set(existing.map((k) => k.keyword.trim().toLowerCase()));
-  const fresh = rows.filter((r) => !have.has(r.keyword.trim().toLowerCase()));
-  const skipped = rows.length - fresh.length;
-  if (fresh.length === 0) return { inserted: [], skipped };
+  const byKeyword = new Map(existing.map((k) => [k.keyword.trim().toLowerCase(), k]));
 
-  const baseOrder = existing.length
-    ? Math.max(...existing.map((k) => k.sortOrder)) + 1
-    : 0;
+  const fresh = rows.filter((r) => !byKeyword.has(r.keyword.trim().toLowerCase()));
+  const known = rows
+    .map((r) => ({ row: r, current: byKeyword.get(r.keyword.trim().toLowerCase()) }))
+    .filter((x): x is { row: ParsedKeywordRow; current: Keyword } => !!x.current);
 
-  const { data, error } = await supabase
-    .from("pm_keywords")
-    .insert(fresh.map((r, i) => ({
-      project_id: projectId,
-      keyword: r.keyword,
-      search_volume: r.searchVolume,
-      difficulty: r.difficulty,
-      target_url: r.targetUrl,
-      current_rank: r.currentRank,
-      rank_checked_at: r.currentRank != null ? new Date().toISOString() : null,
-      sort_order: baseOrder + i,
-    })))
-    .select("*");
-  if (error) throw error;
-  return { inserted: ((data as Row[]) ?? []).map(rowToKeyword), skipped };
+  const stamp = new Date().toISOString();
+  const inserted: Keyword[] = [];
+
+  if (fresh.length > 0) {
+    const baseOrder = existing.length ? Math.max(...existing.map((k) => k.sortOrder)) + 1 : 0;
+    const { data, error } = await supabase
+      .from("pm_keywords")
+      .insert(fresh.map((r, i) => ({
+        project_id: projectId,
+        keyword: r.keyword,
+        search_volume: r.searchVolume,
+        difficulty: r.difficulty,
+        target_url: r.targetUrl,
+        current_rank: r.currentRank,
+        // Checked-and-not-ranking is real information, so the timestamp follows
+        // the report carrying a rank COLUMN, not the row having a number in it.
+        rank_checked_at: has("currentRank") ? (r.rankCheckedAt ?? stamp) : null,
+        // A keyword the report shows in the results is already ranking; calling
+        // it "Target" would be wrong on arrival. Only ever set on INSERT.
+        status: has("currentRank") && r.currentRank != null ? "ranking" : "target",
+        notes: r.intent ? `Search intent: ${r.intent}` : null,
+        sort_order: baseOrder + i,
+      })))
+      .select("*");
+    if (error) throw error;
+    inserted.push(...((data as Row[]) ?? []).map(rowToKeyword));
+  }
+
+  const updated: Keyword[] = [];
+  let unchanged = 0;
+
+  for (const { row, current } of known) {
+    const patch: Record<string, unknown> = {};
+    if (has("searchVolume") && row.searchVolume !== current.searchVolume) patch.search_volume = row.searchVolume;
+    if (has("difficulty") && row.difficulty !== current.difficulty) patch.difficulty = row.difficulty;
+    // Blank target URL is absence, not news — see the note above.
+    if (has("targetUrl") && row.targetUrl && row.targetUrl !== current.targetUrl) patch.target_url = row.targetUrl;
+    if (has("currentRank")) {
+      const checkedAt = row.rankCheckedAt ?? stamp;
+      // Re-stamp the check date even when the position is identical: "still #5,
+      // confirmed today" is the answer to "is this number stale?".
+      if (row.currentRank !== current.currentRank) patch.current_rank = row.currentRank;
+      if (checkedAt !== current.rankCheckedAt) patch.rank_checked_at = checkedAt;
+    }
+    if (Object.keys(patch).length === 0) { unchanged++; continue; }
+
+    const { data, error } = await supabase
+      .from("pm_keywords")
+      .update(patch)
+      .eq("id", current.id)
+      .select("*")
+      .single();
+    if (error) throw error;
+    updated.push(rowToKeyword(data as Row));
+  }
+
+  return { inserted, updated, unchanged };
 }
 
 export async function updateKeyword(

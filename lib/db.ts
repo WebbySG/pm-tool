@@ -4,6 +4,9 @@ import type {
   Credential, ProjectTemplate, TaskTemplate, Notification, TaskAttachment,
   Article, ArticleComment, ArticleStatus, ClientApproval, PostType, ProjectMedia,
 } from "./mock-data";
+import {
+  type ProjectTier, DEFAULT_TIER_ICON, DEFAULT_TIER_COLOR, sortTiers,
+} from "./project-tiers";
 
 type Row = Record<string, unknown>;
 
@@ -37,6 +40,9 @@ function rowToTask(row: Row): Task {
     statusChangedAt: (row.status_changed_at as string | null) ?? null,
     discussionNote: (row.discussion_note as string | null) ?? null,
     seoPhase: (row.seo_phase as string | null) ?? null,
+    isArticle: (row.is_article as boolean) ?? false,
+    seoWeek: (row.seo_week as string | null) ?? null,
+    seoSlot: (row.seo_slot as string | null) ?? null,
   };
 }
 
@@ -52,6 +58,21 @@ function rowToProjectMedia(row: Row): ProjectMedia {
   };
 }
 
+function rowToTier(row: Row): ProjectTier {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    // NULL is meaningful (a package that is not a rung on the ladder), so this
+    // must stay null rather than defaulting to a number.
+    level: typeof row.level === "number" ? (row.level as number) : null,
+    shortLabel: (row.short_label as string) ?? "",
+    icon: (row.icon as string) || DEFAULT_TIER_ICON,
+    color: (row.color as string) || DEFAULT_TIER_COLOR,
+    scope: (row.scope as string) ?? "",
+    sortOrder: typeof row.sort_order === "number" ? (row.sort_order as number) : 0,
+  };
+}
+
 function rowToProject(row: Row, tasks: Task[] = [], media: ProjectMedia[] = []): Project {
   return {
     id: row.id as string,
@@ -62,6 +83,7 @@ function rowToProject(row: Row, tasks: Task[] = [], media: ProjectMedia[] = []):
     phase: row.phase as Project["phase"],
     clientId: (row.client_id as string | null) ?? null,
     channelId: (row.channel_id as string | null) ?? null,
+    tierId: (row.tier_id as string | null) ?? null,
     startDate: row.start_date as string,
     dueDate: (row.due_date as string | null) ?? "",
     assignedStaff: (row.assigned_staff as string[]) ?? [],
@@ -87,6 +109,7 @@ export async function loadAll() {
     { data: notifRows },
     { data: articleRows },
     { data: mediaRows },
+    { data: tierRows },
   ] = await Promise.all([
     supabase.from("pm_clients").select("*"),
     supabase.from("pm_channels").select("*").order("order"),
@@ -99,7 +122,13 @@ export async function loadAll() {
     supabase.from("pm_notifications").select("*").order("created_at", { ascending: false }),
     supabase.from("pm_articles").select("*").order("created_at", { ascending: false }),
     supabase.from("pm_project_media").select("*").order("uploaded_at", { ascending: false }),
+    supabase.from("pm_project_tiers").select("*").order("sort_order"),
   ]);
+
+  // sortTiers, not the DB's `order by sort_order`: the tier LADDER (level 1, 2,
+  // 3) is what the badges show, so the list has to be ordered the same way or
+  // the picker would contradict the board.
+  const tiers: ProjectTier[] = sortTiers((tierRows ?? []).map((r: Row) => rowToTier(r)));
 
   const clients: Client[] = (clientRows ?? []).map((r: Row) => ({
     id: r.id as string, name: r.name as string,
@@ -220,7 +249,7 @@ export async function loadAll() {
 
   const articles: Article[] = (articleRows ?? []).map(rowToArticle);
 
-  return { clients, channels, projects, credentials, templates: [...templateMap.values()], notifications, articles };
+  return { clients, channels, projects, tiers, credentials, templates: [...templateMap.values()], notifications, articles };
 }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
@@ -230,6 +259,7 @@ export async function dbAddProject(id: string, data: Omit<Project, "id" | "tasks
     id, name: data.name, description: data.description, type: data.type,
     phase: data.phase, client_id: data.clientId ?? null,
     channel_id: data.channelId ?? null,
+    tier_id: data.tierId ?? null,
     start_date: data.startDate || null,
     due_date: data.dueDate || null,
     assigned_staff: data.assignedStaff,
@@ -242,7 +272,7 @@ export async function dbDeleteProject(id: string) {
   await supabase.from("pm_projects").delete().eq("id", id);
 }
 
-export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "channelId" | "clientId" | "startDate" | "dueDate" | "assignedStaff">>) {
+export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "channelId" | "clientId" | "tierId" | "startDate" | "dueDate" | "assignedStaff">>) {
   const patch: Row = {};
   if (data.name !== undefined) patch.name = data.name;
   if (data.description !== undefined) patch.description = data.description;
@@ -250,6 +280,7 @@ export async function dbUpdateProject(id: string, data: Partial<Pick<Project, "n
   if (data.phase !== undefined) patch.phase = data.phase;
   if (data.channelId !== undefined) patch.channel_id = data.channelId;
   if (data.clientId !== undefined) patch.client_id = data.clientId;
+  if (data.tierId !== undefined) patch.tier_id = data.tierId;
   if (data.startDate !== undefined) patch.start_date = data.startDate || null;
   if (data.dueDate !== undefined) patch.due_date = data.dueDate || null;
   if (data.assignedStaff !== undefined) patch.assigned_staff = data.assignedStaff;
@@ -280,6 +311,57 @@ export async function dbListArchivedProjects(): Promise<Project[]> {
   return ((data ?? []) as Row[]).map((r) => rowToProject(r));
 }
 
+// ─── Project tiers (client packages) ─────────────────────────────────────────
+//
+// The package list behind the tier badge. Read by everyone; INSERT/UPDATE/DELETE
+// are admin-only in the DATABASE (pm_project_tiers_admin_write reuses
+// pm_is_admin()), so these throw rather than failing silently for a staff
+// caller — every caller patches Zustand optimistically first.
+
+export async function dbListProjectTiers(): Promise<ProjectTier[]> {
+  const { data, error } = await supabase
+    .from("pm_project_tiers").select("*").order("sort_order");
+  if (error) { console.error("dbListProjectTiers", error); return []; }
+  return sortTiers(((data ?? []) as Row[]).map(rowToTier));
+}
+
+export async function dbAddProjectTier(tier: Omit<ProjectTier, "id">): Promise<ProjectTier> {
+  const { data, error } = await supabase
+    .from("pm_project_tiers")
+    .insert({
+      name: tier.name, level: tier.level, short_label: tier.shortLabel, icon: tier.icon,
+      color: tier.color, scope: tier.scope, sort_order: tier.sortOrder,
+    })
+    .select()
+    .single();
+  // The id is generated by Postgres, so the row has to come back before the
+  // caller can put it in the store — no optimistic id to reconcile later.
+  if (error) throw error;
+  return rowToTier(data as Row);
+}
+
+export async function dbUpdateProjectTier(id: string, data: Partial<Omit<ProjectTier, "id">>) {
+  const patch: Row = {};
+  if (data.name !== undefined) patch.name = data.name;
+  // `!== undefined`, not a truthiness check: null is how the admin takes a
+  // package OFF the ladder, and it has to reach the database.
+  if (data.level !== undefined) patch.level = data.level;
+  if (data.shortLabel !== undefined) patch.short_label = data.shortLabel;
+  if (data.icon !== undefined) patch.icon = data.icon;
+  if (data.color !== undefined) patch.color = data.color;
+  if (data.scope !== undefined) patch.scope = data.scope;
+  if (data.sortOrder !== undefined) patch.sort_order = data.sortOrder;
+  const { error } = await supabase.from("pm_project_tiers").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+// Projects on this package are NOT deleted — pm_projects.tier_id is ON DELETE
+// SET NULL, so they just lose the badge until they are relabelled.
+export async function dbDeleteProjectTier(id: string) {
+  const { error } = await supabase.from("pm_project_tiers").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
 export async function dbAddTask(id: string, projectId: string, data: Partial<Task> & { title: string }) {
@@ -297,7 +379,14 @@ export async function dbAddTask(id: string, projectId: string, data: Partial<Tas
     recurring: data.recurring ?? null,
     recurring_day: data.recurringDay ?? null,
     seo_phase: data.seoPhase ?? null,
+    is_article: data.isArticle ?? false,
+    // Was missing until the Articles sheet shipped: "Add article" asks for the
+    // live-link workflow, and dropping it here made admin Approve close the
+    // task instead of parking it in pending_article_post.
+    requires_article_post: data.requiresArticlePost ?? false,
   });
+
+
   if (error) {
     console.error("dbAddTask", error);
     throw new Error(error.message || error.details || error.hint || "Unknown DB error");
@@ -330,7 +419,25 @@ export async function dbUpdateTask(taskId: string, patch: Row) {
   if (error) throw error;
 }
 
+/**
+ * Mark (or unmark) a batch of tasks as articles — the Sheet's "Mark shown as
+ * articles" action. Chunked so one oversized URL can't fail the batch, and it
+ * THROWS: the caller patches Zustand optimistically, so a swallowed error would
+ * look like it saved until the next refresh quietly undid it.
+ */
+export async function dbSetTasksArticle(taskIds: string[], value: boolean) {
+  for (let i = 0; i < taskIds.length; i += 50) {
+    const chunk = taskIds.slice(i, i + 50);
+    const { error } = await supabase
+      .from("pm_tasks")
+      .update({ is_article: value })
+      .in("id", chunk);
+    if (error) throw error;
+  }
+}
+
 export async function dbUpdateTasksBulk(taskIds: string[], patch: Row) {
+
   if (taskIds.length === 0) return;
   const { error } = await supabase.from("pm_tasks").update(patch).in("id", taskIds);
   if (error) console.error("dbUpdateTasksBulk", error);

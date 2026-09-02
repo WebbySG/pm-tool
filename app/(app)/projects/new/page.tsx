@@ -7,7 +7,9 @@ import { type Task } from "@/lib/mock-data";
 import { X, Check, ChevronDown, ChevronUp, ListChecks, RotateCcw, Loader2 } from "lucide-react";
 import { useDraft } from "@/lib/use-draft";
 import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/lib/auth-context";
+import { AdminOnly } from "@/components/admin-guard";
+import { sortTiers, scopeLines, tierFullLabel } from "@/lib/project-tiers";
+import { TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
 
 interface LiveStaff {
   id: string;
@@ -26,16 +28,34 @@ function addDays(dateStr: string, days: number): string {
 
 let seedCounter = 1000;
 
+/**
+ * Creating a project is admin-only.
+ *
+ * The gate is a WRAPPER, not an early return inside the form. It used to be
+ * `if (user && user.pmRole !== "admin") return null;` sitting above a dozen
+ * hooks, which breaks the rules of hooks for real rather than only on paper:
+ * `user` is null while auth resolves, so the first render ran every hook, and
+ * the moment `user` came back as staff the early return skipped them all and
+ * React threw "rendered fewer hooks than expected". It also called
+ * router.replace() during render — a side effect in a render pass.
+ *
+ * AdminOnly is the pattern used by every other admin page (credentials/new,
+ * settings/packages, expenses …): it waits for auth to load, shows a real
+ * "Access Restricted" panel instead of a blank screen, and — because the form
+ * is a child — the form's hooks only ever mount for an admin.
+ */
 export default function NewProjectPage() {
-  const router = useRouter();
-  const { user } = useAuth();
-  const { addProject, channels, templates, projects } = useStore();
-  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
+  return (
+    <AdminOnly>
+      <NewProjectForm />
+    </AdminOnly>
+  );
+}
 
-  if (user && user.pmRole !== "admin") {
-    router.replace("/projects");
-    return null;
-  }
+function NewProjectForm() {
+  const router = useRouter();
+  const { addProject, channels, templates, projects, tiers } = useStore();
+  const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
     supabase
@@ -50,6 +70,7 @@ export default function NewProjectPage() {
     clientId: null as null,
     channelId: null as string | null,
     type: "webdev" as "webdev" | "seo" | "both",
+    tierId: null as string | null,
     phase: "discovery" as const,
     description: "",
     startDate: new Date().toISOString().split("T")[0],
@@ -125,7 +146,11 @@ export default function NewProjectPage() {
         statusChangedAt: new Date().toISOString(),
         seoPhase: null,
         discussionNote: null,
+        isArticle: false,
+        seoWeek: null,
+        seoSlot: null,
       }));
+
     });
 
     try {
@@ -205,6 +230,36 @@ export default function NewProjectPage() {
               })}
             </div>
           </div>
+
+          {/* Client package — the tier badge staff will read the scope off.
+              Optional at creation; it can be set from the projects list or the
+              project header later. */}
+          {tiers.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4a7090" }}>CLIENT PACKAGE</label>
+              <div className="flex flex-wrap gap-2">
+                {sortTiers(tiers).map((tier) => {
+                  const active = form.tierId === tier.id;
+                  return (
+                    <button
+                      key={tier.id}
+                      onClick={() => setForm({ ...form, tierId: active ? null : tier.id })}
+                      title={`${tierFullLabel(tier)} — ${scopeLines(tier.scope).join(" · ") || "no scope recorded"}`}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                      style={{
+                        background: active ? tier.color + "20" : "#0e1e30",
+                        border: `1px solid ${active ? tier.color : "#1c3248"}`,
+                        color: active ? tier.color : "#4a7090",
+                      }}
+                    >
+                      <TierLevelMark level={tier.level} color={active ? tier.color : "#4a7090"} size={14} />
+                      <TierIconGlyph icon={tier.icon} size={13} /> {tier.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Task Templates */}
           {matchingTemplates.length > 0 && (

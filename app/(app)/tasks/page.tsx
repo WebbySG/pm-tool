@@ -351,6 +351,7 @@ export default function TasksPage() {
       const newId = await addProject({
         clientId: null,
         channelId: null,
+        tierId: null,
         name,
         type: "webdev",
         phase: "discovery",

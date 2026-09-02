@@ -158,6 +158,21 @@ export interface Task {
   requiresArticlePost: boolean;
   // The live URL recorded via "Mark as Posted" (permanent record).
   articleUrl: string | null;
+  // Explicit "this task is an article" flag — the identity the Articles sheet
+  // (/articles + the project Articles tab) counts by. NEVER match articles by
+  // title: 62 live tasks contain the word "article" without being one, and 19
+  // real articles with live URLs are titled only "Monday" or "wednesday post".
+  // Set by the weekly generator, by "+ Add article", and by the admin toggle in
+  // the task drawer. See lib/articles.ts and scripts/task-is-article.sql.
+  isArticle: boolean;
+  // Weekly SEO engine identity (see lib/weekly-seo.ts). seoWeek is the Monday
+  // of the week the row belongs to; seoSlot is which piece of that week it is
+  // (articles-parent | article-1..3 | backlinks | gmb). NULL on every
+  // hand-made task. Mapped through so the Articles sheet can file a generated
+  // article under its own week rather than guessing from a due date.
+  seoWeek: string | null;
+  seoSlot: string | null;
+
   // When the task last changed status (DB trigger pm_tasks_set_status_changed_at;
   // stamped optimistically client-side too). Lets the admin tell a NEW
   // pending_review submission from an old one.
@@ -202,6 +217,9 @@ export interface Project {
   slug?: string | null;
   clientId: string | null;
   channelId: string | null;
+  // Which package this client is on (pm_project_tiers.id), or null when the
+  // project has not been labelled. Drives the tier badge + its scope tooltip.
+  tierId: string | null;
   name: string;
   type: TaskType;
   phase: ProjectPhase;

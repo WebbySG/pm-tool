@@ -3,7 +3,7 @@
 //
 // It is a TASK, not a checklist: a parent "SEO Setup" task on the board with
 // one child per phase, in the order the work actually happens —
-//   1. Keyword Research → 2. Technical SEO → 3. On-Page Fixes
+//   1. Competitors → 2. Keyword Research → 3. Technical SEO → 4. On-Page Fixes
 // so the admin can review each phase on its own, and the next staff member can
 // see what has been done and which keywords are being targeted.
 //
@@ -11,7 +11,12 @@
 // that creates the tasks and the panel that displays them share one definition
 // and can't drift.
 
-export type SeoPhaseKey = "setup" | "keyword-research" | "technical-seo" | "onpage-fixes";
+export type SeoPhaseKey =
+  | "setup"
+  | "competitors"
+  | "keyword-research"
+  | "technical-seo"
+  | "onpage-fixes";
 
 export interface SeoPhase {
   key: SeoPhaseKey;
@@ -35,14 +40,25 @@ export const SEO_SETUP_PARENT: SeoPhase = {
   label: "SEO Setup",
   color: "#22c55e",
   description:
-    "<p>The standard SEO start for this client. Work through the three phases below in order — keyword research first, then the technical fixes, then on-page.</p>" +
+    "<p>The standard SEO start for this client. Work through the four phases below in order — competitors first, then keyword research, then the technical fixes, then on-page.</p>" +
     "<p>Each phase is its own task: write what you did in that task, so the next person can pick up from it and the work can be checked.</p>",
 };
 
 export const SEO_PHASES: SeoPhase[] = [
   {
+    // First on purpose: the client usually names their competitors at kickoff,
+    // and who they are does not depend on our keyword research or rankings.
+    key: "competitors",
+    title: "1. Competitors",
+    label: "Competitors",
+    color: "#f59e0b",
+    description:
+      "<p>Record who this client is up against — the competitors the client named, plus any others dominating the search results for their services and area.</p>" +
+      "<p>For each one note the website, what they are doing well (content, backlinks, Google Business Profile, site speed) and the gap we can win on. Keep it here so the next person can see who we are benchmarking against without asking the client again.</p>",
+  },
+  {
     key: "keyword-research",
-    title: "1. Keyword Research",
+    title: "2. Keyword Research",
     label: "Keyword Research",
     color: "#22c55e",
     description:
@@ -51,7 +67,7 @@ export const SEO_PHASES: SeoPhase[] = [
   },
   {
     key: "technical-seo",
-    title: "2. Technical SEO",
+    title: "3. Technical SEO",
     label: "Technical SEO",
     color: "#38b6e8",
     description:
@@ -60,7 +76,7 @@ export const SEO_PHASES: SeoPhase[] = [
   },
   {
     key: "onpage-fixes",
-    title: "3. On-Page Fixes",
+    title: "4. On-Page Fixes",
     label: "On-Page Fixes",
     color: "#a855f7",
     description:
@@ -92,7 +108,7 @@ export interface SeoSetupTaskDef {
 
 /**
  * The rows to create for a newly-labelled SEO project: the parent first, then
- * its phase children in order. Sort order keeps them 1-2-3 in every list
+ * its phase children in order. Sort order keeps them 1-2-3-4 in every list
  * (loadAll orders pm_tasks by sort_order, then created_at).
  */
 export function seoSetupTaskDefs(): { parent: SeoSetupTaskDef; children: SeoSetupTaskDef[] } {

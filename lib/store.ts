@@ -19,6 +19,7 @@ import {
 } from "./mock-data";
 import * as db from "./db";
 import { isSeoProjectType, seoSetupTaskDefs } from "./seo-setup";
+import { type ProjectTier, sortTiers } from "./project-tiers";
 import { uploadAttachment, uploadProjectFile, supabase } from "./supabase";
 import { notifyPush } from "./push";
 import { errorMessage } from "./utils";
@@ -29,6 +30,9 @@ interface Store {
   credentials: Credential[];
   clients: Client[];
   channels: Channel[];
+  // The client packages behind the tier badge (pm_project_tiers). Admin-managed
+  // in Settings -> Client Packages; every project points at one or at none.
+  tiers: ProjectTier[];
   templates: ProjectTemplate[];
   articles: Article[];
   initialized: boolean;
@@ -42,6 +46,13 @@ interface Store {
   renameChannel: (channelId: string, name: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
   moveProjectToChannel: (projectId: string, channelId: string | null) => Promise<void>;
+
+  // Client package (tier) actions. Managing the package LIST is admin-only in
+  // the DB; labelling a project is admin-only in the UI.
+  setProjectTier: (projectId: string, tierId: string | null) => Promise<void>;
+  addProjectTier: (tier: Omit<ProjectTier, "id" | "sortOrder">) => Promise<void>;
+  updateProjectTier: (tierId: string, data: Partial<Omit<ProjectTier, "id">>) => Promise<void>;
+  deleteProjectTier: (tierId: string) => Promise<void>;
 
   // Template actions
   addTemplate: (tpl: Omit<ProjectTemplate, "id" | "tasks">) => Promise<void>;
@@ -69,6 +80,9 @@ interface Store {
   approveTaskCompletion: (projectId: string, taskId: string, taskTitle: string) => Promise<void>;
   markArticlePosted: (projectId: string, taskId: string, taskTitle: string, staffDisplayName: string, url: string) => Promise<void>;
   setTaskRequiresArticlePost: (projectId: string, taskId: string, value: boolean) => Promise<void>;
+  setTaskIsArticle: (projectId: string, taskId: string, value: boolean) => Promise<void>;
+  setTasksIsArticle: (taskIds: string[], value: boolean) => Promise<void>;
+
   // Admin's reference note on a task parked in 'to_be_discussed' (auto-cleared
   // by DB trigger + statusPatch when the status moves on).
   setTaskDiscussionNote: (projectId: string, taskId: string, note: string) => Promise<void>;
@@ -88,7 +102,8 @@ interface Store {
   updateTaskDueDate: (projectId: string, taskId: string, dueDate: string) => Promise<void>;
   updateTaskRecurring: (projectId: string, taskId: string, recurring: RecurringFrequency) => Promise<void>;
   addTask: (projectId: string, task: Partial<Task> & { title: string }) => Promise<string>;
-  addSubtask: (projectId: string, parentTaskId: string, subtask: { title: string; assigneeId: string; dueDate: string }) => Promise<void>;
+  addSubtask: (projectId: string, parentTaskId: string, subtask: { title: string; assigneeId: string; dueDate: string; isArticle?: boolean }) => Promise<void>;
+
   updateSubtask: (projectId: string, taskId: string, subtaskId: string, data: Partial<Task>) => Promise<void>;
   updateSubtaskStatus: (projectId: string, taskId: string, subtaskId: string, status: TaskStatus) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
@@ -105,7 +120,7 @@ interface Store {
   // Standard SEO work set for a project labelled SEO / Web + SEO. Idempotent —
   // returns true only when it actually created the tasks.
   ensureSeoSetupTasks: (projectId: string) => Promise<boolean>;
-  updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "channelId" | "startDate" | "dueDate">>) => Promise<void>;
+  updateProject: (projectId: string, data: Partial<Pick<Project, "name" | "description" | "type" | "phase" | "clientId" | "channelId" | "tierId" | "startDate" | "dueDate">>) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   archiveProject: (projectId: string) => Promise<void>;
   unarchiveProject: (projectId: string) => Promise<void>;
@@ -146,7 +161,16 @@ function patchTaskInTree(tasks: Task[], taskId: string, patch: Partial<Task>): T
   });
 }
 
+/** patchTaskInTree for a whole batch of ids in one walk. */
+function patchTasksInTree(tasks: Task[], ids: Set<string>, patch: Partial<Task>): Task[] {
+  return tasks.map((t) => {
+    const next = ids.has(t.id) ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t;
+    return next.subtasks.length ? { ...next, subtasks: patchTasksInTree(next.subtasks, ids, patch) } : next;
+  });
+}
+
 function appendChildInTree(tasks: Task[], parentId: string, child: Task): Task[] {
+
   return tasks.map((t) => {
     if (t.id === parentId) return { ...t, subtasks: [...t.subtasks, child] };
     if (t.subtasks.length) return { ...t, subtasks: appendChildInTree(t.subtasks, parentId, child) };
@@ -349,6 +373,7 @@ export const useStore = create<Store>()(
   credentials: [],
   clients: [],
   channels: [],
+  tiers: [],
   templates: [],
   articles: [],
   initialized: false,
@@ -406,6 +431,64 @@ export const useStore = create<Store>()(
     } catch (e) {
       // Snap the card back to the channel it's actually in.
       set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, channelId: previous })) }));
+      throw e;
+    }
+  },
+
+  // ─── Client packages (tier badges) ────────────────────────────────────────
+
+  // Label a project with a package (or clear it with null). Optimistic so the
+  // badge flips on the card immediately; rolled back and rethrown on failure —
+  // a swallowed error here would look labelled until the next refresh silently
+  // undid it (Known Recurring Mistake #13).
+  setProjectTier: async (projectId, tierId) => {
+    const previous = get().projects.find((p) => p.id === projectId)?.tierId ?? null;
+    if (previous === tierId) return;
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tierId })) }));
+    try {
+      await db.dbUpdateProject(projectId, { tierId });
+    } catch (e) {
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tierId: previous })) }));
+      throw e;
+    }
+  },
+
+  // NOT optimistic: the id comes from Postgres (gen_random_uuid), so the row has
+  // to come back before it can go in the store.
+  addProjectTier: async (tier) => {
+    const sortOrder = get().tiers.reduce((max, t) => Math.max(max, t.sortOrder), -1) + 1;
+    const created = await db.dbAddProjectTier({ ...tier, sortOrder });
+    set((s) => ({ tiers: sortTiers([...s.tiers, created]) }));
+  },
+
+  updateProjectTier: async (tierId, data) => {
+    const before = get().tiers.find((t) => t.id === tierId);
+    set((s) => ({ tiers: sortTiers(s.tiers.map((t) => t.id !== tierId ? t : { ...t, ...data })) }));
+    try {
+      await db.dbUpdateProjectTier(tierId, data);
+    } catch (e) {
+      if (before) set((s) => ({ tiers: sortTiers(s.tiers.map((t) => t.id !== tierId ? t : before)) }));
+      throw e;
+    }
+  },
+
+  // Deleting a package never touches its projects — pm_projects.tier_id is
+  // ON DELETE SET NULL — but the store holds its own copy, so clear the pointer
+  // here too or those cards keep rendering a badge that no longer exists.
+  deleteProjectTier: async (tierId) => {
+    const before = get().tiers;
+    const beforeProjects = get().projects.filter((p) => p.tierId === tierId).map((p) => p.id);
+    set((s) => ({
+      tiers: s.tiers.filter((t) => t.id !== tierId),
+      projects: s.projects.map((p) => p.tierId === tierId ? { ...p, tierId: null } : p),
+    }));
+    try {
+      await db.dbDeleteProjectTier(tierId);
+    } catch (e) {
+      set((s) => ({
+        tiers: before,
+        projects: s.projects.map((p) => beforeProjects.includes(p.id) ? { ...p, tierId } : p),
+      }));
       throw e;
     }
   },
@@ -648,7 +731,42 @@ export const useStore = create<Store>()(
     await db.dbUpdateTask(taskId, { requires_article_post: value });
   },
 
+  // Counts (or stops counting) this task on the Articles sheet. Rolls the
+  // optimistic patch back on failure — a silently-discarded write here would
+  // look like it worked until the next refresh dropped the row again.
+  setTaskIsArticle: async (projectId, taskId, value) => {
+    set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { isArticle: value }) })) }));
+    try {
+      await db.dbUpdateTask(taskId, { is_article: value });
+    } catch (err) {
+      set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { isArticle: !value }) })) }));
+      throw err;
+    }
+  },
+
+  // Bulk version, for the Sheet's "Mark shown as articles". Task ids may span
+  // several projects (the global sheet), so it patches every project's tree
+  // rather than one. Restores the whole batch and rethrows on failure.
+  setTasksIsArticle: async (taskIds, value) => {
+    if (taskIds.length === 0) return;
+    const ids = new Set(taskIds);
+    const flip = (v: boolean) => (s: { projects: Project[] }) => ({
+      projects: s.projects.map((p) => ({
+        ...p,
+        tasks: patchTasksInTree(p.tasks, ids, { isArticle: v }),
+      })),
+    });
+    set(flip(value));
+    try {
+      await db.dbSetTasksArticle(taskIds, value);
+    } catch (err) {
+      set(flip(!value));
+      throw err;
+    }
+  },
+
   setTaskDiscussionNote: async (projectId, taskId, note) => {
+
     const value = note.trim() || null;
     set((s) => ({ projects: patchProject(s.projects, projectId, (p) => ({ ...p, tasks: patchTaskInTree(p.tasks, taskId, { discussionNote: value }) })) }));
     await db.dbUpdateTask(taskId, { discussion_note: value });
@@ -814,11 +932,15 @@ export const useStore = create<Store>()(
       deletionRequestedBy: null,
       deletionRequestedAt: null,
       archivedAt: null,
-      requiresArticlePost: false,
+      requiresArticlePost: taskData.requiresArticlePost ?? false,
       articleUrl: null,
       statusChangedAt: new Date().toISOString(),
       discussionNote: null,
       seoPhase: taskData.seoPhase ?? null,
+      isArticle: taskData.isArticle ?? false,
+
+      seoWeek: null,
+      seoSlot: null,
     };
     if (newTask.parentId) {
       set((s) => ({
@@ -840,6 +962,7 @@ export const useStore = create<Store>()(
           try {
             await db.dbAddProject(projectId, {
               clientId: project.clientId, channelId: project.channelId,
+              tierId: project.tierId,
               name: project.name, type: project.type, phase: project.phase,
               description: project.description, startDate: project.startDate,
               dueDate: project.dueDate, assignedStaff: project.assignedStaff,
@@ -884,12 +1007,16 @@ export const useStore = create<Store>()(
       statusChangedAt: new Date().toISOString(),
       discussionNote: null,
       seoPhase: null,
+      isArticle: subtaskData.isArticle ?? false,
+      seoWeek: null,
+      seoSlot: null,
     };
     set((s) => ({
       projects: patchProject(s.projects, projectId, (p) => ({
         ...p, tasks: appendChildInTree(p.tasks, parentTaskId, newTask),
       })),
     }));
+
     db.dbAddTask(id, projectId, { ...newTask, parentId: parentTaskId });
   },
 
@@ -1032,9 +1159,9 @@ export const useStore = create<Store>()(
   },
 
   // The standard SEO work set: a parent "SEO Setup" task with one child per
-  // phase — keyword research -> technical SEO -> on-page fixes — so the work is
-  // assignable, reviewable and visible on the board, and the next staff member
-  // can see what has been done.
+  // phase — competitors -> keyword research -> technical SEO -> on-page fixes —
+  // so the work is assignable, reviewable and visible on the board, and the next
+  // staff member can see what has been done.
   //
   // Idempotent, and it checks the TABLE rather than the store: archived tasks
   // keep their seo_phase and still hold the pm_tasks_seo_phase_unique index, so
@@ -1060,6 +1187,9 @@ export const useStore = create<Store>()(
       if (!assigneeId && project.assignedStaff.length === 1) assigneeId = project.assignedStaff[0];
       const { parent, children } = seoSetupTaskDefs();
       let created = false;
+      // Phase key -> task id, so a gap filled later can be put back in the right
+      // board position rather than at the bottom (see the reorder below).
+      const idByPhase = new Map(existing.map((r) => [r.seoPhase, r.id]));
       // Fills GAPS rather than all-or-nothing: if someone deleted one phase, the
       // tab can put that phase back without duplicating the others.
       // dueDate "" (not undefined) means NO due date — addTask defaults an
@@ -1073,14 +1203,31 @@ export const useStore = create<Store>()(
         created = true;
       }
       // Sequential on purpose: loadAll orders pm_tasks by sort_order then
-      // created_at, so inserting in order is what keeps the phases reading 1-2-3.
+      // created_at, so inserting in order is what keeps the phases reading 1-2-3-4.
       for (const child of children) {
         if (have.has(child.seoPhase)) continue;
-        await get().addTask(projectId, {
+        const childId = await get().addTask(projectId, {
           parentId, title: child.title, description: child.description,
           type: "seo", assigneeId, dueDate: "", seoPhase: child.seoPhase,
         });
+        idByPhase.set(child.seoPhase, childId);
         created = true;
+      }
+      // Insertion order alone is only right when the whole set is new. Filling a
+      // gap — a phase deleted and re-added, or a phase added to the standard set
+      // after these tasks were created — lands the new row LAST by created_at,
+      // which would read as "1. Competitors" at the bottom of the subtasks.
+      // Stamping the canonical order fixes it everywhere (loadAll orders by
+      // sort_order first). Cosmetic, so never let it fail the seeding.
+      if (created) {
+        try {
+          const ordered = children
+            .map((c, i) => ({ id: idByPhase.get(c.seoPhase), sortOrder: i }))
+            .filter((r): r is { id: string; sortOrder: number } => !!r.id);
+          if (ordered.length) await db.dbReorderTasks(ordered);
+        } catch (e) {
+          console.error("ensureSeoSetupTasks: reorder failed", e);
+        }
       }
       return created;
     } catch (e) {
@@ -1311,6 +1458,7 @@ export const useStore = create<Store>()(
       credentials: s.credentials,
       clients: s.clients,
       channels: s.channels,
+      tiers: s.tiers,
       templates: s.templates,
       articles: s.articles,
     }),

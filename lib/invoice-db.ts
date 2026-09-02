@@ -273,6 +273,29 @@ export async function updateInvoice(
   // Any field not in the patch is read back from the current row so totals stay correct.
   const needTotals =
     patch.lineItems !== undefined || patch.discountType !== undefined || patch.discountValue !== undefined;
+
+  // The PRE-EDIT money state, read before the total is overwritten. Changing the
+  // amount of an invoice changes its balance (balance = total - paid), so a row
+  // that was 'paid' may no longer be — and once the new total is written, what
+  // was owed (and what was paid, on a legacy row with no ledger) is unrecoverable.
+  let pre: { status: string; total: number; paidAt: string | null; issueDate: string; payments: number } | null = null;
+  if (needTotals) {
+    const { data: preRow } = await supabase.from("pm_invoices")
+      .select("status, total, paid_at, issue_date").eq("id", id).single();
+    const { count } = await supabase.from("pm_invoice_payments")
+      .select("id", { count: "exact", head: true }).eq("invoice_id", id);
+    if (preRow) {
+      const r = preRow as Row;
+      pre = {
+        status: (r.status as string) ?? "draft",
+        total: num(r.total),
+        paidAt: (r.paid_at as string | null) ?? null,
+        issueDate: (r.issue_date as string) ?? "",
+        payments: count ?? 0,
+      };
+    }
+  }
+
   if (needTotals) {
     let lineItems = patch.lineItems;
     let discountType = patch.discountType;
@@ -308,6 +331,35 @@ export async function updateInvoice(
   }
 
   await logInvoiceEvent(id, "updated", "Invoice updated", actor);
+
+  // Reconcile the paid status against the NEW total. Without this an invoice
+  // that was fully paid and then had a line item added stayed status='paid'
+  // while really owing the difference — and because every payment button was
+  // gated on status==='sent', there was no way left in the UI to record it.
+  if (pre && round2(pre.total) !== round2(num(updates.total))) {
+    // A legacy 'paid' row (marked paid before the payment ledger existed) holds
+    // no payment rows, so the reconcile below would read it as never paid and
+    // silently wipe paid_at. Materialise what was paid — the total as it stood —
+    // so the money already received survives as a real ledger entry and only the
+    // difference becomes outstanding.
+    if (pre.status === "paid" && pre.payments === 0 && pre.total > 0) {
+      const paidAt = pre.paidAt || (pre.issueDate ? `${pre.issueDate}T12:00:00Z` : new Date().toISOString());
+      const { error: payErr } = await supabase.from("pm_invoice_payments").insert({
+        invoice_id: id,
+        amount: round2(pre.total),
+        paid_at: paidAt,
+        reference: "Recorded before payment tracking",
+        recorded_by: actor,
+      });
+      if (payErr) throw payErr;
+      await logInvoiceEvent(
+        id, "payment_recorded",
+        `Payment of S$${round2(pre.total).toFixed(2)} carried over from the invoice's paid record`,
+        actor,
+      );
+    }
+    await syncInvoicePaidStatus(id);
+  }
 }
 
 export async function deleteInvoice(id: string): Promise<void> {
@@ -400,11 +452,15 @@ export async function markInvoicePaid(id: string, actor: string | null, note: st
   const paid = round2(inv.payments.reduce((s, p) => s + p.amount, 0));
   const balance = round2(inv.total - paid);
   if (balance > 0) {
+    // A row already marked paid but holding no ledger entry was paid before the
+    // payment ledger existed. Recording it TODAY would move the earning into the
+    // current month on the earnings chart, so keep the date it was actually paid.
+    const legacyPaidAt = inv.status === "paid" && inv.payments.length === 0 ? inv.paidAt : null;
     const { error } = await supabase.from("pm_invoice_payments").insert({
       invoice_id: id,
       amount: balance,
-      paid_at: new Date().toISOString(),
-      reference: note?.trim() || null,
+      paid_at: legacyPaidAt || new Date().toISOString(),
+      reference: note?.trim() || (legacyPaidAt ? "Recorded before payment tracking" : null),
       recorded_by: actor,
     });
     if (error) throw error;

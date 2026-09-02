@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { Topbar } from "@/components/topbar";
-import { UserPlus, Shield, Bell, Key, Bot, Check, Palette } from "lucide-react";
+import { UserPlus, Shield, Bell, Key, Bot, Check, Palette, Package } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 import { THEMES, type ThemeName, getStoredTheme, applyTheme } from "@/lib/theme";
 
 // ── Compact theme card ────────────────────────────────────────────────────────
@@ -79,6 +80,8 @@ function ThemeCard({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.pmRole === "admin";
   const [activeTheme, setActiveTheme] = useState<ThemeName>("dark");
 
   useEffect(() => {
@@ -146,6 +149,38 @@ export default function SettingsPage() {
             </a>
           </div>
         </section>
+
+        {/* ── Client Packages (admin) ── */}
+        {isAdmin && (
+          <section
+            className="rounded-2xl overflow-hidden"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-8 h-8 rounded-xl flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}
+                >
+                  <Package size={15} color="#fff" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-sm" style={{ color: "var(--text)" }}>Client Packages</h2>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                    The tier badge beside each project — and the work scope staff read off it
+                  </p>
+                </div>
+              </div>
+              <a
+                href="/settings/packages"
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80 shrink-0"
+                style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}
+              >
+                <Package size={14} /> Manage Packages
+              </a>
+            </div>
+          </section>
+        )}
 
         {/* ── AI Settings ── */}
         <section

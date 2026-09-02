@@ -493,14 +493,17 @@ export default function InvoiceDetailPage() {
                   <Send size={12} /> Mark as sent
                 </button>
               )}
-              {inv.status === "sent" && (
+              {/* Driven by the BALANCE, not the stored status: an invoice marked
+                  paid whose total later grew still owes the difference, and
+                  gating this on status==='sent' left no way to record it. */}
+              {inv.status !== "draft" && balanceDue > 0 && (
                 <button onClick={openPayDialog}
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
                   style={{ background: "#22c55e20", color: "#22c55e" }}>
                   <Wallet size={12} /> Record payment
                 </button>
               )}
-              {inv.status === "paid" && (
+              {(inv.status === "paid" || inv.payments.length > 0) && (
                 <button onClick={handleMarkUnpaid}
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
                   style={{
@@ -547,7 +550,7 @@ export default function InvoiceDetailPage() {
                 <Wallet size={15} style={{ color: "#22c55e" }} />
                 <span className="text-sm font-semibold" style={{ color: "var(--text)" }}>Payments</span>
               </div>
-              {inv.status === "sent" && balanceDue > 0 && (
+              {balanceDue > 0 && (
                 <div className="flex items-center gap-2">
                   <button onClick={handleMarkFullyPaid}
                     className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"

@@ -177,8 +177,8 @@ export function SeoWorkPanel({ projectId, isSeoProject, tasks, staff, canCreate,
             </button>
           )}
           <p className="text-xs max-w-md" style={{ color: "#4a7090" }}>
-            Keyword research, then technical SEO, then on-page fixes — one parent task with a
-            subtask per phase. New SEO projects get these automatically.
+            Competitors, keyword research, technical SEO, then on-page fixes — one parent task
+            with a subtask per phase. New SEO projects get these automatically.
           </p>
         </div>
       </div>

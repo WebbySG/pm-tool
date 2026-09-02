@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Key,
-  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock, CalendarDays, History, ReceiptText,
+  Users, Bell, Settings, Zap, ListChecks, LogOut, FileEdit, Archive, Receipt, MessageSquare, CalendarClock, CalendarDays, History, ReceiptText, FileText,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
@@ -13,6 +13,8 @@ const ALL_NAV = [
   { href: "/dashboard",   label: "Dashboard",     icon: LayoutDashboard, color: "#818cf8", adminOnly: false },
   { href: "/projects",    label: "Projects",      icon: FolderKanban,    color: "#60a5fa", adminOnly: false },
   { href: "/tasks",       label: "All Tasks",     icon: CheckSquare,     color: "#34d399", adminOnly: false },
+  { href: "/articles",    label: "Articles",      icon: FileText,        color: "#38b6e8", adminOnly: false },
+
   { href: "/chat",        label: "Chat",          icon: MessageSquare,   color: "#f472b6", adminOnly: false, chatBadge: true },
   { href: "/content",     label: "Content",       icon: FileEdit,        color: "#10b981", adminOnly: false },
   { href: "/archive",     label: "Archive",       icon: Archive,         color: "#6b7280", adminOnly: false },

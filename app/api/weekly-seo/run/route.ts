@@ -154,8 +154,12 @@ async function ensureWeek(
         // Admin approval parks these in pending_article_post until the live
         // link is recorded — see the Article-Post Workflow.
         requires_article_post: true,
+        // Counts on the Articles sheet from the moment it is generated, so a
+        // week's pending articles are visible without anyone tagging them.
+        is_article: true,
         due_date: a.dueIso,
         seo_slot: a.slot,
+
       });
       if (insErr) throw insErr;
     }

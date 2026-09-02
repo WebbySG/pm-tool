@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { Bell, BellRing, Search, Plus, ChevronLeft, FolderKanban, CheckSquare } from "lucide-react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
+import { findTier, tierFullLabel } from "@/lib/project-tiers";
+import { TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
 import { useAuth } from "@/lib/auth-context";
 import { type Task } from "@/lib/mock-data";
 import {
@@ -19,7 +21,7 @@ interface TopbarProps {
 }
 
 export function Topbar({ title, back, action }: TopbarProps) {
-  const { notifications, projects } = useStore();
+  const { notifications, projects, tiers } = useStore();
   const { user } = useAuth();
   const router = useRouter();
   const isAdmin = user?.pmRole === "admin";
@@ -151,7 +153,9 @@ export function Topbar({ title, back, action }: TopbarProps) {
             {results.projects.length > 0 && (
               <>
                 <p className="text-[10px] font-bold uppercase tracking-widest px-3 pt-2.5 pb-1" style={{ color: "var(--text-muted)" }}>Projects</p>
-                {results.projects.map((p) => (
+                {results.projects.map((p) => {
+                  const tier = findTier(tiers, p.tierId);
+                  return (
                   <button
                     key={p.id}
                     onMouseDown={(e) => { e.preventDefault(); goTo(`/projects/${p.slug || p.id}`); }}
@@ -160,9 +164,20 @@ export function Topbar({ title, back, action }: TopbarProps) {
                   >
                     <FolderKanban size={14} style={{ color: "var(--accent)" }} className="shrink-0" />
                     <span className="text-sm font-medium truncate flex-1">{p.name}</span>
+                    {tier && (
+                      <span
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold shrink-0"
+                        style={{ background: tier.color + "22", color: tier.color }}
+                        title={tierFullLabel(tier)}
+                      >
+                        <TierLevelMark level={tier.level} color={tier.color} size={12} />
+                        <TierIconGlyph icon={tier.icon} size={10} /> {tier.name}
+                      </span>
+                    )}
                     <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>{p.type === "webdev" ? "Web" : p.type === "seo" ? "SEO" : "Web + SEO"}</span>
                   </button>
-                ))}
+                  );
+                })}
               </>
             )}
             {results.tasks.length > 0 && (

@@ -7,6 +7,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { isClosedStatus } from "@/lib/mock-data";
+import { findTier } from "@/lib/project-tiers";
+import { TierBadge } from "@/components/tier-badge";
 
 function priorityColor(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -37,7 +39,7 @@ interface LiveStaff {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { projects: allProjects, notifications, clients } = useStore();
+  const { projects: allProjects, notifications, clients, tiers } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -144,6 +146,7 @@ export default function DashboardPage() {
                   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                   const isWeb = project.type === "webdev";
                   const typeColor = isWeb ? "#818cf8" : "#34d399";
+                  const tier = findTier(tiers, project.tierId);
 
                   return (
                     <Link
@@ -159,6 +162,7 @@ export default function DashboardPage() {
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${typeColor}20`, color: typeColor }}>
                             {isWeb ? "Web Dev" : "SEO"}
                           </span>
+                          {tier && <TierBadge tier={tier} showName />}
                           {client && <span className="text-xs" style={{ color: "#4a7090" }}>{client.name}</span>}
                         </div>
                         <p className="text-sm font-semibold truncate mb-2" style={{ color: "#cce4ff" }}>{project.name}</p>

@@ -15,6 +15,9 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { errorMessage } from "@/lib/utils";
+import { findTier, tierFullLabel } from "@/lib/project-tiers";
+import { TierBadge, TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
+import { TierPickerMenu } from "@/components/tier-picker";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -228,6 +231,12 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
   const [confirmArchive, setConfirmArchive] = useState(false);
   const staffBtnRef = useRef<HTMLButtonElement>(null);
   const [staffAnchor, setStaffAnchor] = useState<DOMRect | null>(null);
+  const tierBtnRef = useRef<HTMLButtonElement>(null);
+  const [tierAnchor, setTierAnchor] = useState<DOMRect | null>(null);
+  const tiers = useStore((st) => st.tiers);
+  // findTier, not a bare lookup: a project can still point at a package that was
+  // deleted from under it, and a broken badge is worse than none.
+  const tier = findTier(tiers, project.tierId);
 
 
   const done = project.tasks.filter((t) => t.status === "done").length;
@@ -270,6 +279,34 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
           >
             {project.type === "seo" ? "SEO" : project.type === "both" ? "Web + SEO" : "Web Dev"}
           </span>
+
+          {/* Client package. Admins click it to relabel without opening the
+              project; staff get the same badge read-only, and hovering either
+              shows the scope. */}
+          {isAdmin ? (
+            <button
+              ref={tierBtnRef}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setTierAnchor(tierAnchor ? null : (tierBtnRef.current?.getBoundingClientRect() ?? null));
+              }}
+              title={tier ? `${tierFullLabel(tier)} — click to change the package` : "Set the client package"}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold transition-colors"
+              style={{
+                background: tier ? tier.color + "22" : "var(--bg-surface)",
+                border: `1px solid ${tier ? tier.color + "55" : "var(--border)"}`,
+                color: tier ? tier.color : "#4a7090",
+              }}
+            >
+              {tier && <TierLevelMark level={tier.level} color={tier.color} size={13} />}
+              <TierIconGlyph icon={tier?.icon ?? "Package"} size={11} />
+              {tier ? tier.name : "Package"}
+            </button>
+          ) : tier ? (
+            <TierBadge tier={tier} showName />
+          ) : null}
+
           <div className="flex-1" />
           {isAdmin && (
             <button
@@ -424,6 +461,16 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
           </div>
         </div>
       </Link>
+
+      {isAdmin && tierAnchor && (
+        <TierPickerMenu
+          projectId={project.id}
+          currentTierId={project.tierId}
+          anchor={tierAnchor}
+          triggerRef={tierBtnRef}
+          onClose={() => setTierAnchor(null)}
+        />
+      )}
 
       {isAdmin && staffAnchor && (
         <StaffAssignMenu

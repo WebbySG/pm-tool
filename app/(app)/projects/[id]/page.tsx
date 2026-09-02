@@ -17,12 +17,18 @@ import { WeeklySeoPanel } from "@/components/weekly-seo-panel";
 import { SeoWorkPanel } from "@/components/seo-work-panel";
 import { isSeoProjectType } from "@/lib/seo-setup";
 import { KeywordResearchPanel } from "@/components/keyword-research-panel";
+import { TaskSheet } from "@/components/task-sheet";
+import { AddArticleDialog } from "@/components/add-article-dialog";
+import { articleRows, sheetRowsForProject, type SheetRow } from "@/lib/task-sheet";
 import { dbGetWeeklyReports, dbCreateWeeklyReport, dbUpdateWeeklyReport, dbDeleteWeeklyReport, type WeeklyReport } from "@/lib/db";
 import Link from "next/link";
 import { ScheduleTab } from "@/components/schedule-tab";
 import { useDraft } from "@/lib/use-draft";
 import { useDiscardGuard } from "@/components/discard-guard";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
+import { findTier, scopeLines, tierFullLabel, tierLevelLabel } from "@/lib/project-tiers";
+import { TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
+import { TierPickerMenu } from "@/components/tier-picker";
 
 interface LiveStaff {
   id: string;
@@ -60,7 +66,7 @@ function findTaskDeep(tasks: Task[], id: string): Task | null {
   return null;
 }
 
-type ProjectTab = "board" | "schedule" | "files" | "pinned" | "content" | "seo-work" | "keywords" | "reports" | "weekly-seo";
+type ProjectTab = "board" | "sheet" | "schedule" | "files" | "pinned" | "content" | "seo-work" | "keywords" | "reports" | "weekly-seo";
 
 type NewTaskForm = {
   title: string;
@@ -80,7 +86,8 @@ export default function ProjectDetailPage() {
   const taskQueryId = searchParams.get("task");
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
-  const { projects, initialized, templates, articles, channels, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, uploadProjectMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+  const { projects, initialized, templates, articles, channels, tiers, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, uploadProjectMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
+
   // The URL segment may be the readable slug ("asc-racking") or the UUID —
   // resolve once and use the real UUID for every DB call below.
   const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
@@ -95,10 +102,37 @@ export default function ProjectDetailPage() {
     return walk(projectRaw?.tasks ?? []);
   }, [projectRaw?.tasks]);
   const showSeoTabs = !!projectRaw && (isSeoProjectType(projectRaw.type) || hasSeoWork);
+  // ── Sheet tab ─────────────────────────────────────────────────────────────
+  // Every task of this client as one flat, editable grid — the spreadsheet view
+  // of the board, and where articles get ticked (in bulk, from its toolbar).
+  const projectSheetRows = useMemo(
+    () => (projectRaw ? sheetRowsForProject(projectRaw) : []),
+    [projectRaw],
+  );
+  const articlesOutstanding = useMemo(
+    () => articleRows(projectSheetRows)
+      .filter((r) => r.bucket !== "done" && r.bucket !== "closed").length,
+    [projectSheetRows],
+  );
+  const [showAddArticle, setShowAddArticle] = useState(false);
+  // Who writes this client's articles — the most frequent assignee among them,
+  // used to pre-fill "Add article" so the common case is one field and Save.
+  const commonArticleAssignee = useMemo(() => {
+    const tally = new Map<string, number>();
+    for (const r of articleRows(projectSheetRows)) {
+      if (r.assigneeId) tally.set(r.assigneeId, (tally.get(r.assigneeId) ?? 0) + 1);
+    }
+    let best = "", bestN = 0;
+    for (const [id, n] of tally) if (n > bestN) { best = id; bestN = n; }
+    return best;
+  }, [projectSheetRows]);
+
   // Falls back to the board rather than rendering an empty pane if the selected
   // tab has just been hidden (project relabelled while it was open).
   const activeTab: ProjectTab =
-    !showSeoTabs && (activeTabRaw === "seo-work" || activeTabRaw === "keywords") ? "board" : activeTabRaw;
+    !showSeoTabs && (activeTabRaw === "seo-work" || activeTabRaw === "keywords")
+      ? "board"
+      : activeTabRaw;
   // ── Weekly reports state ──────────────────────────────────────────────────
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
@@ -120,6 +154,8 @@ export default function ProjectDetailPage() {
   const [showAddPin, setShowAddPin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", type: "webdev" as "webdev" | "seo" | "both", channelId: null as string | null, startDate: "", dueDate: "" });
+  const tierBtnRef = useRef<HTMLButtonElement>(null);
+  const [tierAnchor, setTierAnchor] = useState<DOMRect | null>(null);
   const [showApplyTemplate, setShowApplyTemplate] = useState(false);
   const [applyTemplateIds, setApplyTemplateIds] = useState<string[]>([]);
   const [applyTemplateExpanded, setApplyTemplateExpanded] = useState<string | null>(null);
@@ -281,6 +317,8 @@ export default function ProjectDetailPage() {
   const done = project.tasks.filter((t) => t.status === "done").length;
   const pct = project.tasks.length > 0 ? Math.round((done / project.tasks.length) * 100) : 0;
   const typeColor = project.type === "seo" ? "#22c55e" : project.type === "both" ? "#a855f7" : "#38b6e8";
+  const tier = findTier(tiers, project.tierId);
+  const tierScope = tier ? scopeLines(tier.scope) : [];
   const assignedUsers = liveStaff.filter((s) => project.assignedStaff.includes(staffAuthId(s)));
   const unassignedUsers = liveStaff.filter((s) => !project.assignedStaff.includes(staffAuthId(s)));
   // Staff only see tasks assigned to them; admins see everything
@@ -490,6 +528,15 @@ export default function ProjectDetailPage() {
           </button>
         </div>
       )}
+      {isAdmin && tierAnchor && (
+        <TierPickerMenu
+          projectId={project.id}
+          currentTierId={project.tierId}
+          anchor={tierAnchor}
+          triggerRef={tierBtnRef}
+          onClose={() => setTierAnchor(null)}
+        />
+      )}
       <div className="flex flex-col h-full">
 
         {/* Project header */}
@@ -501,6 +548,36 @@ export default function ProjectDetailPage() {
                   <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: typeColor + "20", color: typeColor }}>
                     {project.type === "seo" ? "SEO" : project.type === "both" ? "Web + SEO" : "Web Dev"}
                   </span>
+                  {/* Client package. The scope is spelled out below rather than
+                      hidden in a tooltip — on the project you are working on,
+                      the quotas ARE the brief. */}
+                  {isAdmin ? (
+                    <button
+                      ref={tierBtnRef}
+                      onClick={() => setTierAnchor(tierAnchor ? null : (tierBtnRef.current?.getBoundingClientRect() ?? null))}
+                      title={tier ? `${tierFullLabel(tier)} — change the client package` : "Set the client package"}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+                      style={{
+                        background: tier ? tier.color + "20" : "#0e1e30",
+                        border: `1px solid ${tier ? tier.color + "55" : "#1c3248"}`,
+                        color: tier ? tier.color : "#4a7090",
+                      }}
+                    >
+                      {tier && <TierLevelMark level={tier.level} color={tier.color} size={13} />}
+                      <TierIconGlyph icon={tier?.icon ?? "Package"} size={11} />
+                      {tier ? tier.name : "Set package"}
+                    </button>
+                  ) : tier ? (
+                    <span
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+                      style={{ background: tier.color + "20", border: `1px solid ${tier.color}55`, color: tier.color }}
+                      title={tierFullLabel(tier)}
+                    >
+                      <TierLevelMark level={tier.level} color={tier.color} size={13} />
+                      <TierIconGlyph icon={tier.icon} size={11} />
+                      {tier.name}
+                    </span>
+                  ) : null}
                   {isAdmin && (
                     <button
                       onClick={openEdit}
@@ -513,6 +590,22 @@ export default function ProjectDetailPage() {
                   )}
                 </div>
                 <p className="text-sm" style={{ color: "#4a7090" }}>{project.description}</p>
+                {tier && tierScope.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <span className="text-xs font-semibold" style={{ color: tier.color }}>
+                      {tierLevelLabel(tier) ? `${tierLevelLabel(tier)} scope:` : "Scope:"}
+                    </span>
+                    {tierScope.map((line, i) => (
+                      <span
+                        key={i}
+                        className="text-xs px-2 py-0.5 rounded-md"
+                        style={{ background: tier.color + "12", color: "#7ea8cc", border: `1px solid ${tier.color}25` }}
+                      >
+                        {line}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Assigned staff — editing is ADMIN-ONLY (project staffing is an
@@ -598,7 +691,7 @@ export default function ProjectDetailPage() {
           {/* Tabs */}
           <div className="flex items-center" style={{ borderBottom: "1px solid #1c3248" }}>
             {([
-              "board", "schedule", "files", "pinned", "content",
+              "board", "sheet", "schedule", "files", "pinned", "content",
               // The SEO tabs belong to SEO work: shown for a project labelled SEO /
               // Web + SEO, and kept visible on a project that still holds the work
               // set after being relabelled, so its record never becomes unreachable.
@@ -642,6 +735,19 @@ export default function ProjectDetailPage() {
                         <Search size={13} />Keywords
                       </span>
                     )
+                    : tab === "sheet" ? (
+                      <span
+                        className="flex items-center gap-1.5"
+                        title={articlesOutstanding > 0 ? `${articlesOutstanding} article${articlesOutstanding !== 1 ? "s" : ""} still outstanding` : undefined}
+                      >
+                        <FileText size={13} />Sheet
+                        {articlesOutstanding > 0 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "#f59e0b20", color: "#f59e0b" }}>{articlesOutstanding}</span>
+                        )}
+                      </span>
+                    )
+
+
                     : tab === "content" ? (
                       <span className="flex items-center gap-1.5">
                         Content
@@ -1124,7 +1230,32 @@ export default function ProjectDetailPage() {
             />
           )}
 
+          {/* SHEET — every task of this client as one flat, editable grid: the
+              spreadsheet view of the board. It reads the store task tree and
+              writes through the same store actions, so a change made here, on
+              the board or in the drawer shows in all three immediately. This is
+              also where a task is ticked as an article (in bulk from the
+              toolbar) — the Articles page counts nothing that isn't ticked. */}
+          {activeTab === "sheet" && (
+            <TaskSheet
+              rows={projectSheetRows}
+              staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
+              showClient={false}
+              canEdit={(r: SheetRow) =>
+                isAdmin || (!!user?.id && (r.assigneeId === user.id || r.assigneeId === ""))}
+              isAdmin={isAdmin}
+              onOpen={(r: SheetRow) => {
+                const t = findTaskDeep(project.tasks, r.id);
+                if (t) setSelectedTask(t);
+              }}
+              onAdd={() => setShowAddArticle(true)}
+              exportName={`${project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-tasks`}
+              currentUserName={user?.name || user?.email || "Someone"}
+            />
+          )}
+
           {/* WEEKLY SEO — admin only; manages this project's pm_weekly_seo_plans row */}
+
           {activeTab === "weekly-seo" && isAdmin && (
             <WeeklySeoPanel
               projectId={project.id}
@@ -1538,8 +1669,23 @@ export default function ProjectDetailPage() {
         </>
       )}
 
+      {showAddArticle && (
+        <AddArticleDialog
+          projectId={project.id}
+          projects={[{ id: project.id, name: project.name }]}
+          staff={liveStaff.map((s) => ({ id: staffAuthId(s), name: staffName(s) }))}
+          // Whoever already holds this client's articles is almost always the
+          // one writing the next: the most common assignee across the sheet.
+          defaultAssigneeId={commonArticleAssignee}
+          onClose={() => setShowAddArticle(false)}
+          onCreated={() => setActiveTab("sheet")}
+
+        />
+      )}
+
       <TaskDrawer task={liveSelectedTask} projectId={project.id} onClose={() => setSelectedTask(null)} />
     </>
   );
 }
+
 
