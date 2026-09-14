@@ -18,6 +18,8 @@ import { errorMessage } from "@/lib/utils";
 import { findTier, tierFullLabel } from "@/lib/project-tiers";
 import { TierBadge, TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
 import { TierPickerMenu } from "@/components/tier-picker";
+import { useVisibleProjects, useViewer } from "@/lib/use-visible";
+import { canSeeTask } from "@/lib/task-visibility";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -224,6 +226,7 @@ function StaffAssignMenu({
 
 // ─── Draggable project card ───────────────────────────────────────────────
 function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Project; isAdmin: boolean; liveStaff: LiveStaff[] }) {
+  const viewer = useViewer();
   const { deleteProject, archiveProject } = useStore();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: project.id });
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.3 : 1, touchAction: "none" };
@@ -239,8 +242,12 @@ function DraggableProjectCard({ project, isAdmin, liveStaff }: { project: Projec
   const tier = findTier(tiers, project.tierId);
 
 
-  const done = project.tasks.filter((t) => t.status === "done").length;
-  const total = project.tasks.length;
+  // canSeeTask removes the ancestor "shells" kept so a staff member can reach
+  // their own subtask — a parent owned by someone else must not pad the count.
+  // For an admin the predicate is always true, so this is unchanged for them.
+  const countable = project.tasks.filter((t) => canSeeTask(t, viewer));
+  const done = countable.filter((t) => t.status === "done").length;
+  const total = countable.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const typeColor = project.type === "seo" ? "#22c55e" : project.type === "both" ? "#a855f7" : "#38b6e8";
   const dueDateMs = project.dueDate ? new Date(project.dueDate).getTime() : NaN;
@@ -581,9 +588,9 @@ function ProjectsPageInner() {
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const { projects: allProjects, channels, addChannel, moveProjectToChannel } = useStore();
-  const projects = isAdmin
-    ? allProjects
-    : allProjects.filter((p) => p.assignedStaff.includes(user?.id ?? ""));
+  // Scoped: the projects a staff member is on, each carrying only tasks they
+  // may see — so the done/total on each card describes their own work.
+  const projects = useVisibleProjects();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);

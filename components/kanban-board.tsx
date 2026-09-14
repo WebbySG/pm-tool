@@ -9,6 +9,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
+import type { SurfacedTask } from "@/lib/task-surfacing";
 
 interface LiveStaff {
   id: string; user_id: string | null; email: string;
@@ -17,7 +18,7 @@ interface LiveStaff {
 function staffAuthId(s: LiveStaff) { return s.user_id ?? s.id; }
 function staffInitials(s: LiveStaff) { return s.avatar_initials || [s.first_name, s.last_name].filter(Boolean).join(" ").slice(0, 2).toUpperCase() || s.email.slice(0, 2).toUpperCase(); }
 import { useStore } from "@/lib/store";
-import { Calendar, Clock, Plus, Paperclip, RefreshCw } from "lucide-react";
+import { Calendar, Clock, Plus, Paperclip, RefreshCw, CornerDownRight } from "lucide-react";
 
 const STATUS_COLS: { key: TaskStatus; label: string; color: string }[] = [
   { key: "todo", label: "To Do", color: "#4a7090" },
@@ -39,7 +40,7 @@ function priorityColor(p: number): string {
 }
 
 // ─── Static card (used in DragOverlay and SortableCard) ──────────────────────
-export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClick: () => void; liveStaff?: LiveStaff[] }) {
+export function TaskCard({ task, onClick, liveStaff = [] }: { task: SurfacedTask; onClick: () => void; liveStaff?: LiveStaff[] }) {
   const assignee = liveStaff.find((s) => staffAuthId(s) === task.assigneeId);
   const overdue = task.status !== "done" && task.status !== "rejected" && task.status !== "pending_review" && task.status !== "pending_client_approval" && task.status !== "to_be_discussed" && !!task.dueDate && new Date(task.dueDate) < new Date();
   const subtaskDone = task.subtasks.filter((s) => s.status === "done").length;
@@ -62,6 +63,15 @@ export function TaskCard({ task, onClick, liveStaff = [] }: { task: Task; onClic
         <div className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full w-fit" style={{ background: "#a855f720", color: "#a855f7", border: "1px solid #a855f740" }}>
           <Clock size={10} />
           Submitted {new Date(task.statusChangedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+        </div>
+      )}
+      {/* A parked SUBTASK is shown as its own card (its status never rolls up to
+          the parent, so otherwise it has no card at all). Name the parent, or
+          the card looks like a stray top-level task. */}
+      {task.parentTitle && (
+        <div className="flex items-center gap-1 text-xs truncate" style={{ color: "#4a7090" }}>
+          <CornerDownRight size={10} className="shrink-0" />
+          <span className="truncate" title={task.parentTitle}>{task.parentTitle}</span>
         </div>
       )}
       <div className="flex items-start justify-between gap-1">
@@ -222,10 +232,14 @@ export function KanbanBoard({ projectId, tasks, onTaskClick, onAddTask, liveStaf
       if (movedTask.status !== overTask.status) {
         updateTaskStatus(projectId, movedTask.id, overTask.status);
       } else {
-        const colTasks = tasks.filter((t) => t.status === movedTask.status);
+        // Top-level only: a surfaced subtask's sort_order belongs to its own
+        // parent's child list, and restamping it here would reshuffle that.
+        // Dragging one BETWEEN columns still works — that is a status change,
+        // handled above.
+        const colTasks = tasks.filter((t) => t.status === movedTask.status && !t.parentId);
         const oldIndex = colTasks.findIndex((t) => t.id === movedTask.id);
         const newIndex = colTasks.findIndex((t) => t.id === overTask.id);
-        if (oldIndex !== newIndex) {
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
           const reordered = arrayMove(colTasks, oldIndex, newIndex);
           reorderTasks(projectId, movedTask.status, reordered.map((t) => t.id));
         }

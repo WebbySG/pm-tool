@@ -1,6 +1,8 @@
 "use client";
 import { Topbar } from "@/components/topbar";
 import { useStore } from "@/lib/store";
+import { useVisibleProjects, useViewer } from "@/lib/use-visible";
+import { canSeeTask } from "@/lib/task-visibility";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { dbListArchivedTasks, dbListArchivedProjects } from "@/lib/db";
@@ -21,7 +23,11 @@ type TaskWithProject = Task & { projectName: string; projectId: string };
 const AVATAR_COLORS = ["#818cf8", "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee"];
 
 export default function ArchivePage() {
-  const { projects, updateTaskStatus, archiveTask, unarchiveTask, unarchiveProject } = useStore();
+  const { updateTaskStatus, archiveTask, unarchiveTask, unarchiveProject } = useStore();
+  // Scoped: this page listed done tasks from EVERY project, filtered only by
+  // assignee — so it ignored the project boundary and left subtasks unfiltered.
+  const projects = useVisibleProjects();
+  const viewer = useViewer();
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
@@ -50,13 +56,13 @@ export default function ArchivePage() {
       const rows = await dbListArchivedTasks();
       setArchived(
         rows
-          .filter((t) => (isAdmin ? true : t.assigneeId === user?.id))
+          .filter((t) => canSeeTask(t, viewer))
           .map((t) => ({ ...t, projectName: projectName(t.projectId), projectId: t.projectId })),
       );
     } finally {
       setArchivedLoading(false);
     }
-  }, [isAdmin, user?.id, projectName]);
+  }, [viewer, projectName]);
 
   useEffect(() => { if (tab === "archived") void loadArchived(); }, [tab, loadArchived]);
 
@@ -81,7 +87,7 @@ export default function ArchivePage() {
 
   const doneTasks: TaskWithProject[] = projects.flatMap((p) =>
     p.tasks
-      .filter((t) => t.status === "done" && (!isAdmin ? t.assigneeId === user?.id : true))
+      .filter((t) => t.status === "done" && canSeeTask(t, viewer))
       .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   ).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 

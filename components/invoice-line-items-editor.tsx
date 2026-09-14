@@ -1,7 +1,10 @@
 "use client";
-import { Plus, Trash2 } from "lucide-react";
-import type { DiscountType } from "@/lib/invoice-types";
-import { computeInvoiceTotals } from "@/lib/invoice-types";
+import { useState } from "react";
+import { Plus, Trash2, FileText, Loader2, Check, X, Search } from "lucide-react";
+import type { DiscountType, InvoiceTemplate } from "@/lib/invoice-types";
+import { computeInvoiceTotals, appendTemplateLineItems, templateAlreadyAdded } from "@/lib/invoice-types";
+import { loadInvoiceTemplates } from "@/lib/invoice-db";
+import { errorMessage } from "@/lib/utils";
 
 export type LineItemDraft = { description: string; qty: number; unitPrice: number };
 
@@ -13,6 +16,10 @@ interface Props {
   discountType?: DiscountType;
   discountValue?: number;
   onDiscountChange?: (type: DiscountType, value: number) => void;
+  /** Shows "Add from template", which APPENDS a template's lines (e.g. SEO + SEM on one invoice). */
+  allowTemplates?: boolean;
+  /** Hide this template from the picker — the template form passes its own id. */
+  excludeTemplateId?: string;
 }
 
 function formatMoney(amount: number, currency: string) {
@@ -22,7 +29,17 @@ function formatMoney(amount: number, currency: string) {
 export function LineItemsEditor({
   items, onChange, currency = "SGD",
   discountType, discountValue, onDiscountChange,
+  allowTemplates = false, excludeTemplateId,
 }: Props) {
+  // Template picker — loaded on first open, not on mount, so the editor costs
+  // nothing on pages where nobody reaches for it.
+  const [tplOpen, setTplOpen] = useState(false);
+  const [templates, setTemplates] = useState<InvoiceTemplate[] | null>(null);
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplError, setTplError] = useState<string | null>(null);
+  const [tplQuery, setTplQuery] = useState("");
+  const [lastAdded, setLastAdded] = useState<string | null>(null);
+
   function update(i: number, patch: Partial<LineItemDraft>) {
     onChange(items.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
   }
@@ -30,7 +47,27 @@ export function LineItemsEditor({
     onChange(items.filter((_, idx) => idx !== i));
   }
   function add() {
+    setLastAdded(null);
     onChange([...items, { description: "", qty: 1, unitPrice: 0 }]);
+  }
+
+  async function loadTemplates() {
+    setTplLoading(true); setTplError(null);
+    try { setTemplates(await loadInvoiceTemplates()); }
+    catch (e: unknown) { setTplError(errorMessage(e)); }
+    finally { setTplLoading(false); }
+  }
+  function toggleTemplates() {
+    if (tplOpen) { setTplOpen(false); return; }
+    setTplOpen(true);
+    setLastAdded(null);
+    if (!templates && !tplLoading) void loadTemplates();
+  }
+  function addTemplate(tpl: InvoiceTemplate) {
+    onChange(appendTemplateLineItems(items, tpl.lineItems));
+    setLastAdded(`Added ${tpl.name} — ${tpl.lineItems.length} line${tpl.lineItems.length !== 1 ? "s" : ""}`);
+    setTplOpen(false);
+    setTplQuery("");
   }
 
   // Enter → new line auto-prefixed with a "  • " bullet (matches the template bullet style).
@@ -75,6 +112,11 @@ export function LineItemsEditor({
     lineItems: items, discountType: dType, discountValue: dValue,
   });
   const moneyPrefix = currency === "SGD" ? "S$" : currency;
+
+  const q = tplQuery.trim().toLowerCase();
+  const pickable = (templates ?? [])
+    .filter((t) => t.id !== excludeTemplateId)
+    .filter((t) => !q || t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
 
   return (
     <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
@@ -128,12 +170,111 @@ export function LineItemsEditor({
           </button>
         </div>
       ))}
+
+      {/* Template picker — rendered in flow, NOT as an absolute dropdown: this
+          editor is overflow-hidden, which would clip a popup. */}
+      {allowTemplates && tplOpen && (
+        <div className="px-4 py-3 flex flex-col gap-2"
+          style={{ background: "var(--bg-base)", borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              Add a template&apos;s lines to this {showDiscount ? "document" : "template"}
+            </span>
+            <button type="button" onClick={() => setTplOpen(false)} title="Close"
+              className="ml-auto flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg"
+              style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+              <X size={11} /> Close
+            </button>
+          </div>
+
+          {tplLoading ? (
+            <div className="flex items-center gap-2 text-sm py-3" style={{ color: "var(--text-muted)" }}>
+              <Loader2 size={13} className="animate-spin" /> Loading templates…
+            </div>
+          ) : tplError ? (
+            <div className="flex items-center gap-2 text-xs py-2" style={{ color: "#ef4444" }}>
+              ⚠ Couldn&apos;t load templates — {tplError}
+              <button type="button" onClick={() => void loadTemplates()} className="underline font-semibold">Retry</button>
+            </div>
+          ) : (
+            <>
+              {(templates?.length ?? 0) > 6 && (
+                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                  style={{ border: "1px solid var(--border)" }}>
+                  <Search size={12} style={{ color: "var(--text-muted)" }} />
+                  <input value={tplQuery} onChange={(e) => setTplQuery(e.target.value)} autoFocus
+                    placeholder="Search templates…"
+                    className="bg-transparent text-sm outline-none flex-1"
+                    style={{ color: "var(--text)" }} />
+                </div>
+              )}
+              {pickable.length === 0 ? (
+                <p className="text-sm py-2" style={{ color: "var(--text-muted)" }}>
+                  {q ? "No template matches that search." : "No other templates yet."}
+                </p>
+              ) : (
+                <div className="flex flex-col max-h-72 overflow-y-auto rounded-lg" style={{ border: "1px solid var(--border)" }}>
+                  {pickable.map((tpl) => {
+                    const lines = tpl.lineItems.length;
+                    const tplTotal = tpl.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
+                    const single = lines === 1 && tpl.lineItems[0].qty !== 1
+                      ? ` (${tpl.lineItems[0].qty} × ${formatMoney(tpl.lineItems[0].unitPrice, currency)})` : "";
+                    const already = templateAlreadyAdded(items, tpl.lineItems);
+                    return (
+                      <div key={tpl.id} className="flex items-center gap-3 px-3 py-2"
+                        style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-surface)" }}>
+                        <FileText size={13} style={{ color: "#a78bfa", flexShrink: 0 }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold truncate" style={{ color: "var(--text)" }}>{tpl.name}</p>
+                          <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                            {lines} line{lines !== 1 ? "s" : ""} · {formatMoney(tplTotal, currency)}{single}
+                            {already && <span style={{ color: "#22c55e" }}> · already added</span>}
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => addTemplate(tpl)} disabled={lines === 0}
+                          title={lines === 0 ? "This template has no line items" : `Append ${tpl.name}'s lines`}
+                          className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg shrink-0"
+                          style={{
+                            background: "var(--accent)20", color: "var(--accent)",
+                            opacity: lines === 0 ? 0.4 : 1,
+                          }}>
+                          <Plus size={11} /> {already ? "Add again" : "Add"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4 px-4 py-3" style={{ background: "var(--bg-surface)" }}>
-        <button onClick={add} type="button"
-          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0"
-          style={{ background: "var(--accent)20", color: "var(--accent)" }}>
-          <Plus size={12} /> Add line item
-        </button>
+        <div className="flex flex-col gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={add} type="button"
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+              style={{ background: "var(--accent)20", color: "var(--accent)" }}>
+              <Plus size={12} /> Add line item
+            </button>
+            {allowTemplates && (
+              <button onClick={toggleTemplates} type="button"
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                style={{
+                  background: tplOpen ? "#a78bfa25" : "transparent", color: "#a78bfa",
+                  border: "1px solid #a78bfa60",
+                }}>
+                <FileText size={12} /> Add from template
+              </button>
+            )}
+          </div>
+          {lastAdded && (
+            <p className="flex items-center gap-1 text-xs" style={{ color: "#22c55e" }}>
+              <Check size={11} /> {lastAdded}
+            </p>
+          )}
+        </div>
 
         {showDiscount ? (
           <div className="w-72 flex flex-col gap-1.5">

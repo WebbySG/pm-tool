@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { useAuth } from "@/lib/auth-context";
+import { useVisibleProjects } from "@/lib/use-visible";
 import { useStore, uuid } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { dbAddAttachment } from "@/lib/db";
@@ -106,7 +107,17 @@ function isSameDay(a: string, b: string) {
 
 export default function ChatPage() {
   const { user } = useAuth();
-  const { projects } = useStore();
+  /**
+   * SCOPED, not the raw store.
+   *
+   * `projects` is threaded from here into every child as a prop, so this one
+   * line scopes the whole page: the `#` task picker (which previously
+   * enumerated EVERY task in the database with no project scoping at all), the
+   * Tasks side-panel, the per-conversation task badge counts, the Media panel's
+   * task images, and the [task:<id>] reference cards. A reference to a task the
+   * viewer may not see already degrades to "[task unavailable]".
+   */
+  const projects = useVisibleProjects();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [convs, setConvs] = useState<ConversationWithUnread[]>([]);
   const [convSearch, setConvSearch] = useState("");

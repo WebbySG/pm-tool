@@ -22,6 +22,7 @@ import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { articleRows, sheetRows, summariseByProject, type SheetRow } from "@/lib/task-sheet";
+import { useVisibleProjects } from "@/lib/use-visible";
 import { projectPath } from "@/lib/utils";
 import { FileText } from "lucide-react";
 
@@ -63,14 +64,14 @@ export default function ArticlesPage() {
       .then(({ data }) => setStaff((data as StaffRow[]) ?? []));
   }, [user?.id]);
 
-  // Staff see the articles of the projects they're staffed on — the same
-  // visibility boundary as /projects and the dashboard.
-  const visibleProjects = useMemo(
-    () => (isAdmin ? projects : projects.filter((p) => !!userId && p.assignedStaff.includes(userId))),
-    [projects, isAdmin, userId],
-  );
+  // Staff see the articles of the projects they're staffed on, and within those
+  // only their own (or unassigned) work. useVisibleProjects applies BOTH halves
+  // — the project boundary and the per-task rule — so this page cannot drift
+  // from the board. It previously scoped projects but not tasks, so a staff
+  // member saw every colleague's article for any client they shared.
+  const scopedProjects = useVisibleProjects();
 
-  const rows = useMemo(() => sheetRows(visibleProjects), [visibleProjects]);
+  const rows = useMemo(() => sheetRows(scopedProjects), [scopedProjects]);
   const articles = useMemo(() => articleRows(rows), [rows]);
   const today = useMemo(() => todayInSingapore(), []);
   const byClient = useMemo(() => summariseByProject(articles, today), [articles, today]);
@@ -81,8 +82,8 @@ export default function ArticlesPage() {
   );
 
   const projectOptions = useMemo(
-    () => visibleProjects.map((p) => ({ id: p.id, name: p.name })),
-    [visibleProjects],
+    () => scopedProjects.map((p) => ({ id: p.id, name: p.name })),
+    [scopedProjects],
   );
 
   const shown = useMemo(
@@ -138,7 +139,7 @@ export default function ArticlesPage() {
           </div>
         )}
 
-        {visibleProjects.length === 0 ? (
+        {scopedProjects.length === 0 ? (
           <div className="text-center py-20 flex flex-col items-center gap-3">
             <FileText size={32} style={{ color: "#1c3248" }} />
             <p className="text-sm" style={{ color: "#4a7090" }}>

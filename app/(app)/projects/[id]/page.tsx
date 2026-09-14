@@ -27,6 +27,9 @@ import { useDraft } from "@/lib/use-draft";
 import { useDiscardGuard } from "@/components/discard-guard";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes } from "@/lib/utils";
 import { findTier, scopeLines, tierFullLabel, tierLevelLabel } from "@/lib/project-tiers";
+import { useViewer } from "@/lib/use-visible";
+import { canSeeProject, filterTaskTree, taskProgress } from "@/lib/task-visibility";
+import { withSurfacedDescendants } from "@/lib/task-surfacing";
 import { TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
 import { TierPickerMenu } from "@/components/tier-picker";
 
@@ -84,14 +87,36 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const taskQueryId = searchParams.get("task");
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const isAdmin = user?.pmRole === "admin";
+  const viewer = useViewer();
   const { projects, initialized, templates, articles, channels, tiers, addTask, uploadTaskAttachment, updateProject, assignStaff, removeStaff, uploadProjectMedia, removeMedia, addPinnedItem, removePinnedItem, addNotification, approveArticleAsAdmin, updateArticleStatus } = useStore();
 
   // The URL segment may be the readable slug ("asc-racking") or the UUID —
   // resolve once and use the real UUID for every DB call below.
-  const projectRaw = projects.find((p) => p.id === params.id || p.slug === params.id);
-  const projectId = projectRaw?.id ?? params.id;
+  const projectSource = projects.find((p) => p.id === params.id || p.slug === params.id);
+  const projectId = projectSource?.id ?? params.id;
+
+  /**
+   * THE scoping point for this whole page.
+   *
+   * Two separate holes were open here. (1) There was no access check at all —
+   * `projects` is the full store, so a staff member could open any project by
+   * URL and read its Sheet, SEO Work and Reports tabs. (2) Only the board and
+   * schedule tabs filtered tasks by assignee; five other surfaces read
+   * `project.tasks` raw and showed other staff members' work.
+   *
+   * Resolving both HERE means every tab below — including any added later —
+   * reads an already-scoped project. A forbidden project resolves to undefined
+   * and falls into the existing not-found branch, which is deliberate: a 404
+   * does not confirm that the project exists.
+   */
+  const projectRaw = useMemo(() => {
+    if (!projectSource) return undefined;
+    if (!canSeeProject(projectSource, viewer)) return undefined;
+    if (viewer.isAdmin) return projectSource;
+    return { ...projectSource, tasks: filterTaskTree(projectSource.tasks, viewer) };
+  }, [projectSource, viewer]);
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
   const [activeTabRaw, setActiveTab] = useState<ProjectTab>("board");
   // The SEO tabs (SEO Work, Keywords) belong to a project labelled SEO or
@@ -299,11 +324,27 @@ export default function ProjectDetailPage() {
     message: "You've picked templates to apply but haven't applied them yet.",
   });
 
+  // Already scoped by filterTaskTree above. The previous inline filter dropped
+  // any parent assigned to someone else, which made a staff member's OWN
+  // subtask unreachable — the kanban renders parents only.
+  //
+  // withSurfacedDescendants then adds back any SUBTASK parked in a status that
+  // never rolls up to its parent (to_be_discussed / pending_client_approval /
+  // pending_article_post). Without it those columns read 0 while the work sits
+  // there waiting — 20 of the 24 live `pending_article_post` tasks were
+  // subtasks with no card anywhere. Same rule the Tasks page uses.
+  //
+  // MUST stay above the `if (!projectRaw) return` below: a cold load returns the
+  // spinner first, so a hook after that return runs on some renders and not
+  // others and React crashes the page (Known Recurring Mistake #14).
+  const rawTasks = projectRaw?.tasks;
+  const boardTasks = useMemo(() => (rawTasks ? withSurfacedDescendants(rawTasks) : []), [rawTasks]);
+
   if (!projectRaw) {
     // Cold load (new tab / hard refresh / shared link): the store persists to
     // sessionStorage which is PER-TAB, so a fresh tab renders before init()
     // has loaded any projects. Don't 404 until the store has actually loaded.
-    if (!initialized) {
+    if (!initialized || authLoading) {
       return (
         <div className="flex-1 flex items-center justify-center min-h-[60vh]">
           <Loader2 size={28} className="animate-spin" style={{ color: "var(--text-muted)" }} />
@@ -314,15 +355,14 @@ export default function ProjectDetailPage() {
   }
   const project = projectRaw;
 
-  const done = project.tasks.filter((t) => t.status === "done").length;
-  const pct = project.tasks.length > 0 ? Math.round((done / project.tasks.length) * 100) : 0;
+  // Over the SCOPED tree (subtasks included), so the number always describes
+  // the board the viewer is actually looking at.
+  const { done, total: visibleTaskCount, pct } = taskProgress(project.tasks);
   const typeColor = project.type === "seo" ? "#22c55e" : project.type === "both" ? "#a855f7" : "#38b6e8";
   const tier = findTier(tiers, project.tierId);
   const tierScope = tier ? scopeLines(tier.scope) : [];
   const assignedUsers = liveStaff.filter((s) => project.assignedStaff.includes(staffAuthId(s)));
   const unassignedUsers = liveStaff.filter((s) => !project.assignedStaff.includes(staffAuthId(s)));
-  // Staff only see tasks assigned to them; admins see everything
-  const boardTasks = isAdmin ? project.tasks : project.tasks.filter((t) => t.assigneeId === user?.id);
 
   async function handleAddTask() {
     if (!newTask.title.trim()) return;
@@ -684,7 +724,7 @@ export default function ProjectDetailPage() {
               <div className="flex-1 h-1.5 rounded-full" style={{ background: "#1c3248" }}>
                 <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: "#38b6e8" }} />
               </div>
-              <span className="text-xs font-medium shrink-0" style={{ color: "#cce4ff" }}>{pct}% · {done}/{project.tasks.length} tasks</span>
+              <span className="text-xs font-medium shrink-0" style={{ color: "#cce4ff" }}>{pct}% · {done}/{visibleTaskCount} tasks</span>
             </div>
           </div>
 
@@ -780,6 +820,29 @@ export default function ProjectDetailPage() {
                   </button>
                 </div>
               )}
+              {/* A staff member now only sees their own (and unassigned) tasks, so a
+                  project where nothing is theirs renders an empty board. Without
+                  a word of explanation that reads as "the app is broken" rather
+                  than "there is nothing here for you". Admins never see this —
+                  an empty board for them really is an empty project, which the
+                  columns already convey. */}
+              {!isAdmin && boardTasks.length > 0 && projectSource && projectSource.tasks.length > boardTasks.length && (
+                <p className="text-xs px-1" style={{ color: "var(--text-muted)" }}>
+                  Showing the {boardTasks.length} task{boardTasks.length === 1 ? "" : "s"} assigned to you or unassigned.
+                </p>
+              )}
+              {!isAdmin && boardTasks.length === 0 ? (
+                <div className="rounded-2xl px-5 py-12 text-center"
+                  style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                  <ListChecks size={26} style={{ color: "var(--text-muted)" }} className="mx-auto mb-3" />
+                  <p className="text-sm mb-1" style={{ color: "var(--text)" }}>
+                    Nothing assigned to you on this project yet.
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    You will see tasks here once they are assigned to you, or left unassigned for anyone to pick up.
+                  </p>
+                </div>
+              ) : (
               <KanbanBoard
                 projectId={project.id}
                 tasks={boardTasks}
@@ -787,6 +850,7 @@ export default function ProjectDetailPage() {
                 onAddTask={(status: TaskStatus) => { setAddTaskCol(status); setShowAddTask(true); }}
                 liveStaff={liveStaff}
               />
+              )}
             </div>
           )}
 

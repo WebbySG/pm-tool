@@ -76,7 +76,7 @@ export function InvoiceTemplateForm({ existing }: Props) {
 
       <div>
         <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Line Items</p>
-        <LineItemsEditor items={items} onChange={setItems} />
+        <LineItemsEditor items={items} onChange={setItems} allowTemplates excludeTemplateId={existing?.id} />
       </div>
 
       <Field label="Default notes (shown on invoice)">

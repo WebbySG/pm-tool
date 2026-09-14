@@ -661,7 +661,7 @@ export default function InvoiceDetailPage() {
 
           <div>
             <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Line Items</p>
-            <LineItemsEditor items={lineItems} onChange={markDirty(setLineItems)} currency={inv.currency}
+            <LineItemsEditor items={lineItems} onChange={markDirty(setLineItems)} currency={inv.currency} allowTemplates
               discountType={discountType} discountValue={discountValue}
               onDiscountChange={(t, v) => { markDirty(setDiscountType)(t); setDiscountValue(v); setDirty(true); }} />
           </div>

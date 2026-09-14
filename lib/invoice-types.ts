@@ -138,6 +138,46 @@ export function computeInvoiceTotals(args: {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// ─── Combining templates on one document ─────────────────────────────────────
+// A client often buys two packages at once (SEO + SEM). "Add from template" in
+// the line-items editor APPENDS a template's lines rather than replacing the
+// document, so any number of templates can be stacked. Shared by the invoice,
+// quote and template editors via LineItemsEditor.
+
+export type LineDraft = { description: string; qty: number; unitPrice: number };
+
+/** A row nobody has filled in — no text and no price. It would print as an empty line. */
+function isBlankLine(li: LineDraft): boolean {
+  return li.description.trim() === "" && (li.unitPrice || 0) === 0;
+}
+
+/**
+ * Returns `items` with the template's lines appended, in the template's own
+ * order. Blank rows are dropped so "Add line item" followed by "Add from
+ * template" doesn't leave an empty row on the invoice. Never mutates its inputs.
+ */
+export function appendTemplateLineItems(
+  items: LineDraft[],
+  templateLines: Array<LineDraft & { sortOrder?: number }>,
+): LineDraft[] {
+  const kept = items.filter((li) => !isBlankLine(li));
+  const added = [...templateLines]
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    .map((li) => ({ description: li.description, qty: li.qty, unitPrice: li.unitPrice }));
+  return [...kept, ...added];
+}
+
+/**
+ * True when every line of the template is already on the document (matched on
+ * description text). Only a hint — adding a template twice is allowed, e.g. to
+ * bill two sites on one package.
+ */
+export function templateAlreadyAdded(items: LineDraft[], templateLines: LineDraft[]): boolean {
+  if (templateLines.length === 0) return false;
+  const present = new Set(items.map((li) => li.description.trim()));
+  return templateLines.every((li) => present.has(li.description.trim()));
+}
+
 /** Total received across all recorded payments. */
 export function computeAmountPaid(payments: Array<{ amount: number }>): number {
   return round2(payments.reduce((s, p) => s + (p.amount || 0), 0));

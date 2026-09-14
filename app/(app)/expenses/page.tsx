@@ -7,6 +7,7 @@ import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { errorMessage } from "@/lib/utils";
 import { loadExpenses, setExpensesSubmitted } from "@/lib/expense-db";
+import { useFyStartMonth, setFyStartMonth } from "@/lib/use-fy-start-month";
 import {
   type Expense, type DerivedExpenseStatus,
   EXPENSE_CATEGORIES, CATEGORY_META, categoryMeta, paymentLabel,
@@ -19,7 +20,6 @@ import {
   TriangleAlert, Wallet, Coins, Search, Check, Paperclip, ExternalLink,
 } from "lucide-react";
 
-const FY_MONTH_KEY = "expenses-fy-start-month";
 const STATUS_FILTERS: (DerivedExpenseStatus | "all")[] = ["all", "missing_receipt", "recorded", "submitted"];
 
 interface StaffLite { id: string; user_id: string | null; first_name: string | null; last_name: string | null; email: string }
@@ -59,15 +59,12 @@ function ExpensesInner() {
   // Financial year. The start month decides which FY a cost lands in, so it's a
   // user choice (plenty of SG companies close 31 Mar / 30 Jun, not 31 Dec) and is
   // read from localStorage in an effect to avoid an SSR hydration mismatch.
-  const [fyStartMonth, setFyStartMonth] = useState(1);
+  // Shared with the profit chart on the Invoices page — one setting, so the
+  // same cost can never land in two different financial years.
+  const fyStartMonth = useFyStartMonth();
   const [fyYear, setFyYear] = useState<number | null>(null);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const saved = Number(localStorage.getItem(FY_MONTH_KEY));
-    if (saved >= 1 && saved <= 12) setFyStartMonth(saved);
-  }, []);
 
   async function reload() {
     setLoading(true); setLoadError(null);
@@ -227,10 +224,8 @@ function ExpensesInner() {
           FY starts
           <select value={fyStartMonth}
             onChange={(e) => {
-              const m = Number(e.target.value);
-              setFyStartMonth(m);
+              setFyStartMonth(Number(e.target.value));
               setFyYear(null); // re-anchor on the current FY under the new boundary
-              localStorage.setItem(FY_MONTH_KEY, String(m));
             }}
             className="bg-transparent text-xs outline-none px-2 py-1.5 rounded-lg"
             style={{ color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-base)" }}>

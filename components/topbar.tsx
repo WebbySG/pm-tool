@@ -5,6 +5,8 @@ import { Bell, BellRing, Search, Plus, ChevronLeft, FolderKanban, CheckSquare } 
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { findTier, tierFullLabel } from "@/lib/project-tiers";
+import { useViewer } from "@/lib/use-visible";
+import { canSeeProject, canSeeTask } from "@/lib/task-visibility";
 import { TierIconGlyph, TierLevelMark } from "@/components/tier-badge";
 import { useAuth } from "@/lib/auth-context";
 import { type Task } from "@/lib/mock-data";
@@ -25,6 +27,7 @@ export function Topbar({ title, back, action }: TopbarProps) {
   const { user } = useAuth();
   const router = useRouter();
   const isAdmin = user?.pmRole === "admin";
+  const viewer = useViewer();
 
   // ── Global quick-search: matches project names + task titles, jump on click ──
   const [query, setQuery] = useState("");
@@ -33,9 +36,10 @@ export function Topbar({ title, back, action }: TopbarProps) {
 
   const results = useMemo(() => {
     if (!q) return { projects: [], tasks: [] as { task: Task; projectName: string; href: string }[] };
-    const visibleProjects = isAdmin
-      ? projects
-      : projects.filter((p) => !!user?.id && p.assignedStaff.includes(user.id));
+    // Use the shared rule rather than an inline copy — this one predated
+    // lib/task-visibility.ts and quietly omitted "tasks I created", so a task
+    // you raised but assigned to someone else was unfindable by search.
+    const visibleProjects = projects.filter((p) => canSeeProject(p, viewer));
     const projHits = visibleProjects
       .filter((p) => p.name.toLowerCase().includes(q))
       .slice(0, 6);
@@ -45,7 +49,7 @@ export function Topbar({ title, back, action }: TopbarProps) {
       const walk = (ts: Task[]) => {
         for (const t of ts) {
           if (taskHits.length >= 8) return;
-          if (t.title.toLowerCase().includes(q) && (isAdmin || t.assigneeId === user?.id || !t.assigneeId)) {
+          if (t.title.toLowerCase().includes(q) && canSeeTask(t, viewer)) {
             taskHits.push({ task: t, projectName: p.name, href: `${base}?task=${t.id}` });
           }
           walk(t.subtasks);
@@ -55,7 +59,7 @@ export function Topbar({ title, back, action }: TopbarProps) {
       if (taskHits.length >= 8) break;
     }
     return { projects: projHits, tasks: taskHits };
-  }, [q, projects, isAdmin, user?.id]);
+  }, [q, projects, viewer]);
 
   const hasResults = results.projects.length > 0 || results.tasks.length > 0;
   const searchOpen = searchFocused && q.length > 0;

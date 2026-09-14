@@ -8,6 +8,9 @@ import { Calendar, AlertTriangle, Archive, Clock, XCircle, Plus, X, Paperclip } 
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { useVisibleProjects, useViewer } from "@/lib/use-visible";
+import { canSeeTask } from "@/lib/task-visibility";
+import { isSurfacedChildStatus } from "@/lib/task-surfacing";
 import { errorMessage, FILE_ACCEPT } from "@/lib/utils";
 import { useDiscardGuard } from "@/components/discard-guard";
 
@@ -195,7 +198,12 @@ function TaskGroup({
 }
 
 export default function TasksPage() {
-  const { projects, updateTaskStatus, requestTaskApproval, addTask, addProject, uploadTaskAttachment } = useStore();
+  const { updateTaskStatus, requestTaskApproval, addTask, addProject, uploadTaskAttachment } = useStore();
+  // Scoped tree. The old inline `p.tasks.filter(t => t.assigneeId === user.id)`
+  // filtered only the TOP level, so opening a task showed every colleague's
+  // subtask inside it — and it dropped the parent of a subtask the viewer owned,
+  // which is why SURFACED_CHILD_STATUSES below had to exist as a workaround.
+  const projects = useVisibleProjects();
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskProject, setNewTaskProject] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -211,6 +219,7 @@ export default function TasksPage() {
   const [projError, setProjError] = useState<string | null>(null);
   const { user } = useAuth();
   const isAdmin = user?.pmRole === "admin";
+  const viewer = useViewer();
   const [activeTab, setActiveTab] = useState<"tasks" | "review" | "client" | "article" | "revision" | "discuss">("tasks");
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
@@ -228,9 +237,12 @@ export default function TasksPage() {
   const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
+  // canSeeTask drops the ancestor shells filterTaskTree keeps for reachability:
+  // a parent owned by someone else belongs on the board (so the viewer can open
+  // their own subtask through it) but is not itself one of "my tasks".
   const allTasks: TaskWithProject[] = projects.flatMap((p) =>
     p.tasks
-      .filter((t) => isAdmin || t.assigneeId === user?.id)
+      .filter((t) => canSeeTask(t, viewer))
       .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   );
 
@@ -251,12 +263,11 @@ export default function TasksPage() {
   // SUBTASKS, so approving one leaves the "waiting to be posted" work with no
   // row anywhere. Surface every such descendant as its own row, tagged with its
   // parent's title; clicking one opens the CHILD drawer (findDeep below).
-  const SURFACED_CHILD_STATUSES = ["to_be_discussed", "pending_client_approval", "pending_article_post"] as const;
   const surfacedDescendants: TaskWithProject[] = projects.flatMap((p) => {
     const out: TaskWithProject[] = [];
     const walk = (t: Task) => {
       for (const c of t.subtasks) {
-        if ((SURFACED_CHILD_STATUSES as readonly string[]).includes(c.status) && (isAdmin || c.assigneeId === user?.id)) {
+        if (isSurfacedChildStatus(c.status)) {
           out.push({ ...c, projectName: p.name, projectId: p.id, parentTitle: t.title });
         }
         walk(c);

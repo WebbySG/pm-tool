@@ -7,7 +7,18 @@ import { useStore } from "@/lib/store";
 import { loadInvoices } from "@/lib/invoice-db";
 import type { Invoice } from "@/lib/invoice-types";
 import { computeDerivedStatus, computeBalanceDue } from "@/lib/invoice-types";
-import { Receipt, FileText, ChevronRight, ChevronLeft, Loader2, TrendingUp, Wallet } from "lucide-react";
+import { loadExpenses } from "@/lib/expense-db";
+import type { Expense } from "@/lib/expense-types";
+import { financialYear, fyStartYearOf } from "@/lib/expense-types";
+import {
+  revenueEvents, expenseEvents, inputGstEvents,
+  monthlyProfit, activeFinancialYears, monthTotals, localDateISO,
+} from "@/lib/profit";
+import { useFyStartMonth } from "@/lib/use-fy-start-month";
+import {
+  Receipt, FileText, ChevronRight, ChevronLeft, Loader2, Wallet,
+  CreditCard, Scale,
+} from "lucide-react";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Draft", sent: "Sent", paid: "Paid", overdue: "Overdue", partial: "Partially paid", void: "Void",
@@ -37,35 +48,39 @@ function formatMoneyShort(amount: number) {
   return `S$${Math.round(amount)}`;
 }
 
-// Earnings are recognised on the day each payment was received (cash basis).
-// Partial payments each count on their own date, so an invoice can contribute
-// several earnings across different months. Legacy paid invoices with no payment
-// rows fall back to a single earning at paidAt (or issue date).
-function invoiceEarnings(inv: Invoice): { date: Date; amount: number }[] {
-  if (inv.payments && inv.payments.length > 0) {
-    return inv.payments
-      .map((p) => ({ date: new Date(p.paidAt), amount: p.amount }))
-      .filter((e) => !isNaN(e.date.getTime()));
-  }
-  if (inv.status === "paid") {
-    const iso = inv.paidAt ?? inv.issueDate;
-    const d = iso ? new Date(iso) : null;
-    if (d && !isNaN(d.getTime())) return [{ date: d, amount: inv.total }];
-  }
-  return [];
+// A profit can be negative, and "S$-371.00" reads as a typo. Sign goes first.
+function formatSigned(amount: number) {
+  const sign = amount < 0 ? "-" : "";
+  return `${sign}${formatMoney(Math.abs(amount), "SGD")}`;
 }
+
+function formatSignedShort(amount: number) {
+  return `${amount < 0 ? "-" : ""}${formatMoneyShort(Math.abs(amount))}`;
+}
+
+// invoiceEarnings moved to lib/profit.ts — the expenses side needed the same
+// "what counts as revenue" rule, and a second copy is what drifts.
 
 export default function InvoicesPage() {
   const { projects } = useStore();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [docView, setDocView] = useState<"invoice" | "quote">("invoice");
   const [filter, setFilter] = useState<string>("all");
-  const [earningsYear, setEarningsYear] = useState(() => new Date().getFullYear());
+  // Null = "follow today". Only a click on the year arrows pins it, so the
+  // chart lands on the current financial year however the FY is configured.
+  const [chartYear, setChartYear] = useState<number | null>(null);
+  // Shared with the Expenses page, so a cost can never fall in one financial
+  // year here and a different one there.
+  const fyStartMonth = useFyStartMonth();
 
   useEffect(() => {
     loadInvoices().then((rows) => { setInvoices(rows); setLoading(false); })
       .catch((e) => { console.error("loadInvoices", e); setLoading(false); });
+    // Expenses feed the profit chart only. A failure here must NOT blank the
+    // invoice list, so it logs and leaves the chart showing revenue alone.
+    loadExpenses().then(setExpenses).catch((e) => console.error("loadExpenses", e));
   }, []);
 
   const enriched = useMemo(() =>
@@ -101,54 +116,51 @@ export default function InvoicesPage() {
   // Earnings / financial summary are invoice-only — quotes never contribute.
   const invoiceRows = useMemo(() => invoices.filter((i) => i.docType === "invoice"), [invoices]);
 
-  // Flat list of recognised earnings (one per payment) — the basis for all
-  // monthly/yearly aggregation below.
-  const earnings = useMemo(() =>
-    invoiceRows.flatMap((inv) => invoiceEarnings(inv)),
-    [invoiceRows],
-  );
+  // Dated money events — the basis for every figure below. Both sides go
+  // through lib/profit.ts so revenue here means exactly what it means there.
+  const revenue = useMemo(() => revenueEvents(invoiceRows), [invoiceRows]);
+  const costs = useMemo(() => expenseEvents(expenses), [expenses]);
+  const gst = useMemo(() => inputGstEvents(expenses), [expenses]);
 
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
+  const todayISO = localDateISO(now);
 
-  const totals = useMemo(() => {
-    // Outstanding = remaining balance across sent/overdue/partially-paid invoices (quotes excluded).
-    const outstanding = enriched
+  // Which financial year is on screen. Defaults to the one containing today.
+  const currentFyStart = fyStartYearOf(todayISO, fyStartMonth);
+  const activeYear = chartYear ?? currentFyStart;
+  const fy = financialYear(activeYear, fyStartMonth);
+
+  const outstanding = useMemo(() =>
+    // Remaining balance across sent/overdue/partially-paid invoices (quotes excluded).
+    enriched
       .filter((i) => i.docType === "invoice"
         && (i.derivedStatus === "sent" || i.derivedStatus === "overdue" || i.derivedStatus === "partial"))
-      .reduce((s, i) => s + computeBalanceDue(i), 0);
-    const paidThisMonth = earnings
-      .filter((e) => e.date.getFullYear() === currentYear && e.date.getMonth() === currentMonth)
-      .reduce((s, e) => s + e.amount, 0);
-    const paidThisYear = earnings
-      .filter((e) => e.date.getFullYear() === currentYear)
-      .reduce((s, e) => s + e.amount, 0);
-    return { outstanding, paidThisMonth, paidThisYear };
-  }, [enriched, earnings, currentYear, currentMonth]);
+      .reduce((s, i) => s + computeBalanceDue(i), 0),
+    [enriched],
+  );
 
-  // Years that have any earnings (plus the current year) — for the chart navigator.
-  const earningsYears = useMemo(() => {
-    const set = new Set<number>([currentYear]);
-    earnings.forEach((e) => set.add(e.date.getFullYear()));
-    return Array.from(set).sort((a, b) => a - b);
-  }, [earnings, currentYear]);
-  const minYear = earningsYears[0];
+  // This calendar month — the three headline cards.
+  const thisMonth = useMemo(
+    () => monthTotals(revenue, costs, currentYear, currentMonth),
+    [revenue, costs, currentYear, currentMonth],
+  );
 
-  // Per-month totals for the selected year.
-  const monthly = useMemo(() => {
-    const buckets = Array<number>(12).fill(0);
-    let count = 0;
-    for (const e of earnings) {
-      if (e.date.getFullYear() === earningsYear) {
-        buckets[e.date.getMonth()] += e.amount;
-        count++;
-      }
-    }
-    const total = buckets.reduce((s, v) => s + v, 0);
-    const max = Math.max(0, ...buckets);
-    return { buckets, total, count, max };
-  }, [earnings, earningsYear]);
+  const chartYears = useMemo(
+    () => activeFinancialYears([revenue, costs], fyStartMonth, todayISO),
+    [revenue, costs, fyStartMonth, todayISO],
+  );
+  const minYear = chartYears[0];
+  const maxYear = chartYears[chartYears.length - 1];
+
+  const profit = useMemo(
+    () => monthlyProfit({
+      revenue, expenses: costs, inputGst: gst,
+      fyStartYear: activeYear, fyStartMonth,
+    }),
+    [revenue, costs, gst, activeYear, fyStartMonth],
+  );
 
   return (
     <AdminOnly>
@@ -180,10 +192,16 @@ export default function InvoicesPage() {
         {/* Financial summary + earnings are invoice-only. */}
         {docView === "invoice" && (<>
         {/* Summary cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <SummaryCard label="Outstanding" value={formatMoney(totals.outstanding, "SGD")} color="#38b6e8" icon={Receipt} />
-          <SummaryCard label={`Paid in ${MONTHS[currentMonth]} ${currentYear}`} value={formatMoney(totals.paidThisMonth, "SGD")} color="#22c55e" icon={Wallet} />
-          <SummaryCard label={`Paid in ${currentYear}`} value={formatMoney(totals.paidThisYear, "SGD")} color="#16a34a" icon={TrendingUp} />
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          <SummaryCard label="Outstanding" value={formatMoney(outstanding, "SGD")} color="#38b6e8" icon={Receipt} />
+          <SummaryCard label={`Revenue · ${MONTHS[currentMonth]} ${currentYear}`} value={formatMoney(thisMonth.revenue, "SGD")} color="#22c55e" icon={Wallet} />
+          <SummaryCard label={`Expenses · ${MONTHS[currentMonth]} ${currentYear}`} value={formatMoney(thisMonth.expenses, "SGD")} color="#f59e0b" icon={CreditCard} />
+          <SummaryCard
+            label={`Profit · ${MONTHS[currentMonth]} ${currentYear}`}
+            value={formatSigned(thisMonth.profit)}
+            color={thisMonth.profit < 0 ? "#ef4444" : "#16a34a"}
+            icon={Scale}
+          />
           <Link href="/invoices/templates" className="rounded-xl p-4 flex items-center justify-between hover:opacity-90 transition-opacity"
             style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
             <div className="flex items-center gap-3">
@@ -199,24 +217,26 @@ export default function InvoicesPage() {
           </Link>
         </div>
 
-        {/* Monthly earnings chart (paid invoices, by payment date) */}
+        {/* Revenue against expenses, with each month's profit above the pair.
+            Revenue is cash (payment dates); expenses are dated by their receipt.
+            Both bars share ONE scale so the comparison is honest. */}
         <div className="rounded-xl p-5" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-start justify-between mb-3 flex-wrap gap-3">
             <div className="flex items-center gap-2">
-              <TrendingUp size={16} style={{ color: "#22c55e" }} />
-              <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>Monthly earnings</h2>
+              <Scale size={16} style={{ color: profit.totals.profit < 0 ? "#ef4444" : "#16a34a" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>Revenue vs expenses</h2>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1">
-                <button onClick={() => setEarningsYear((y) => Math.max(minYear, y - 1))}
-                  disabled={earningsYear <= minYear}
+                <button onClick={() => setChartYear(Math.max(minYear, activeYear - 1))}
+                  disabled={activeYear <= minYear}
                   className="w-7 h-7 rounded-lg flex items-center justify-center transition-opacity disabled:opacity-30"
                   style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                   <ChevronLeft size={14} />
                 </button>
-                <span className="text-sm font-semibold tabular-nums px-1.5" style={{ color: "var(--text)" }}>{earningsYear}</span>
-                <button onClick={() => setEarningsYear((y) => Math.min(currentYear, y + 1))}
-                  disabled={earningsYear >= currentYear}
+                <span className="text-sm font-semibold tabular-nums px-1.5" style={{ color: "var(--text)" }}>{fy.label}</span>
+                <button onClick={() => setChartYear(Math.min(maxYear, activeYear + 1))}
+                  disabled={activeYear >= maxYear}
                   className="w-7 h-7 rounded-lg flex items-center justify-center transition-opacity disabled:opacity-30"
                   style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                   <ChevronRight size={14} />
@@ -224,43 +244,151 @@ export default function InvoicesPage() {
               </div>
               <div className="text-right">
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  {earningsYear} total · {monthly.count} paid
+                  {formatMoney(profit.totals.revenue, "SGD")} in · {formatMoney(profit.totals.expenses, "SGD")} out
                 </p>
-                <p className="text-lg font-bold tracking-tight" style={{ color: "var(--text)" }}>
-                  {formatMoney(monthly.total, "SGD")}
+                <p className="text-lg font-bold tracking-tight"
+                  style={{ color: profit.totals.profit < 0 ? "#ef4444" : "var(--text)" }}>
+                  {formatSigned(profit.totals.profit)}
+                  <span className="text-[11px] font-medium ml-1.5" style={{ color: "var(--text-muted)" }}>
+                    profit
+                  </span>
                 </p>
               </div>
             </div>
           </div>
 
-          {monthly.total === 0 ? (
+          {/* What the two bars actually mean. The bases differ, and a profit
+              figure nobody can interpret is worse than no profit figure. */}
+          <div className="flex items-center gap-4 flex-wrap mb-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#22c55e" }} />
+              Revenue — when payment landed
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#f59e0b" }} />
+              Expenses — receipt date, GST included
+            </span>
+            <span>Profit shown above each month.</span>
+            {profit.totals.inputGst > 0 && (
+              <span>Includes {formatMoney(profit.totals.inputGst, "SGD")} GST paid.</span>
+            )}
+          </div>
+
+          {profit.totals.revenue === 0 && profit.totals.expenses === 0 ? (
             <div className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-              No earnings recorded for {earningsYear}. Mark invoices as paid to track them here.
+              Nothing recorded for {fy.label}. Mark invoices paid and record expenses to see profit here.
             </div>
           ) : (
-            <div className="flex items-end gap-2" style={{ height: 168 }}>
-              {monthly.buckets.map((value, i) => {
-                const heightPct = monthly.max > 0 ? (value / monthly.max) * 100 : 0;
-                const isCurrent = earningsYear === currentYear && i === currentMonth;
+            <div className="flex items-end gap-2" style={{ height: 190 }}>
+              {profit.months.map((m) => {
+                const isCurrent = m.year === currentYear && m.monthIndex === currentMonth;
+                const hasData = m.revenue > 0 || m.expenses > 0;
+                const revPct = profit.maxBar > 0 ? (m.revenue / profit.maxBar) * 100 : 0;
+                const expPct = profit.maxBar > 0 ? (m.expenses / profit.maxBar) * 100 : 0;
                 return (
-                  <div key={MONTHS[i]} className="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
-                    <span className="text-[10px] font-semibold leading-none" style={{ color: value > 0 ? "var(--text)" : "transparent" }}>
-                      {value > 0 ? formatMoneyShort(value) : "·"}
+                  <div key={`${m.year}-${m.monthIndex}`} className="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
+                    <span className="text-[10px] font-bold leading-none whitespace-nowrap"
+                      style={{ color: !hasData ? "transparent" : m.profit < 0 ? "#ef4444" : "var(--text)" }}>
+                      {hasData ? formatSignedShort(m.profit) : "\u00b7"}
                     </span>
-                    <div className="w-full rounded-t-md relative" title={`${MONTHS[i]} ${earningsYear}: ${formatMoney(value, "SGD")}`}
-                      style={{
-                        height: `${heightPct}%`,
-                        minHeight: value > 0 ? 4 : 0,
-                        background: value > 0
-                          ? (isCurrent ? "linear-gradient(180deg, #34d399, #16a34a)" : "linear-gradient(180deg, #4ade80, #22c55e)")
-                          : "transparent",
-                      }} />
-                    <span className="text-[10px] leading-none" style={{ color: isCurrent ? "#16a34a" : "var(--text-muted)", fontWeight: isCurrent ? 700 : 400 }}>
-                      {MONTHS[i]}
+                    <div className="w-full flex-1 flex items-end justify-center" style={{ gap: 3 }}>
+                      <div className="flex-1 rounded-t-md"
+                        title={`${m.label} ${m.year} revenue: ${formatMoney(m.revenue, "SGD")}`}
+                        style={{
+                          height: `${revPct}%`,
+                          minHeight: m.revenue > 0 ? 4 : 0,
+                          background: m.revenue > 0
+                            ? (isCurrent ? "linear-gradient(180deg, #34d399, #16a34a)" : "linear-gradient(180deg, #4ade80, #22c55e)")
+                            : "transparent",
+                        }} />
+                      <div className="flex-1 rounded-t-md"
+                        title={`${m.label} ${m.year} expenses: ${formatMoney(m.expenses, "SGD")}`}
+                        style={{
+                          height: `${expPct}%`,
+                          minHeight: m.expenses > 0 ? 4 : 0,
+                          background: m.expenses > 0
+                            ? (isCurrent ? "linear-gradient(180deg, #fbbf24, #d97706)" : "linear-gradient(180deg, #fcd34d, #f59e0b)")
+                            : "transparent",
+                        }} />
+                    </div>
+                    <span className="text-[10px] leading-none"
+                      style={{ color: isCurrent ? "#16a34a" : "var(--text-muted)", fontWeight: isCurrent ? 700 : 400 }}>
+                      {m.label}
                     </span>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Month-by-month breakdown — the exact figures behind the bars, so
+              "what did I keep after costs" is read, not estimated from a 10px
+              label. Future months with nothing in them are left out. */}
+          {(profit.totals.revenue !== 0 || profit.totals.expenses !== 0) && (
+            <div className="mt-5 overflow-x-auto rounded-lg" style={{ border: "1px solid var(--border)" }}>
+              <table className="w-full text-sm tabular-nums" style={{ minWidth: 520 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-base)", color: "var(--text-muted)" }}>
+                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide px-3 py-2">Month</th>
+                    <th className="text-right text-[11px] font-semibold uppercase tracking-wide px-3 py-2">Revenue</th>
+                    <th className="text-right text-[11px] font-semibold uppercase tracking-wide px-3 py-2">Expenses</th>
+                    <th className="text-right text-[11px] font-semibold uppercase tracking-wide px-3 py-2">Profit</th>
+                    <th className="text-right text-[11px] font-semibold uppercase tracking-wide px-3 py-2"
+                      title="Profit as a share of revenue">Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profit.months
+                    .filter((m) => m.revenue !== 0 || m.expenses !== 0
+                      || m.year < currentYear || (m.year === currentYear && m.monthIndex <= currentMonth))
+                    .map((m) => {
+                      const isCurrent = m.year === currentYear && m.monthIndex === currentMonth;
+                      const margin = m.revenue > 0 ? Math.round((m.profit / m.revenue) * 100) : null;
+                      return (
+                        <tr key={`row-${m.year}-${m.monthIndex}`} style={{ borderTop: "1px solid var(--border)" }}>
+                          <td className="px-3 py-2" style={{ color: "var(--text)", fontWeight: isCurrent ? 700 : 400 }}>
+                            {m.label} {m.year}
+                            {isCurrent && <span className="text-[11px] font-normal ml-1.5" style={{ color: "var(--text-muted)" }}>so far</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right" style={{ color: m.revenue > 0 ? "var(--text)" : "var(--text-muted)" }}>
+                            {formatMoney(m.revenue, "SGD")}
+                          </td>
+                          <td className="px-3 py-2 text-right" style={{ color: m.expenses > 0 ? "var(--text)" : "var(--text-muted)" }}>
+                            {m.expenses > 0 ? `-${formatMoney(m.expenses, "SGD")}` : formatMoney(0, "SGD")}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold"
+                            style={{ color: m.profit < 0 ? "#ef4444" : m.profit > 0 ? "#16a34a" : "var(--text-muted)" }}>
+                            {formatSigned(m.profit)}
+                          </td>
+                          <td className="px-3 py-2 text-right"
+                            style={{ color: margin === null ? "var(--text-muted)" : margin < 0 ? "#ef4444" : "var(--text-muted)" }}>
+                            {margin === null ? "—" : `${margin}%`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-base)" }}>
+                    <td className="px-3 py-2 font-bold" style={{ color: "var(--text)" }}>{fy.label} total</td>
+                    <td className="px-3 py-2 text-right font-bold" style={{ color: "var(--text)" }}>
+                      {formatMoney(profit.totals.revenue, "SGD")}
+                    </td>
+                    <td className="px-3 py-2 text-right font-bold" style={{ color: "var(--text)" }}>
+                      {profit.totals.expenses > 0 ? `-${formatMoney(profit.totals.expenses, "SGD")}` : formatMoney(0, "SGD")}
+                    </td>
+                    <td className="px-3 py-2 text-right font-bold"
+                      style={{ color: profit.totals.profit < 0 ? "#ef4444" : "#16a34a" }}>
+                      {formatSigned(profit.totals.profit)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-bold" style={{ color: "var(--text-muted)" }}>
+                      {profit.totals.revenue > 0
+                        ? `${Math.round((profit.totals.profit / profit.totals.revenue) * 100)}%`
+                        : "—"}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           )}
         </div>

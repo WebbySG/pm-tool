@@ -69,14 +69,14 @@ export default function NewInvoicePage() {
     });
   }, [sp]);
 
-  // Auto-prefill bill-to name from the linked project (only fill blanks — don't
-  // overwrite manual edits). Project name is a sensible default the user can override.
-  useEffect(() => {
-    if (!projectId) return;
-    const p = projects.find((p) => p.id === projectId);
-    if (!p) return;
-    setBillToName((prev) => prev || p.name);
-  }, [projectId, projects]);
+  // Picking a project prefills the bill-to name (only when blank — never
+  // overwrite a manual edit). Done in the handler, not an effect: duplicating an
+  // invoice sets projectId AND billToName together, so nothing else needs it.
+  function selectProject(id: string | null) {
+    setProjectId(id);
+    const p = id ? projects.find((p) => p.id === id) : undefined;
+    if (p) setBillToName((prev) => prev || p.name);
+  }
 
   async function applyTemplateAsSource(tpl: InvoiceTemplate) {
     const full = await loadInvoiceTemplate(tpl.id);
@@ -182,6 +182,7 @@ export default function NewInvoicePage() {
             <div>
               <p className="text-sm" style={{ color: "var(--text-muted)" }}>
                 Start from a template, duplicate a past {isQuote ? "quote" : "invoice"}, or create a blank one.
+                Combining packages (e.g. SEO + SEM)? Pick one here, then use <strong>Add from template</strong> under Line Items.
               </p>
             </div>
 
@@ -241,7 +242,7 @@ export default function NewInvoicePage() {
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Project (optional)">
-                <select value={projectId ?? ""} onChange={(e) => setProjectId(e.target.value || null)}
+                <select value={projectId ?? ""} onChange={(e) => selectProject(e.target.value || null)}
                   className="bg-transparent text-sm outline-none px-3 py-2 rounded-lg w-full"
                   style={{ color: "var(--text)", border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
                   <option value="">— No project linked —</option>
@@ -298,7 +299,7 @@ export default function NewInvoicePage() {
 
             <div>
               <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Line Items</p>
-              <LineItemsEditor items={lineItems} onChange={setLineItems}
+              <LineItemsEditor items={lineItems} onChange={setLineItems} allowTemplates
                 discountType={discountType} discountValue={discountValue}
                 onDiscountChange={(t, v) => { setDiscountType(t); setDiscountValue(v); }} />
             </div>

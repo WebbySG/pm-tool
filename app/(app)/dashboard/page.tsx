@@ -4,11 +4,13 @@ import { useStore } from "@/lib/store";
 import { CheckSquare, Clock, AlertTriangle, TrendingUp, Bot, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { isClosedStatus } from "@/lib/mock-data";
 import { findTier } from "@/lib/project-tiers";
 import { TierBadge } from "@/components/tier-badge";
+import { useVisibleProjects, useViewer } from "@/lib/use-visible";
+import { canSeeTask } from "@/lib/task-visibility";
 
 function priorityColor(p: number | string): string {
   const n = typeof p === "number" ? p : 5;
@@ -39,7 +41,7 @@ interface LiveStaff {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { projects: allProjects, notifications, clients, tiers } = useStore();
+  const { notifications, clients, tiers } = useStore();
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
 
   useEffect(() => {
@@ -52,12 +54,19 @@ export default function DashboardPage() {
   }, [user?.id]);
 
   const isAdmin = user?.pmRole === "admin";
+  const viewer = useViewer();
 
-  const projects = isAdmin
-    ? allProjects
-    : allProjects.filter((p) => p.assignedStaff.includes(user?.id ?? ""));
+  // Scoped: staff get their projects, each carrying only tasks they may see.
+  const projects = useVisibleProjects();
 
-  const allTasks = projects.flatMap((p) => p.tasks);
+  // canSeeTask drops the ancestor "shells" filterTaskTree keeps for
+  // reachability — a parent owned by someone else must not inflate a staff
+  // member's counters. For an admin the predicate is always true, so these
+  // numbers are unchanged.
+  const allTasks = useMemo(
+    () => projects.flatMap((p) => p.tasks).filter((t) => canSeeTask(t, viewer)),
+    [projects, viewer],
+  );
 
   const statValues = [
     projects.length,

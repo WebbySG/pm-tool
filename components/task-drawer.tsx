@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { type Task, type TaskStatus } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
+import { useVisibleProjects } from "@/lib/use-visible";
 import { useAuth } from "@/lib/auth-context";
 import { supabase, uploadAttachment, dataUrlToFile } from "@/lib/supabase";
 import { errorMessage, FILE_ACCEPT, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, formatBytes, sanitizeHtml, isHtml } from "@/lib/utils";
@@ -544,7 +545,11 @@ export function TaskDrawer({ task, projectId, onClose }: Props) {
 function DrawerStack({ rootTask, projectId, onClose }: { rootTask: Task; projectId: string; onClose: () => void }) {
   const [stack, setStack] = useState<Task[]>([rootTask]);
   const [liveStaff, setLiveStaff] = useState<LiveStaff[]>([]);
-  const { projects } = useStore();
+  // SCOPED, not the raw store. liveTask() below re-derives every open panel's
+  // task from this on each render — reading the raw store handed the viewer the
+  // unfiltered task back (all subtasks, whoever they belong to) the instant a
+  // drawer opened, quietly undoing the board's filtering.
+  const projects = useVisibleProjects();
   const { user } = useAuth();
 
   useEffect(() => {
@@ -690,8 +695,12 @@ function TaskPanel({
     requestTaskApproval, approveTaskCompletion, rejectTask, markTaskRejected, addNotification,
     markArticlePosted, setTaskRequiresArticlePost, setTaskIsArticle, setTaskDiscussionNote,
     requestTaskDeletion, approveTaskDeletion, rejectTaskDeletion,
-    moveTaskToProject, archiveTask, projects,
+    moveTaskToProject, archiveTask,
   } = useStore();
+  // Same rule as the stack above. Staff only reach tasks in projects they can
+  // see, so the name lookups still resolve; the move-to-project list is
+  // admin-only and unaffected.
+  const projects = useVisibleProjects();
   const { user } = useAuth();
 
   const isAdmin = user?.pmRole === "admin";
