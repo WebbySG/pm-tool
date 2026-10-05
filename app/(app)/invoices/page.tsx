@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Topbar } from "@/components/topbar";
 import { AdminOnly } from "@/components/admin-guard";
 import { useStore } from "@/lib/store";
+import { errorMessage } from "@/lib/utils";
+import { MonthTransactions } from "@/components/month-transactions";
 import { loadInvoices } from "@/lib/invoice-db";
 import type { Invoice } from "@/lib/invoice-types";
 import { computeDerivedStatus, computeBalanceDue } from "@/lib/invoice-types";
@@ -62,13 +64,21 @@ function formatSignedShort(amount: number) {
 // "what counts as revenue" rule, and a second copy is what drifts.
 
 export default function InvoicesPage() {
+  return <AdminOnly><InvoicesInner /></AdminOnly>;
+}
+
+function InvoicesInner() {
   const { projects } = useStore();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expensesLoading, setExpensesLoading] = useState(true);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [expenseError, setExpenseError] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [docView, setDocView] = useState<"invoice" | "quote">("invoice");
   const [filter, setFilter] = useState<string>("all");
-  // Null = "follow today". Only a click on the year arrows pins it, so the
+  // Null = "follow today". Selecting a month or a year pins it, so the
   // chart lands on the current financial year however the FY is configured.
   const [chartYear, setChartYear] = useState<number | null>(null);
   // Shared with the Expenses page, so a cost can never fall in one financial
@@ -77,10 +87,10 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     loadInvoices().then((rows) => { setInvoices(rows); setLoading(false); })
-      .catch((e) => { console.error("loadInvoices", e); setLoading(false); });
-    // Expenses feed the profit chart only. A failure here must NOT blank the
-    // invoice list, so it logs and leaves the chart showing revenue alone.
-    loadExpenses().then(setExpenses).catch((e) => console.error("loadExpenses", e));
+      .catch((e) => { setInvoiceError(errorMessage(e)); setLoading(false); });
+    loadExpenses().then(setExpenses)
+      .catch((e) => setExpenseError(errorMessage(e)))
+      .finally(() => setExpensesLoading(false));
   }, []);
 
   const enriched = useMemo(() =>
@@ -126,6 +136,17 @@ export default function InvoicesPage() {
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   const todayISO = localDateISO(now);
+  const monthKey = selectedMonth ?? todayISO.slice(0, 7);
+  const selectedYear = Number(monthKey.slice(0, 4));
+  const selectedMonthIndex = Number(monthKey.slice(5, 7)) - 1;
+  const monthLabel = `${MONTHS[selectedMonthIndex]} ${selectedYear}`;
+  const financialsReady = !loading && !expensesLoading && !invoiceError && !expenseError;
+
+  function selectMonth(value: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
+    setSelectedMonth(value);
+    setChartYear(fyStartYearOf(`${value}-01`, fyStartMonth));
+  }
 
   // Which financial year is on screen. Defaults to the one containing today.
   const currentFyStart = fyStartYearOf(todayISO, fyStartMonth);
@@ -141,10 +162,10 @@ export default function InvoicesPage() {
     [enriched],
   );
 
-  // This calendar month — the three headline cards.
+  // Selected calendar month — independent of invoice issue dates and statuses.
   const thisMonth = useMemo(
-    () => monthTotals(revenue, costs, currentYear, currentMonth),
-    [revenue, costs, currentYear, currentMonth],
+    () => monthTotals(revenue, costs, selectedYear, selectedMonthIndex),
+    [revenue, costs, selectedYear, selectedMonthIndex],
   );
 
   const chartYears = useMemo(
@@ -163,7 +184,7 @@ export default function InvoicesPage() {
   );
 
   return (
-    <AdminOnly>
+    <>
       <Topbar title="Invoices"
         action={docView === "quote"
           ? { label: "New Quote", href: "/invoices/new?type=quote" }
@@ -191,14 +212,27 @@ export default function InvoicesPage() {
 
         {/* Financial summary + earnings are invoice-only. */}
         {docView === "invoice" && (<>
+        <div className="flex items-center gap-3 flex-wrap" style={{ color: "var(--text)" }}>
+          <label htmlFor="financial-month" className="text-sm font-semibold">Earnings and expenses for</label>
+          <input id="financial-month" type="month" value={monthKey}
+            onChange={(e) => selectMonth(e.target.value)}
+            className="rounded-lg px-3 py-2 text-sm"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }} />
+          <button className="text-sm underline" onClick={() => selectMonth(todayISO.slice(0, 7))}>This month</button>
+        </div>
+        {(invoiceError || expenseError) && <p role="alert" className="text-sm text-red-500">
+          {invoiceError ? `Could not load invoices: ${invoiceError}. ` : ""}
+          {expenseError ? `Could not load expenses: ${expenseError}. ` : ""}
+          Monthly totals are unavailable. <button className="underline" onClick={() => window.location.reload()}>Retry</button>
+        </p>}
         {/* Summary cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-          <SummaryCard label="Outstanding" value={formatMoney(outstanding, "SGD")} color="#38b6e8" icon={Receipt} />
-          <SummaryCard label={`Revenue · ${MONTHS[currentMonth]} ${currentYear}`} value={formatMoney(thisMonth.revenue, "SGD")} color="#22c55e" icon={Wallet} />
-          <SummaryCard label={`Expenses · ${MONTHS[currentMonth]} ${currentYear}`} value={formatMoney(thisMonth.expenses, "SGD")} color="#f59e0b" icon={CreditCard} />
+          <SummaryCard label="Outstanding · all dates" value={loading ? "Loading…" : invoiceError ? "Unavailable" : formatMoney(outstanding, "SGD")} color="#38b6e8" icon={Receipt} />
+          <SummaryCard label={`Earnings · ${monthLabel}`} value={loading ? "Loading…" : invoiceError ? "Unavailable" : formatMoney(thisMonth.revenue, "SGD")} color="#22c55e" icon={Wallet} />
+          <SummaryCard label={`Expenses · ${monthLabel}`} value={expensesLoading ? "Loading…" : expenseError ? "Unavailable" : formatMoney(thisMonth.expenses, "SGD")} color="#f59e0b" icon={CreditCard} />
           <SummaryCard
-            label={`Profit · ${MONTHS[currentMonth]} ${currentYear}`}
-            value={formatSigned(thisMonth.profit)}
+            label={`Profit · ${monthLabel}`}
+            value={loading || expensesLoading ? "Loading…" : !financialsReady ? "Unavailable" : formatSigned(thisMonth.profit)}
             color={thisMonth.profit < 0 ? "#ef4444" : "#16a34a"}
             icon={Scale}
           />
@@ -217,10 +251,12 @@ export default function InvoicesPage() {
           </Link>
         </div>
 
+        {financialsReady && <MonthTransactions invoices={invoiceRows} expenses={expenses} month={monthKey} label={monthLabel} />}
+
         {/* Revenue against expenses, with each month's profit above the pair.
             Revenue is cash (payment dates); expenses are dated by their receipt.
             Both bars share ONE scale so the comparison is honest. */}
-        <div className="rounded-xl p-5" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+        {financialsReady ? <div className="rounded-xl p-5" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-start justify-between mb-3 flex-wrap gap-3">
             <div className="flex items-center gap-2">
               <Scale size={16} style={{ color: profit.totals.profit < 0 ? "#ef4444" : "#16a34a" }} />
@@ -347,7 +383,7 @@ export default function InvoicesPage() {
                       return (
                         <tr key={`row-${m.year}-${m.monthIndex}`} style={{ borderTop: "1px solid var(--border)" }}>
                           <td className="px-3 py-2" style={{ color: "var(--text)", fontWeight: isCurrent ? 700 : 400 }}>
-                            {m.label} {m.year}
+                            <button className="underline" onClick={() => selectMonth(`${m.year}-${String(m.monthIndex + 1).padStart(2, "0")}`)}>{m.label} {m.year}</button>
                             {isCurrent && <span className="text-[11px] font-normal ml-1.5" style={{ color: "var(--text-muted)" }}>so far</span>}
                           </td>
                           <td className="px-3 py-2 text-right" style={{ color: m.revenue > 0 ? "var(--text)" : "var(--text-muted)" }}>
@@ -391,7 +427,7 @@ export default function InvoicesPage() {
               </table>
             </div>
           )}
-        </div>
+        </div> : (loading || expensesLoading) ? <p role="status" className="text-sm" style={{ color: "var(--text-muted)" }}>Loading financial summary…</p> : null}
         </>)}
 
         {/* Filter pills */}
@@ -418,6 +454,8 @@ export default function InvoicesPage() {
           <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
             <Loader2 size={14} className="animate-spin" /> Loading invoices…
           </div>
+        ) : invoiceError ? (
+          <p role="alert" className="text-sm text-red-500">Could not load invoices: {invoiceError}. <button className="underline" onClick={() => window.location.reload()}>Retry</button></p>
         ) : filtered.length === 0 ? (
           <div className="rounded-xl p-10 text-center" style={{ background: "var(--bg-surface)", border: "1px dashed var(--border)" }}>
             <Receipt size={32} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
@@ -480,7 +518,7 @@ export default function InvoicesPage() {
           </div>
         )}
       </div>
-    </AdminOnly>
+    </>
   );
 }
 
